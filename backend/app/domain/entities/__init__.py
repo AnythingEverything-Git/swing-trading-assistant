@@ -1,0 +1,1 @@
+"""Domain entity types package."""
