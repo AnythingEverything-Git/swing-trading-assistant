@@ -3,8 +3,10 @@
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = []
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["backend*"]
+exclude = ["alembic*"]
 
 [project]
 name = "swing-trading-assistant"
@@ -15,13 +17,13 @@ requires-python = ">=3.12"
 authors = [ { name = "Your Name", email = "you@example.com" } ]
 
 dependencies = [
-	"fastapi>=0.115",
-	"pydantic>=2.7",
-	"pydantic-settings>=2.2",
-	"sqlalchemy>=2.0",
-	"alembic>=1.13",
-	"psycopg[binary]>=3.2",
-	"uvicorn[standard]>=0.30"
+    "fastapi>=0.115",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.0",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    "uvicorn[standard]>=0.30",
 ]
 
 [project.optional-dependencies]

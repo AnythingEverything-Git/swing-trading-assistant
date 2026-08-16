@@ -7,7 +7,7 @@ Requires-Python: >=3.12
 Description-Content-Type: text/markdown
 Requires-Dist: fastapi>=0.115
 Requires-Dist: pydantic>=2.7
-Requires-Dist: pydantic-settings>=2.2
+Requires-Dist: pydantic-settings>=2.0
 Requires-Dist: sqlalchemy>=2.0
 Requires-Dist: alembic>=1.13
 Requires-Dist: psycopg[binary]>=3.2
