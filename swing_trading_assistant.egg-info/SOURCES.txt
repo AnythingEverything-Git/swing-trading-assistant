@@ -23,9 +23,15 @@ backend/app/domain/strategy/__init__.py
 backend/app/domain/strategy/strategy.py
 backend/app/infrastructure/__init__.py
 backend/app/infrastructure/database/__init__.py
+backend/app/infrastructure/database/base.py
 backend/app/infrastructure/database/session.py
 backend/app/infrastructure/database/models/__init__.py
+backend/app/infrastructure/database/models/candle.py
+backend/app/infrastructure/database/models/instrument.py
+backend/app/infrastructure/database/models/scan_run.py
 backend/app/infrastructure/database/repositories/__init__.py
+backend/app/infrastructure/database/repositories/candle_repository.py
+backend/app/infrastructure/database/repositories/instrument_repository.py
 backend/app/infrastructure/market_data/__init__.py
 backend/app/infrastructure/market_data/upstox/__init__.py
 backend/tests/__init__.py
@@ -34,6 +40,8 @@ backend/tests/unit/__init__.py
 backend/tests/unit/test_domain_models.py
 backend/tests/unit/test_health_db.py
 backend/tests/unit/test_health_endpoint.py
+backend/tests/unit/test_orm_metadata.py
+backend/tests/unit/test_repositories.py
 swing_trading_assistant.egg-info/PKG-INFO
 swing_trading_assistant.egg-info/SOURCES.txt
 swing_trading_assistant.egg-info/dependency_links.txt
