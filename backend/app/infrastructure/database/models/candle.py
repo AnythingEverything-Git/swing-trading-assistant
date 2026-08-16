@@ -25,4 +25,4 @@ class CandleORM(Base):
     high: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     low: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     close: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
-    volume: Mapped[int] = mapped_column(Integer, nullable=False)
+    volume: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

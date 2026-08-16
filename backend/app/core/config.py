@@ -11,6 +11,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     database_url: str
     environment: str = "development"
+    # Optional Upstox configuration (no secrets committed)
+    upstox_api_base_url: str | None = None
+    upstox_access_token: str | None = None
 
     model_config = {"env_file": ".env"}
 

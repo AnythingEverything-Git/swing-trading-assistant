@@ -8,7 +8,6 @@ from decimal import Decimal
 from sqlalchemy import select, desc, insert
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import CandleORM
@@ -100,16 +99,20 @@ class CandleRepository:
                 await self.session.flush()
                 return
 
-            # Generic fallback: insert rows one-by-one using the session
-            # and skip IntegrityError duplicates.
+            # Generic fallback: insert rows one-by-one using nested transactions
+            # so that a duplicate/IntegrityError for one row does not roll
+            # back the entire batch inserted so far.
             for row in rows:
                 try:
-                    await self.session.execute(insert(CandleORM).values(row))
+                    async with self.session.begin_nested():
+                        await self.session.execute(insert(CandleORM).values(row))
                 except IntegrityError:
-                    await self.session.rollback()
+                    # duplicate or other constraint violation for this row,
+                    # skip it and continue with the next. The nested transaction
+                    # rollback ensures earlier inserts remain intact.
                     continue
                 except Exception:
-                    await self.session.rollback()
+                    # re-raise unexpected errors; let caller decide how to handle
                     raise
             # make sure new rows are flushed to the DB connection
             await self.session.flush()
