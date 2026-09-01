@@ -12,7 +12,7 @@ from ..core.config import get_settings
 from ..infrastructure.database import session as db_session
 from ..core.config import get_settings
 from ..infrastructure.market_data.factory import UpstoxProviderFactory
-from .routes import market_data
+from .routes import market_data, strategy
 
 
 def create_app() -> FastAPI:
@@ -71,6 +71,7 @@ def create_app() -> FastAPI:
 
     # include routers
     app.include_router(market_data.router)
+    app.include_router(strategy.router)
 
     @app.get("/health", response_model=HealthCheck)
     def health():

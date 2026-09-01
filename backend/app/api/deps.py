@@ -56,3 +56,10 @@ async def get_ingestion_service(session=Depends(get_db), provider=Depends(get_up
     from app.application.market_data.market_data_ingestion_service import MarketDataIngestionService
 
     return MarketDataIngestionService(provider, inst_repo, candle_repo)
+
+
+async def get_strategy_evaluation_service(provider=Depends(get_upstox_provider)):
+    from app.application.strategy.strategy_evaluation_service import StrategyEvaluationService
+    from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
+
+    return StrategyEvaluationService(provider, BreakoutRetestConfirmationStrategy())

@@ -64,3 +64,47 @@ class MarketDataIngestResponse(BaseModel):
     candles_fetched: int
     candles_persisted: int
     status: str
+
+
+class StrategyEvaluationRequest(BaseModel):
+    symbol: str
+    timeframe: str
+    start: datetime
+    end: datetime
+
+
+class StrategyCandidateResponse(BaseModel):
+    symbol: str
+    timeframe: str
+    direction: str
+    entry_price: Decimal
+    stop_loss: Decimal
+    target: Decimal
+    risk_per_share: Decimal
+    reward: Decimal
+    risk_reward_ratio: Decimal
+    setup_name: str
+
+
+class StrategyEvidenceResponse(BaseModel):
+    resistance: Decimal
+    breakout_candle_index: int
+    breakout_candle_time: datetime
+    retest_candle_index: int
+    retest_candle_time: datetime
+    confirmation_candle_index: int
+    confirmation_candle_time: datetime
+    atr_value: Decimal
+    volume_sma_value: Decimal
+    breakout_volume: int | None
+    retest_low: Decimal
+    confirmation_volume: int | None
+    decision: str
+
+
+class StrategyEvaluationResponse(BaseModel):
+    has_setup: bool
+    candidate: StrategyCandidateResponse | None = None
+    evidence: StrategyEvidenceResponse | None = None
+    status: str
+    reason: str | None = None
