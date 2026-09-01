@@ -75,8 +75,9 @@ async def test_integration_ingest_with_wired_upstox_provider():
         start = datetime(2020, 1, 1, tzinfo=timezone.utc)
         end = datetime(2020, 1, 3, tzinfo=timezone.utc)
 
-        count = await svc.ingest("TST", "1d", start, end)
-        assert count == 3
+        fetched_count, persisted_count = await svc.ingest("TST", "1d", start, end)
+        assert fetched_count == 3
+        assert persisted_count == 3
 
         inst = await inst_repo.get_by_symbol("TST")
         assert inst is not None

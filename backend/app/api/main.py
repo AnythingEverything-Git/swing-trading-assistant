@@ -5,14 +5,72 @@ the infrastructure database session helper. The DB check is intentionally
 lightweight and does not create tables or run migrations.
 """
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 from fastapi.responses import JSONResponse
 from .schemas import HealthCheck
 from ..core.config import get_settings
 from ..infrastructure.database import session as db_session
+from ..core.config import get_settings
+from ..infrastructure.market_data.factory import UpstoxProviderFactory
+from .routes import market_data
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Swing Trading Assistant - Backend")
+    """Create a FastAPI app and manage DB engine lifecycle using a lifespan.
+
+    The app will create a single AsyncEngine and sessionmaker at startup and
+    dispose the engine at shutdown. Both are attached to `app.state`.
+    """
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup: create engine and sessionmaker from settings
+        settings = get_settings()
+        db_url = getattr(settings, "database_url", None)
+        if not db_url:
+            # Fail fast if DB not configured
+            raise RuntimeError("Database not configured in Settings")
+
+        engine = db_session.create_engine(db_url)
+        sessionmaker = db_session.create_sessionmaker(engine)
+        app.state.engine = engine
+        app.state.sessionmaker = sessionmaker
+
+        # Optionally create Upstox provider factory and provider if configured
+        try:
+            factory = UpstoxProviderFactory()
+            # Only start factory if Upstox settings are present
+            if getattr(get_settings(), "upstox_api_base_url", None) or getattr(get_settings(), "upstox_access_token", None):
+                provider = await factory.startup()
+                app.state.upstox_factory = factory
+                app.state.upstox_provider = provider
+            else:
+                app.state.upstox_factory = None
+                app.state.upstox_provider = None
+        except Exception:
+            app.state.upstox_factory = None
+            app.state.upstox_provider = None
+
+        try:
+            yield
+        finally:
+            # Shutdown: dispose engine
+            try:
+                await engine.dispose()
+            except Exception:
+                pass
+            # Shutdown Upstox factory if present
+            factory = getattr(app.state, "upstox_factory", None)
+            if factory is not None:
+                try:
+                    await factory.shutdown()
+                except Exception:
+                    pass
+
+    app = FastAPI(title="Swing Trading Assistant - Backend", lifespan=lifespan)
+
+    # include routers
+    app.include_router(market_data.router)
 
     @app.get("/health", response_model=HealthCheck)
     def health():
@@ -20,6 +78,8 @@ def create_app() -> FastAPI:
 
     @app.get("/health/db")
     async def health_db():
+        # Simple health-check only; uses settings directly to avoid creating
+        # transient engines here.
         settings = get_settings()
         db_url = getattr(settings, "database_url", None)
         if not db_url:

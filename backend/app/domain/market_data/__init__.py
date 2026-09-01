@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import Optional, Union
 
 
-@dataclass(frozen=True)
+@dataclass
 class Candle:
 	symbol: str
 	exchange: str

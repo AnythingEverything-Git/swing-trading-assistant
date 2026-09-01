@@ -33,8 +33,9 @@ async def test_integration_ingest_creates_instrument_and_persists_candles():
         svc = MarketDataIngestionService(provider, inst_repo, candle_repo)
 
         # First ingestion
-        count = await svc.ingest("TST", "1d", start, end)
-        assert count == 3
+        fetched_count, persisted_count = await svc.ingest("TST", "1d", start, end)
+        assert fetched_count == 3
+        assert persisted_count == 3
 
         # Instrument should exist
         inst = await inst_repo.get_by_symbol("TST")
@@ -48,10 +49,21 @@ async def test_integration_ingest_creates_instrument_and_persists_candles():
         assert latest is not None
 
         # Re-ingest same candles — should not create duplicates
-        count2 = await svc.ingest("TST", "1d", start, end)
-        assert count2 == 3
+        fetched_count2, persisted_count2 = await svc.ingest("TST", "1d", start, end)
+        assert fetched_count2 == 3
+        assert persisted_count2 == 0
 
         results_after = await candle_repo.get_range(inst.id, "1d", start, end)
         assert len(results_after) == 3
+
+        # Partial overlap: one existing candle + one new candle.
+        partial_start = start + timedelta(days=2)
+        partial_end = start + timedelta(days=3)
+        fetched_count3, persisted_count3 = await svc.ingest("TST", "1d", partial_start, partial_end)
+        assert fetched_count3 == 2
+        assert persisted_count3 == 1
+
+        final_results = await candle_repo.get_range(inst.id, "1d", start, partial_end)
+        assert len(final_results) == 4
 
     await engine.dispose()

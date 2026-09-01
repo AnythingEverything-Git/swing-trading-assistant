@@ -7,11 +7,19 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine, AsyncSessio
 from sqlalchemy.orm import sessionmaker
 from typing import Optional
 from sqlalchemy import text
+from sqlalchemy.pool import StaticPool
 import asyncio
 
 
 def create_engine(db_url: str, echo: bool = False) -> AsyncEngine:
     """Create and return an async SQLAlchemy engine."""
+    if db_url.startswith("sqlite") and ":memory:" in db_url:
+        return create_async_engine(
+            db_url,
+            echo=echo,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
     return create_async_engine(db_url, echo=echo)
 
 

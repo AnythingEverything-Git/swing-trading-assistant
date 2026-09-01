@@ -75,7 +75,8 @@ def test_candle_save_and_queries():
                 },
             ]
 
-            await repo.save_many(candles)
+            inserted = await repo.save_many(candles)
+            assert inserted == 2
 
             latest = await repo.get_latest(inst.id)
             assert latest is not None
@@ -86,11 +87,24 @@ def test_candle_save_and_queries():
             results = await repo.get_range(inst.id, "1d", start, end)
             assert len(results) == 2
 
-            # Attempt to save a duplicate candle (same instrument/timeframe/timestamp)
             dup = candles[0].copy()
-            await repo.save_many([dup])
+            assert await repo.save_many([dup]) == 0
             results_after = await repo.get_range(inst.id, "1d", start, end)
             assert len(results_after) == 2
+
+            new_row = {
+                "instrument_id": inst.id,
+                "timestamp": now,
+                "timeframe": "1d",
+                "open": Decimal("120.0"),
+                "high": Decimal("125.0"),
+                "low": Decimal("118.0"),
+                "close": Decimal("123.0"),
+                "volume": None,
+            }
+            mixed = [new_row, dup, new_row]
+            assert await repo.save_many(mixed) == 1
+            assert len(await repo.get_range(inst.id, "1d", start, now + timedelta(days=1))) == 3
         await engine.dispose()
 
     asyncio.run(_test())

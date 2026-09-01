@@ -40,6 +40,7 @@ class FakeCandleRepo:
 
     async def save_many(self, candles):
         self.saved.append(candles)
+        return len(candles)
 
 
 @pytest.mark.asyncio
@@ -55,7 +56,7 @@ async def test_successful_ingestion():
     svc = MarketDataIngestionService(prov, inst_repo, candle_repo)
     count = await svc.ingest("TST", "1d", ts, ts + timedelta(days=1))
 
-    assert count == 2
+    assert count == (2, 2)
     assert len(candle_repo.saved) == 1
     saved = candle_repo.saved[0]
     assert all(r["instrument_id"] == 1 for r in saved)
@@ -72,7 +73,7 @@ async def test_provider_returns_no_candles():
     start = datetime(2020, 1, 1, tzinfo=timezone.utc)
     end = start + timedelta(days=1)
     count = await svc.ingest("TST", "1d", start, end)
-    assert count == 0
+    assert count == (0, 0)
     assert inst_repo.created == []
     assert candle_repo.saved == []
 
@@ -88,7 +89,7 @@ async def test_instrument_reused_and_mapping():
     svc = MarketDataIngestionService(prov, inst_repo, candle_repo)
 
     count = await svc.ingest("ABC", "1d", ts, ts)
-    assert count == 1
+    assert count == (1, 1)
     assert inst_repo.created[0][0] == "ABC"
     saved = candle_repo.saved[0]
     assert saved[0]["instrument_id"] == 42

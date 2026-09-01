@@ -21,10 +21,10 @@ class MarketDataIngestionService:
         self.instrument_repo = instrument_repo
         self.candle_repo = candle_repo
 
-    async def ingest(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> int:
+    async def ingest(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> tuple[int, int]:
         """Fetch candles from provider and persist them.
 
-        Returns the number of candles fetched (and passed to repository).
+        Returns (fetched_count, persisted_count).
         Raises ValueError for invalid ranges. Does not swallow provider or
         repository exceptions.
         """
@@ -35,7 +35,7 @@ class MarketDataIngestionService:
 
         candles = await self.provider.get_candles(symbol, timeframe, start, end)
         if not candles:
-            return 0
+            return 0, 0
 
         # Ensure instrument exists (get or create). Use the exchange from
         # the first candle if available.
@@ -64,5 +64,6 @@ class MarketDataIngestionService:
                 }
             )
 
-        await self.candle_repo.save_many(rows)
-        return len(rows)
+        fetched_count = len(rows)
+        persisted_count = await self.candle_repo.save_many(rows)
+        return fetched_count, persisted_count
