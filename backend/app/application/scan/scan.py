@@ -13,5 +13,5 @@ class ScanOrchestrator(Protocol):
     in documentation to avoid hard imports at this stage.
     """
 
-    def run_scan(self, provider: object, strategy: object, params: Dict[str, Any]) -> object:  # pragma: no cover - interface
+    def run_scan(self, provider: object, strategy: object, params: Dict[str, Any]) -> object:  # pragma: no cover - interface new
         ...
