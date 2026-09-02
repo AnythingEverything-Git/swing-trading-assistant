@@ -49,6 +49,7 @@ class BacktestService:
     ) -> tuple[BacktestTrade, ...]:
         trades: list[BacktestTrade] = []
         cursor = 0
+        current_equity = account_equity
 
         while cursor < len(candles):
             result = self.strategy.evaluate(
@@ -65,7 +66,7 @@ class BacktestService:
             if cursor == len(candles) - 1:
                 cursor += 1
                 continue
-            sizing = calculate_position_size(account_equity, risk_percent, candidate)
+            sizing = calculate_position_size(current_equity, risk_percent, candidate)
             if sizing.quantity == 0:
                 cursor += 1
                 continue
@@ -96,6 +97,7 @@ class BacktestService:
                     quantity=sizing.quantity,
                 )
             )
+            current_equity += pnl_per_share * Decimal(sizing.quantity)
             cursor = exit_index + 1
 
         return tuple(trades)

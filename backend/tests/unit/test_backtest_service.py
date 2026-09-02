@@ -248,3 +248,105 @@ async def test_backtest_real_strategy_produces_sequential_trades():
     assert second.risk_per_share > 0
     assert first.entry_price == Decimal("101.2")
     assert second.entry_price == Decimal("108.0")
+
+
+def _make_candidate_at(entry: str = "100", stop: str = "98", target: str = "105") -> TradeCandidate:
+    return TradeCandidate(
+        symbol="TST",
+        timeframe="1d",
+        direction="LONG",
+        entry_price=Decimal(entry),
+        stop_loss=Decimal(stop),
+        target=Decimal(target),
+        risk_per_share=Decimal("0"),
+        reward=Decimal("0"),
+        risk_reward_ratio=Decimal("0"),
+        setup_name="test",
+    )
+
+
+def _make_evidence_at(confirmation_index: int) -> StrategyEvidence:
+    base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    return StrategyEvidence(
+        resistance=Decimal("99"),
+        breakout_candle_index=max(confirmation_index - 2, 0),
+        breakout_candle_time=base + timedelta(days=max(confirmation_index - 2, 0)),
+        retest_candle_index=max(confirmation_index - 1, 0),
+        retest_candle_time=base + timedelta(days=max(confirmation_index - 1, 0)),
+        confirmation_candle_index=confirmation_index,
+        confirmation_candle_time=base + timedelta(days=confirmation_index),
+        atr_value=Decimal("1"),
+        volume_sma_value=Decimal("1000"),
+        breakout_volume=1000,
+        retest_low=Decimal("99"),
+        confirmation_volume=1000,
+        decision="test setup",
+    )
+
+
+class LastBarConfirmStrategy:
+    """Stub that emits a setup only when the series ends exactly on a configured confirmation bar."""
+
+    def __init__(self, confirmations: dict[int, TradeCandidate]):
+        self.confirmations = confirmations
+
+    def evaluate(self, strategy_input):
+        confirmation_index = len(strategy_input.candles) - 1
+        candidate = self.confirmations.get(confirmation_index)
+        if candidate is None:
+            return StrategyResult(has_setup=False)
+        return StrategyResult(
+            has_setup=True,
+            candidate=candidate,
+            evidence=_make_evidence_at(confirmation_index),
+        )
+
+
+@pytest.mark.asyncio
+async def test_backtest_compounds_equity_after_winning_trade():
+    # Confirm@2 -> target on bar 3 (+5/share). Confirm@5 uses same risk/share on higher equity.
+    candles = make_candles(
+        ["90", "95", "100", "105", "101", "100", "105"],
+        highs=["91", "96", "101", "106", "102", "101", "106"],
+        lows=["89", "94", "99", "104", "100", "99", "104"],
+    )
+    candidate = _make_candidate_at()
+    strategy = LastBarConfirmStrategy({2: candidate, 5: candidate})
+
+    result = await BacktestService(CandleProvider(candles), strategy).run(
+        "TST", "1d", candles[0].timestamp, candles[-1].timestamp, Decimal("10000"), Decimal("1")
+    )
+
+    assert len(result.trades) == 2
+    first, second = result.trades
+    assert first.quantity == 50
+    assert first.pnl_per_share == Decimal("5")
+    assert first.exit_reason.value == "TARGET"
+    # Equity becomes 10000 + 5*50 = 10250 → risk budget 102.50 → floor(102.50/2) = 51
+    assert second.quantity == 51
+    assert second.quantity > first.quantity
+
+
+@pytest.mark.asyncio
+async def test_backtest_compounds_equity_after_losing_trade():
+    # Confirm@2 -> stop on bar 3 (-2/share). Confirm@5 uses same risk/share on lower equity.
+    candles = make_candles(
+        ["90", "95", "100", "99", "101", "100", "105"],
+        highs=["91", "96", "101", "100", "102", "101", "106"],
+        lows=["89", "94", "99", "97", "100", "99", "104"],
+    )
+    candidate = _make_candidate_at()
+    strategy = LastBarConfirmStrategy({2: candidate, 5: candidate})
+
+    result = await BacktestService(CandleProvider(candles), strategy).run(
+        "TST", "1d", candles[0].timestamp, candles[-1].timestamp, Decimal("10000"), Decimal("1")
+    )
+
+    assert len(result.trades) == 2
+    first, second = result.trades
+    assert first.quantity == 50
+    assert first.pnl_per_share == Decimal("-2")
+    assert first.exit_reason.value == "STOP_LOSS"
+    # Equity becomes 10000 - 2*50 = 9900 → risk budget 99 → floor(99/2) = 49
+    assert second.quantity == 49
+    assert second.quantity < first.quantity
