@@ -1,18 +1,5 @@
-"""Domain `Candle` (OHLCV) type.
+"""Compatibility shim for the canonical domain Candle model."""
 
-Daily OHLCV candles are used by the initial strategy.
-"""
-from pydantic import BaseModel
-from datetime import datetime
-from decimal import Decimal
-from typing import Literal
+from app.domain.market_data import Candle
 
-
-class Candle(BaseModel):
-    timestamp: datetime
-    open: Decimal
-    high: Decimal
-    low: Decimal
-    close: Decimal
-    volume: int
-    timeframe: Literal["1d"] = "1d"
+__all__ = ["Candle"]

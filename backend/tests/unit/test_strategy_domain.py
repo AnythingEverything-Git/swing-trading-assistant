@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -20,6 +21,10 @@ def make_candle(close_value: str, ts_index: int):
         close=Decimal(close_value),
         volume=1000,
     )
+
+
+def _replace_candle(candle: Candle, **overrides):
+    return replace(candle, **overrides)
 
 
 def test_trade_candidate_valid_long():
@@ -257,7 +262,7 @@ def test_breakout_without_sufficient_volume_is_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
     candles = _build_valid_setup_series()
-    candles[19].volume = 1200
+    candles[19] = _replace_candle(candles[19], volume=1200)
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
 
@@ -266,8 +271,7 @@ def test_breakout_without_retest_is_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
     candles = _build_valid_setup_series()
-    candles[16].low = Decimal("97.0")
-    candles[16].close = Decimal("97.5")
+    candles[16] = _replace_candle(candles[16], low=Decimal("97.0"), close=Decimal("97.5"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
 
@@ -286,7 +290,7 @@ def test_retest_before_breakout_is_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
     candles = _build_valid_setup_series()
-    candles[20].close = Decimal("99.0")
+    candles[20] = _replace_candle(candles[20], close=Decimal("99.0"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
 
@@ -295,8 +299,7 @@ def test_retest_invalidation_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
     candles = _build_valid_setup_series()
-    candles[16].close = Decimal("98.5")
-    candles[16].low = Decimal("98.0")
+    candles[16] = _replace_candle(candles[16], close=Decimal("98.5"), low=Decimal("98.0"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
 
@@ -306,9 +309,7 @@ def test_retest_timeout_after_five_candles_expires():
 
     candles = _build_valid_setup_series()
     for idx in range(17, 22):
-        candles[idx].close = Decimal("99.0")
-        candles[idx].low = Decimal("98.4")
-        candles[idx].high = Decimal("99.8")
+        candles[idx] = _replace_candle(candles[idx], close=Decimal("99.0"), low=Decimal("98.4"), high=Decimal("99.8"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
 
@@ -317,8 +318,7 @@ def test_confirmation_before_retest_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
     candles = _build_valid_setup_series()
-    candles[18].close = Decimal("101.9")
-    candles[18].high = Decimal("102.3")
+    candles[18] = _replace_candle(candles[18], close=Decimal("101.9"), high=Decimal("102.3"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
 
@@ -327,7 +327,7 @@ def test_invalid_confirmation_volume_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
     candles = _build_valid_setup_series()
-    candles[21].volume = 500
+    candles[21] = _replace_candle(candles[21], volume=500)
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
 
@@ -345,8 +345,7 @@ def test_stop_distance_filter_rejects_large_stop():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
     candles = _build_valid_setup_series()
-    candles[21].close = Decimal("106.0")
-    candles[21].low = Decimal("96.5")
+    candles[21] = _replace_candle(candles[21], close=Decimal("106.0"), low=Decimal("96.5"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
 
@@ -366,7 +365,7 @@ def test_invalid_non_positive_risk_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
     candles = _build_valid_setup_series()
-    candles[21].close = Decimal("99.0")
+    candles[21] = _replace_candle(candles[21], close=Decimal("99.0"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
 
@@ -454,17 +453,23 @@ def test_confirmation_window_allows_exactly_one_two_and_three_candles_after_rete
         for idx in range(retest_index + 1, min(len(candles), confirmation_index + 1)):
             if idx == confirmation_index:
                 continue
-            candles[idx].open = Decimal("100.0")
-            candles[idx].high = Decimal("100.2")
-            candles[idx].low = Decimal("99.0")
-            candles[idx].close = Decimal("99.4")
-            candles[idx].volume = 500
+            candles[idx] = _replace_candle(
+                candles[idx],
+                open=Decimal("100.0"),
+                high=Decimal("100.2"),
+                low=Decimal("99.0"),
+                close=Decimal("99.4"),
+                volume=500,
+            )
 
-        candles[confirmation_index].open = Decimal("100.8")
-        candles[confirmation_index].high = Decimal("101.8")
-        candles[confirmation_index].low = Decimal("100.2")
-        candles[confirmation_index].close = Decimal("101.2")
-        candles[confirmation_index].volume = 2200
+        candles[confirmation_index] = _replace_candle(
+            candles[confirmation_index],
+            open=Decimal("100.8"),
+            high=Decimal("101.8"),
+            low=Decimal("100.2"),
+            close=Decimal("101.2"),
+            volume=2200,
+        )
 
         result = strategy.evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
         assert result.has_setup is True
@@ -481,17 +486,23 @@ def test_confirmation_on_fourth_candle_after_retest_is_rejected():
     for idx in range(retest_index + 1, min(len(candles), confirmation_index + 1)):
         if idx == confirmation_index:
             continue
-        candles[idx].open = Decimal("100.0")
-        candles[idx].high = Decimal("100.2")
-        candles[idx].low = Decimal("99.0")
-        candles[idx].close = Decimal("99.4")
-        candles[idx].volume = 500
+        candles[idx] = _replace_candle(
+            candles[idx],
+            open=Decimal("100.0"),
+            high=Decimal("100.2"),
+            low=Decimal("99.0"),
+            close=Decimal("99.4"),
+            volume=500,
+        )
 
-    candles[confirmation_index].open = Decimal("100.8")
-    candles[confirmation_index].high = Decimal("101.8")
-    candles[confirmation_index].low = Decimal("100.2")
-    candles[confirmation_index].close = Decimal("101.2")
-    candles[confirmation_index].volume = 2200
+    candles[confirmation_index] = _replace_candle(
+        candles[confirmation_index],
+        open=Decimal("100.8"),
+        high=Decimal("101.8"),
+        low=Decimal("100.2"),
+        close=Decimal("101.2"),
+        volume=2200,
+    )
 
     result = strategy.evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
