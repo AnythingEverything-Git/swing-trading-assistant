@@ -26,7 +26,7 @@ def make_trade(pnl_per_share: str, r_multiple: str, quantity: int = 1) -> Backte
 
 
 def test_empty_trade_list_returns_zero_metrics():
-    metrics = calculate_performance_metrics(())
+    metrics = calculate_performance_metrics((), Decimal("10000"))
 
     assert metrics.total_trades == 0
     assert metrics.winning_trades == 0
@@ -39,8 +39,18 @@ def test_empty_trade_list_returns_zero_metrics():
     assert metrics.maximum_drawdown == Decimal("0")
 
 
+def test_empty_trades_with_nonzero_starting_equity_have_zero_drawdown():
+    metrics = calculate_performance_metrics((), Decimal("25000"))
+
+    assert metrics.maximum_drawdown == Decimal("0")
+    assert metrics.total_trades == 0
+
+
 def test_all_winning_trades():
-    metrics = calculate_performance_metrics((make_trade("5", "2.5"), make_trade("3", "1.5")))
+    metrics = calculate_performance_metrics(
+        (make_trade("5", "2.5"), make_trade("3", "1.5")),
+        Decimal("10000"),
+    )
 
     assert metrics.total_trades == 2
     assert metrics.winning_trades == 2
@@ -50,10 +60,14 @@ def test_all_winning_trades():
     assert metrics.average_pnl == Decimal("4")
     assert metrics.total_r == Decimal("4")
     assert metrics.average_r == Decimal("2")
+    assert metrics.maximum_drawdown == Decimal("0")
 
 
 def test_all_losing_trades():
-    metrics = calculate_performance_metrics((make_trade("-2", "-1"), make_trade("-4", "-2")))
+    metrics = calculate_performance_metrics(
+        (make_trade("-2", "-1"), make_trade("-4", "-2")),
+        Decimal("10000"),
+    )
 
     assert metrics.winning_trades == 0
     assert metrics.losing_trades == 2
@@ -62,11 +76,13 @@ def test_all_losing_trades():
     assert metrics.average_pnl == Decimal("-3")
     assert metrics.total_r == Decimal("-3")
     assert metrics.average_r == Decimal("-1.5")
+    assert metrics.maximum_drawdown == Decimal("6")
 
 
 def test_mixed_trades_and_zero_pnl_trade():
     metrics = calculate_performance_metrics(
-        (make_trade("5", "2.5"), make_trade("-2", "-1"), make_trade("0", "0"))
+        (make_trade("5", "2.5"), make_trade("-2", "-1"), make_trade("0", "0")),
+        Decimal("10000"),
     )
 
     assert metrics.total_trades == 3
@@ -79,16 +95,27 @@ def test_mixed_trades_and_zero_pnl_trade():
     assert metrics.average_r == Decimal("0.5")
 
 
-def test_maximum_drawdown_uses_cumulative_pnl():
+def test_maximum_drawdown_uses_equity_curve_with_starting_equity():
     metrics = calculate_performance_metrics(
-        (make_trade("10", "5"), make_trade("-6", "-3"), make_trade("-8", "-4"), make_trade("12", "6"))
+        (make_trade("10", "5"), make_trade("-6", "-3"), make_trade("-8", "-4"), make_trade("12", "6")),
+        Decimal("10000"),
     )
 
+    # Equity: 10000 → 10010 → 10004 → 9996 → 10008; peak 10010; max DD = 10010 - 9996 = 14
     assert metrics.maximum_drawdown == Decimal("14")
 
 
+def test_maximum_drawdown_after_first_trade_loss_equals_that_loss():
+    metrics = calculate_performance_metrics((make_trade("-25", "-12.5"),), Decimal("10000"))
+
+    assert metrics.maximum_drawdown == Decimal("25")
+
+
 def test_metrics_preserve_decimal_arithmetic():
-    metrics = calculate_performance_metrics((make_trade("1.10", "0.55", quantity=3), make_trade("-0.20", "-0.10")))
+    metrics = calculate_performance_metrics(
+        (make_trade("1.10", "0.55", quantity=3), make_trade("-0.20", "-0.10")),
+        Decimal("10000"),
+    )
 
     assert metrics.total_pnl == Decimal("3.10")
     assert metrics.average_pnl == Decimal("1.55")

@@ -6,25 +6,28 @@ from typing import Sequence
 from app.application.backtesting.backtest_models import BacktestTrade, PerformanceMetrics
 
 
-def calculate_performance_metrics(trades: Sequence[BacktestTrade]) -> PerformanceMetrics:
+def calculate_performance_metrics(
+    trades: Sequence[BacktestTrade],
+    starting_equity: Decimal,
+) -> PerformanceMetrics:
     total_trades = len(trades)
     zero = Decimal("0")
     if total_trades == 0:
         return PerformanceMetrics(0, 0, 0, zero, zero, zero, zero, zero, zero)
 
-    pnls = [trade.pnl_per_share * trade.quantity for trade in trades]
+    pnls = [trade.pnl_per_share * Decimal(trade.quantity) for trade in trades]
     total_pnl = sum(pnls, zero)
     winning_trades = sum(pnl > zero for pnl in pnls)
     losing_trades = sum(pnl < zero for pnl in pnls)
     total_r = sum((trade.r_multiple for trade in trades), zero)
-    cumulative_pnl = zero
-    peak_pnl = zero
-    maximum_drawdown = zero
 
+    equity = starting_equity
+    peak_equity = starting_equity
+    maximum_drawdown = zero
     for pnl in pnls:
-        cumulative_pnl += pnl
-        peak_pnl = max(peak_pnl, cumulative_pnl)
-        maximum_drawdown = max(maximum_drawdown, peak_pnl - cumulative_pnl)
+        equity += pnl
+        peak_equity = max(peak_equity, equity)
+        maximum_drawdown = max(maximum_drawdown, peak_equity - equity)
 
     return PerformanceMetrics(
         total_trades=total_trades,

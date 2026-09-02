@@ -350,3 +350,6 @@ async def test_backtest_compounds_equity_after_losing_trade():
     # Equity becomes 10000 - 2*50 = 9900 → risk budget 99 → floor(99/2) = 49
     assert second.quantity == 49
     assert second.quantity < first.quantity
+    # Equity curve: 10000 → 9900 after first loss; peak 10000 → DD 100
+    assert result.metrics is not None
+    assert result.metrics.maximum_drawdown == Decimal("100")

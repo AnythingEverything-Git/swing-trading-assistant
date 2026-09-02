@@ -36,7 +36,7 @@ class BacktestService:
             start=start,
             end=end,
             trades=trades,
-            metrics=calculate_performance_metrics(trades),
+            metrics=calculate_performance_metrics(trades, account_equity),
         )
 
     def _simulate(

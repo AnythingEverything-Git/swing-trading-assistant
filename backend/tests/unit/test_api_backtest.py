@@ -33,7 +33,7 @@ def make_result():
         start=datetime(2024, 1, 1, tzinfo=timezone.utc),
         end=datetime(2024, 1, 31, tzinfo=timezone.utc),
         trades=(trade,),
-        metrics=calculate_performance_metrics((trade,)),
+        metrics=calculate_performance_metrics((trade,), Decimal("10000")),
     )
 
 
@@ -88,7 +88,7 @@ def test_backtest_api_returns_empty_trade_list():
         start=result.start,
         end=result.end,
         trades=(),
-        metrics=calculate_performance_metrics(()),
+        metrics=calculate_performance_metrics((), Decimal("10000")),
     )
     app = create_app()
     app.dependency_overrides[get_backtest_service] = lambda: FakeBacktestService(empty_result)
