@@ -108,6 +108,10 @@ class BacktestService:
     ) -> tuple[int, Decimal, ExitReason]:
         for index in range(confirmation_index + 1, len(candles)):
             candle = candles[index]
+            if candle.open <= stop_loss:
+                return index, candle.open, ExitReason.GAP_THROUGH_STOP
+            if candle.open >= target:
+                return index, candle.open, ExitReason.GAP_THROUGH_TARGET
             if candle.low <= stop_loss:
                 return index, stop_loss, ExitReason.STOP_LOSS
             if candle.high >= target:

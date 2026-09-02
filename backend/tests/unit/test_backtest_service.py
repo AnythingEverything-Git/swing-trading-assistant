@@ -114,6 +114,76 @@ async def test_backtest_stop_takes_precedence_when_both_levels_are_touched():
 
 
 @pytest.mark.asyncio
+async def test_backtest_gap_through_stop_fills_at_open():
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    candles = [
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=0), open=Decimal("90"), high=Decimal("91"), low=Decimal("89"), close=Decimal("90"), volume=1000),
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=1), open=Decimal("95"), high=Decimal("96"), low=Decimal("94"), close=Decimal("95"), volume=1000),
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=2), open=Decimal("100"), high=Decimal("101"), low=Decimal("99"), close=Decimal("100"), volume=1000),
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=3), open=Decimal("96"), high=Decimal("97"), low=Decimal("95"), close=Decimal("96"), volume=1000),
+    ]
+    result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
+        "TST", "1d", candles[0].timestamp, candles[-1].timestamp, Decimal("10000"), Decimal("1")
+    )
+
+    trade = result.trades[0]
+    assert trade.exit_reason.value == "GAP_THROUGH_STOP"
+    assert trade.exit_price == Decimal("96")
+    assert trade.exit_price != trade.stop_loss
+    assert trade.pnl_per_share == Decimal("-4")
+
+
+@pytest.mark.asyncio
+async def test_backtest_gap_through_target_fills_at_open():
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    candles = [
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=0), open=Decimal("90"), high=Decimal("91"), low=Decimal("89"), close=Decimal("90"), volume=1000),
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=1), open=Decimal("95"), high=Decimal("96"), low=Decimal("94"), close=Decimal("95"), volume=1000),
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=2), open=Decimal("100"), high=Decimal("101"), low=Decimal("99"), close=Decimal("100"), volume=1000),
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=3), open=Decimal("107"), high=Decimal("108"), low=Decimal("106"), close=Decimal("107"), volume=1000),
+    ]
+    result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
+        "TST", "1d", candles[0].timestamp, candles[-1].timestamp, Decimal("10000"), Decimal("1")
+    )
+
+    trade = result.trades[0]
+    assert trade.exit_reason.value == "GAP_THROUGH_TARGET"
+    assert trade.exit_price == Decimal("107")
+    assert trade.exit_price != trade.target
+    assert trade.pnl_per_share == Decimal("7")
+
+
+@pytest.mark.asyncio
+async def test_backtest_normal_stop_still_fills_at_stop_loss():
+    candles = make_candles(
+        ["90", "95", "100", "99"],
+        highs=["91", "96", "101", "100"],
+        lows=["89", "94", "99", "97"],
+    )
+    result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
+        "TST", "1d", candles[0].timestamp, candles[-1].timestamp, Decimal("10000"), Decimal("1")
+    )
+
+    assert result.trades[0].exit_reason.value == "STOP_LOSS"
+    assert result.trades[0].exit_price == Decimal("98")
+
+
+@pytest.mark.asyncio
+async def test_backtest_normal_target_still_fills_at_target():
+    candles = make_candles(
+        ["90", "95", "100", "104"],
+        highs=["91", "96", "101", "106"],
+        lows=["89", "94", "99", "103"],
+    )
+    result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
+        "TST", "1d", candles[0].timestamp, candles[-1].timestamp, Decimal("10000"), Decimal("1")
+    )
+
+    assert result.trades[0].exit_reason.value == "TARGET"
+    assert result.trades[0].exit_price == Decimal("105")
+
+
+@pytest.mark.asyncio
 async def test_backtest_closes_open_trade_at_end_of_data():
     candles = make_candles(["90", "95", "100", "102"])
     result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
@@ -305,10 +375,11 @@ class LastBarConfirmStrategy:
 @pytest.mark.asyncio
 async def test_backtest_compounds_equity_after_winning_trade():
     # Confirm@2 -> target on bar 3 (+5/share). Confirm@5 uses same risk/share on higher equity.
+    # Bar 3 open stays between stop and target so this remains a normal TARGET fill, not a gap.
     candles = make_candles(
-        ["90", "95", "100", "105", "101", "100", "105"],
+        ["90", "95", "100", "104", "101", "100", "104"],
         highs=["91", "96", "101", "106", "102", "101", "106"],
-        lows=["89", "94", "99", "104", "100", "99", "104"],
+        lows=["89", "94", "99", "103", "100", "99", "103"],
     )
     candidate = _make_candidate_at()
     strategy = LastBarConfirmStrategy({2: candidate, 5: candidate})
