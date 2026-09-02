@@ -302,6 +302,8 @@ class BreakoutRetestConfirmationStrategy:
 
             if confirmation_index is None:
                 continue
+            if confirmation_index != len(candles) - 1:
+                continue
 
             confirmation_candle = candles[confirmation_index]
             if confirmation_candle.volume is None:

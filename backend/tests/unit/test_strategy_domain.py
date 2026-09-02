@@ -298,6 +298,10 @@ def _build_valid_setup_series():
     return candles
 
 
+def _as_of(candles, last_index):
+    return candles[: last_index + 1]
+
+
 def test_valid_swing_high_structure():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
@@ -331,7 +335,7 @@ def test_valid_swing_low_structure():
 def test_breakout_retest_confirmation_strategy_valid_setup():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
 
     assert result.has_setup is True
@@ -345,7 +349,7 @@ def test_breakout_retest_confirmation_strategy_valid_setup():
 def test_breakout_without_sufficient_volume_is_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     candles[19] = _replace_candle(candles[19], volume=1200)
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
@@ -354,7 +358,7 @@ def test_breakout_without_sufficient_volume_is_rejected():
 def test_breakout_without_retest_is_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     candles[16] = _replace_candle(candles[16], low=Decimal("97.0"), close=Decimal("97.5"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
@@ -363,7 +367,7 @@ def test_breakout_without_retest_is_rejected():
 def test_retest_after_breakout_occurs_within_window():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is True
     assert result.evidence is not None
@@ -373,7 +377,7 @@ def test_retest_after_breakout_occurs_within_window():
 def test_retest_before_breakout_is_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     candles[20] = _replace_candle(candles[20], close=Decimal("99.0"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
@@ -382,7 +386,7 @@ def test_retest_before_breakout_is_rejected():
 def test_retest_invalidation_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     candles[16] = _replace_candle(candles[16], close=Decimal("98.5"), low=Decimal("98.0"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
@@ -391,7 +395,7 @@ def test_retest_invalidation_rejected():
 def test_retest_timeout_after_five_candles_expires():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     for idx in range(17, 22):
         candles[idx] = _replace_candle(candles[idx], close=Decimal("99.0"), low=Decimal("98.4"), high=Decimal("99.8"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
@@ -401,7 +405,7 @@ def test_retest_timeout_after_five_candles_expires():
 def test_confirmation_before_retest_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     candles[18] = _replace_candle(candles[18], close=Decimal("101.9"), high=Decimal("102.3"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
@@ -410,7 +414,7 @@ def test_confirmation_before_retest_rejected():
 def test_invalid_confirmation_volume_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     candles[21] = _replace_candle(candles[21], volume=500)
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
@@ -419,7 +423,7 @@ def test_invalid_confirmation_volume_rejected():
 def test_entry_equals_confirmation_close_and_sl_is_min_of_retest_low_and_resistance_minus_atr():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.candidate.entry_price == Decimal("101.2")
     assert result.candidate.stop_loss == Decimal("98.34623954895353282793282890")
@@ -428,7 +432,7 @@ def test_entry_equals_confirmation_close_and_sl_is_min_of_retest_low_and_resista
 def test_stop_distance_filter_rejects_large_stop():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     candles[21] = _replace_candle(candles[21], close=Decimal("106.0"), low=Decimal("96.5"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
@@ -437,7 +441,7 @@ def test_stop_distance_filter_rejects_large_stop():
 def test_target_rr_and_risk_validation():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.candidate.risk_per_share == Decimal("2.85376045104646717206717110")
     assert result.candidate.target == Decimal("106.9075209020929343441343422")
@@ -448,7 +452,7 @@ def test_target_rr_and_risk_validation():
 def test_invalid_non_positive_risk_rejected():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     candles[21] = _replace_candle(candles[21], close=Decimal("99.0"))
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     assert result.has_setup is False
@@ -468,7 +472,7 @@ def test_insufficient_historical_candles_rejected():
 def test_strategy_is_deterministic_and_has_no_look_ahead_bias():
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     first = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
     second = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=list(candles)))
     assert first == second
@@ -555,7 +559,7 @@ def test_confirmation_window_allows_exactly_one_two_and_three_candles_after_rete
             volume=2200,
         )
 
-        result = strategy.evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
+        result = strategy.evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=_as_of(candles, confirmation_index)))
         assert result.has_setup is True
 
 
@@ -588,7 +592,7 @@ def test_confirmation_on_fourth_candle_after_retest_is_rejected():
         volume=2200,
     )
 
-    result = strategy.evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
+    result = strategy.evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=_as_of(candles, confirmation_index)))
     assert result.has_setup is False
 
 
@@ -683,7 +687,7 @@ def test_strategy_result_evidence_is_declared_and_immutable():
 
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    candles = _build_valid_setup_series()
+    candles = _as_of(_build_valid_setup_series(), 21)
     result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
 
     assert result.has_setup is True
@@ -694,3 +698,48 @@ def test_strategy_result_evidence_is_declared_and_immutable():
     assert not hasattr(result.candidate, "resistance")
     with pytest.raises(FrozenInstanceError):
         result.evidence.breakout_candle_index = 99
+
+
+def test_valid_setup_confirmed_on_final_candle_returns_setup():
+    from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
+
+    candles = _as_of(_build_valid_setup_series(), 21)
+    result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
+
+    assert result.has_setup is True
+    assert result.status == "VALID_SETUP"
+    assert result.evidence is not None
+    assert result.evidence.confirmation_candle_index == len(candles) - 1
+    assert result.candidate is not None
+    assert result.candidate.direction == "LONG"
+
+
+def test_valid_setup_followed_by_extra_candles_returns_no_setup():
+    from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
+
+    candles = _build_valid_setup_series()
+    result = BreakoutRetestConfirmationStrategy().evaluate(StrategyInput(symbol="TST", timeframe="1d", candles=candles))
+
+    assert len(candles) > 22
+    assert result.has_setup is False
+    assert result.status == "NO_SETUP"
+    assert result.candidate is None
+    assert result.evidence is None
+
+
+def test_earlier_valid_setup_is_not_returned_without_current_confirmation():
+    from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
+
+    series = _build_valid_setup_series()
+    confirmed = BreakoutRetestConfirmationStrategy().evaluate(
+        StrategyInput(symbol="TST", timeframe="1d", candles=_as_of(series, 21))
+    )
+    later = BreakoutRetestConfirmationStrategy().evaluate(
+        StrategyInput(symbol="TST", timeframe="1d", candles=_as_of(series, 22))
+    )
+
+    assert confirmed.has_setup is True
+    assert confirmed.evidence.confirmation_candle_index == 21
+    assert later.has_setup is False
+    assert later.candidate is None
+    assert later.evidence is None
