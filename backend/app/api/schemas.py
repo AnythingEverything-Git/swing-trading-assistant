@@ -2,7 +2,7 @@
 
 Note: these mirror domain types but are API-layer DTOs. No business logic here.
 """
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime
@@ -108,3 +108,37 @@ class StrategyEvaluationResponse(BaseModel):
     evidence: StrategyEvidenceResponse | None = None
     status: str
     reason: str | None = None
+
+
+class BacktestRequest(BaseModel):
+    symbol: str
+    timeframe: str
+    start: datetime
+    end: datetime
+    account_equity: Decimal = Field(gt=Decimal("0"))
+    risk_percent: Decimal = Field(gt=Decimal("0"))
+
+
+class BacktestTradeResponse(BaseModel):
+    symbol: str
+    timeframe: str
+    direction: str
+    setup_time: datetime
+    entry_time: datetime
+    entry_price: Decimal
+    stop_loss: Decimal
+    target: Decimal
+    exit_time: datetime
+    exit_price: Decimal
+    quantity: int
+    risk_per_share: Decimal
+    risk_amount: Decimal
+    pnl: Decimal
+    exit_reason: str
+
+
+class BacktestResponse(BaseModel):
+    symbol: str
+    timeframe: str
+    completed_trades: int
+    trades: list[BacktestTradeResponse]

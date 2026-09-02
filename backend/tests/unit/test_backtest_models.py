@@ -28,6 +28,7 @@ def make_trade(**overrides):
         "risk_per_share": Decimal("2.00"),
         "r_multiple": Decimal("4.50"),
         "pnl_per_share": Decimal("9.00"),
+        "quantity": 10,
     }
     base.update(overrides)
     return BacktestTrade(**base)

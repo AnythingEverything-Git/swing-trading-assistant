@@ -63,3 +63,10 @@ async def get_strategy_evaluation_service(provider=Depends(get_upstox_provider))
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
     return StrategyEvaluationService(provider, BreakoutRetestConfirmationStrategy())
+
+
+async def get_backtest_service(provider=Depends(get_upstox_provider)):
+    from app.application.backtesting.backtest_service import BacktestService
+    from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
+
+    return BacktestService(provider, BreakoutRetestConfirmationStrategy())

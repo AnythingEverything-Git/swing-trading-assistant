@@ -39,14 +39,37 @@ type StrategyResponse = {
   reason?: string | null
 }
 
+type BacktestTrade = {
+  entry_time: string
+  entry_price: string | number
+  exit_time: string
+  exit_price: string | number
+  quantity: number
+  risk_amount: string | number
+  pnl: string | number
+  exit_reason: string
+}
+
+type BacktestResponse = {
+  symbol: string
+  timeframe: string
+  completed_trades: number
+  trades: BacktestTrade[]
+}
+
 function App() {
   const [symbol, setSymbol] = useState('')
   const [timeframe, setTimeframe] = useState('1d')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
+  const [accountEquity, setAccountEquity] = useState('10000')
+  const [riskPercent, setRiskPercent] = useState('1')
   const [loading, setLoading] = useState(false)
+  const [backtestLoading, setBacktestLoading] = useState(false)
   const [error, setError] = useState('')
+  const [backtestError, setBacktestError] = useState('')
   const [result, setResult] = useState<StrategyResponse | null>(null)
+  const [backtestResult, setBacktestResult] = useState<BacktestResponse | null>(null)
 
   const baseUrl = useMemo(() => import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000', [])
 
@@ -113,6 +136,51 @@ function App() {
     }
   }
 
+  const handleBacktest = async () => {
+    if (!symbol.trim() || !timeframe.trim() || !start || !end || !accountEquity || !riskPercent) {
+      setBacktestError('Please complete the backtest fields before running.')
+      setBacktestResult(null)
+      return
+    }
+
+    const startDate = new Date(start)
+    const endDate = new Date(end)
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || startDate > endDate) {
+      setBacktestError('Please enter a valid date range for the backtest.')
+      setBacktestResult(null)
+      return
+    }
+
+    setBacktestLoading(true)
+    setBacktestError('')
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/backtest/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: symbol.trim(),
+          timeframe,
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+          account_equity: accountEquity,
+          risk_percent: riskPercent,
+        }),
+      })
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload.detail ?? 'Backtest request failed.')
+      }
+
+      setBacktestResult(await response.json() as BacktestResponse)
+    } catch (caughtError) {
+      setBacktestError(caughtError instanceof Error ? caughtError.message : 'Unexpected error.')
+      setBacktestResult(null)
+    } finally {
+      setBacktestLoading(false)
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="panel">
@@ -156,12 +224,27 @@ function App() {
             </div>
           </div>
 
+          <div className="field-row two-col">
+            <div className="field-group">
+              <label htmlFor="account-equity">Account equity</label>
+              <input id="account-equity" type="number" min="0" step="0.01" value={accountEquity} onChange={(event) => setAccountEquity(event.target.value)} />
+            </div>
+            <div className="field-group">
+              <label htmlFor="risk-percent">Risk %</label>
+              <input id="risk-percent" type="number" min="0" step="0.01" value={riskPercent} onChange={(event) => setRiskPercent(event.target.value)} />
+            </div>
+          </div>
+
           <button type="submit" className="primary-button" disabled={loading}>
             {loading ? 'Evaluating...' : 'Evaluate'}
+          </button>
+          <button type="button" className="secondary-button" onClick={handleBacktest} disabled={backtestLoading}>
+            {backtestLoading ? 'Running backtest...' : 'Run backtest'}
           </button>
         </form>
 
         {error && <div className="status error">{error}</div>}
+        {backtestError && <div className="status error">{backtestError}</div>}
 
         {result && (
           <section className="result-card">
@@ -216,6 +299,40 @@ function App() {
                   <div><dt>Confirmation volume</dt><dd>{String(result.evidence.confirmation_volume)}</dd></div>
                   <div><dt>Decision</dt><dd>{result.evidence.decision}</dd></div>
                 </dl>
+              </div>
+            )}
+          </section>
+        )}
+
+        {backtestResult && (
+          <section className="result-card">
+            <h2>Backtest results</h2>
+            <div className="result-grid">
+              <div><strong>Completed trades:</strong> {backtestResult.completed_trades}</div>
+              <div><strong>Symbol:</strong> {backtestResult.symbol}</div>
+              <div><strong>Timeframe:</strong> {backtestResult.timeframe}</div>
+            </div>
+            {backtestResult.trades.length === 0 ? (
+              <div className="empty-state">No trades were generated for this history and risk configuration.</div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Entry</th><th>Exit</th><th>Quantity</th><th>Risk</th><th>P&amp;L</th><th>Exit reason</th></tr>
+                  </thead>
+                  <tbody>
+                    {backtestResult.trades.map((trade, index) => (
+                      <tr key={`${trade.entry_time}-${index}`}>
+                        <td>{String(trade.entry_price)}<small>{trade.entry_time}</small></td>
+                        <td>{String(trade.exit_price)}<small>{trade.exit_time}</small></td>
+                        <td>{trade.quantity}</td>
+                        <td>{String(trade.risk_amount)}</td>
+                        <td>{String(trade.pnl)}</td>
+                        <td>{trade.exit_reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </section>

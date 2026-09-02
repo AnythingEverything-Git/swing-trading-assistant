@@ -19,6 +19,7 @@ class ExitReason(str, Enum):
     TARGET = "TARGET"
     GAP_THROUGH_STOP = "GAP_THROUGH_STOP"
     GAP_THROUGH_TARGET = "GAP_THROUGH_TARGET"
+    END_OF_DATA = "END_OF_DATA"
     OPEN = "OPEN"
 
 
@@ -37,6 +38,7 @@ class BacktestTrade:
     risk_per_share: Decimal
     r_multiple: Decimal | None
     pnl_per_share: Decimal | None
+    quantity: int
 
     def __post_init__(self) -> None:
         if not self.symbol or not self.symbol.strip():
@@ -57,6 +59,8 @@ class BacktestTrade:
             raise ValueError("target must be greater than zero")
         if risk_per_share <= 0:
             raise ValueError("risk_per_share must be greater than zero")
+        if not isinstance(self.quantity, int) or isinstance(self.quantity, bool) or self.quantity <= 0:
+            raise ValueError("quantity must be a positive integer")
         if self.entry_time < self.setup_time:
             raise ValueError("entry_time must be greater than or equal to setup_time")
 
@@ -134,10 +138,6 @@ class BacktestResult:
 
         trades_tuple = tuple(self.trades)
         object.__setattr__(self, "trades", trades_tuple)
-
-        if self.summary is None:
-            raise ValueError("summary is required")
-
 
 __all__ = [
     "ExitReason",
