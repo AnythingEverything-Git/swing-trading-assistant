@@ -508,6 +508,92 @@ def test_confirmation_on_fourth_candle_after_retest_is_rejected():
     assert result.has_setup is False
 
 
+def test_strategy_evidence_valid_construction_and_immutability():
+    from dataclasses import FrozenInstanceError
+
+    from app.domain.strategy.strategy import StrategyEvidence
+
+    evidence = StrategyEvidence(
+        resistance=Decimal("101.50"),
+        breakout_candle_index=19,
+        breakout_candle_time=datetime(2024, 1, 20, tzinfo=timezone.utc),
+        retest_candle_index=20,
+        retest_candle_time=datetime(2024, 1, 21, tzinfo=timezone.utc),
+        confirmation_candle_index=21,
+        confirmation_candle_time=datetime(2024, 1, 22, tzinfo=timezone.utc),
+        atr_value=Decimal("2.50"),
+        volume_sma_value=Decimal("1200"),
+        breakout_volume=2000,
+        retest_low=Decimal("99.00"),
+        confirmation_volume=2200,
+        decision="valid breakout -> retest -> confirmation",
+    )
+
+    assert evidence.resistance == Decimal("101.50")
+    assert isinstance(evidence.atr_value, Decimal)
+    assert isinstance(evidence.volume_sma_value, Decimal)
+    assert isinstance(evidence.retest_low, Decimal)
+    with pytest.raises(FrozenInstanceError):
+        evidence.decision = "changed"
+
+
+def test_strategy_evidence_rejects_invalid_required_values():
+    from app.domain.strategy.strategy import StrategyEvidence
+
+    base_kwargs = {
+        "resistance": Decimal("101.50"),
+        "breakout_candle_index": 19,
+        "breakout_candle_time": datetime(2024, 1, 20, tzinfo=timezone.utc),
+        "retest_candle_index": 20,
+        "retest_candle_time": datetime(2024, 1, 21, tzinfo=timezone.utc),
+        "confirmation_candle_index": 21,
+        "confirmation_candle_time": datetime(2024, 1, 22, tzinfo=timezone.utc),
+        "atr_value": Decimal("2.50"),
+        "volume_sma_value": Decimal("1200"),
+        "breakout_volume": 2000,
+        "retest_low": Decimal("99.00"),
+        "confirmation_volume": 2200,
+    }
+
+    with pytest.raises(ValueError):
+        StrategyEvidence(decision="", **base_kwargs)
+    with pytest.raises(ValueError):
+        StrategyEvidence(**{**base_kwargs, "resistance": Decimal("0"), "decision": "ok"})
+    with pytest.raises(ValueError):
+        StrategyEvidence(**{**base_kwargs, "atr_value": Decimal("-1"), "decision": "ok"})
+    with pytest.raises(ValueError):
+        StrategyEvidence(**{**base_kwargs, "volume_sma_value": Decimal("0"), "decision": "ok"})
+
+
+def test_strategy_evidence_rejects_negative_indexes_and_invalid_volumes():
+    from app.domain.strategy.strategy import StrategyEvidence
+
+    base_kwargs = {
+        "resistance": Decimal("101.50"),
+        "breakout_candle_index": 19,
+        "breakout_candle_time": datetime(2024, 1, 20, tzinfo=timezone.utc),
+        "retest_candle_index": 20,
+        "retest_candle_time": datetime(2024, 1, 21, tzinfo=timezone.utc),
+        "confirmation_candle_index": 21,
+        "confirmation_candle_time": datetime(2024, 1, 22, tzinfo=timezone.utc),
+        "atr_value": Decimal("2.50"),
+        "volume_sma_value": Decimal("1200"),
+        "breakout_volume": 2000,
+        "retest_low": Decimal("99.00"),
+        "confirmation_volume": 2200,
+        "decision": "ok",
+    }
+
+    with pytest.raises(ValueError):
+        StrategyEvidence(**{**base_kwargs, "breakout_candle_index": -1})
+    with pytest.raises(ValueError):
+        StrategyEvidence(**{**base_kwargs, "retest_candle_index": -5})
+    with pytest.raises(ValueError):
+        StrategyEvidence(**{**base_kwargs, "confirmation_volume": -1})
+    with pytest.raises(ValueError):
+        StrategyEvidence(**{**base_kwargs, "breakout_volume": -10})
+
+
 def test_strategy_result_evidence_is_declared_and_immutable():
     from dataclasses import FrozenInstanceError
 

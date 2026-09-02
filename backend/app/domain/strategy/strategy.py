@@ -96,6 +96,16 @@ class TradeCandidate:
         object.__setattr__(self, "risk_reward_ratio", rr_ratio)
 
 
+def _as_decimal(value: Decimal, field_name: str, *, positive: bool = True) -> Decimal:
+    if not isinstance(value, Decimal):
+        raise TypeError(f"{field_name} must be a Decimal")
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    if positive and value <= 0:
+        raise ValueError(f"{field_name} must be greater than zero")
+    return value
+
+
 @dataclass(frozen=True)
 class StrategyEvidence:
     resistance: Decimal
@@ -111,6 +121,41 @@ class StrategyEvidence:
     retest_low: Decimal
     confirmation_volume: int | None
     decision: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.breakout_candle_time, datetime):
+            raise TypeError("breakout_candle_time must be a datetime")
+        if not isinstance(self.retest_candle_time, datetime):
+            raise TypeError("retest_candle_time must be a datetime")
+        if not isinstance(self.confirmation_candle_time, datetime):
+            raise TypeError("confirmation_candle_time must be a datetime")
+
+        for field_name, value in (
+            ("resistance", self.resistance),
+            ("atr_value", self.atr_value),
+            ("volume_sma_value", self.volume_sma_value),
+            ("retest_low", self.retest_low),
+        ):
+            object.__setattr__(self, field_name, _as_decimal(value, field_name, positive=True))
+
+        for field_name, value in (
+            ("breakout_candle_index", self.breakout_candle_index),
+            ("retest_candle_index", self.retest_candle_index),
+            ("confirmation_candle_index", self.confirmation_candle_index),
+        ):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"{field_name} must be a non-negative integer")
+
+        for field_name, value in (
+            ("breakout_volume", self.breakout_volume),
+            ("confirmation_volume", self.confirmation_volume),
+        ):
+            if value is not None:
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    raise ValueError(f"{field_name} must be None or a non-negative integer")
+
+        if not isinstance(self.decision, str) or not self.decision.strip():
+            raise ValueError("decision must be a non-empty string")
 
 
 @dataclass(frozen=True)
