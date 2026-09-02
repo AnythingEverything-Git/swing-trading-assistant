@@ -9,6 +9,7 @@ from app.application.backtesting.backtest_models import (
     BacktestSummary,
     BacktestTrade,
     ExitReason,
+    PerformanceMetrics,
 )
 
 
@@ -144,3 +145,17 @@ def test_backtest_result_stores_trades_immutably():
     assert isinstance(result.trades, tuple)
     with pytest.raises(FrozenInstanceError):
         result.trades = ()
+
+
+def test_backtest_result_stores_optional_performance_metrics():
+    metrics = PerformanceMetrics(1, 1, 0, Decimal("100"), Decimal("90"), Decimal("90"), Decimal("4.5"), Decimal("4.5"), Decimal("0"))
+    result = BacktestResult(
+        symbol="TST",
+        timeframe="1d",
+        start=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        end=datetime(2024, 1, 31, tzinfo=timezone.utc),
+        trades=(),
+        metrics=metrics,
+    )
+
+    assert result.metrics == metrics

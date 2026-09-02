@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_backtest_service
-from app.api.schemas import BacktestRequest, BacktestResponse, BacktestTradeResponse
+from app.api.schemas import BacktestRequest, BacktestResponse, BacktestTradeResponse, PerformanceMetricsResponse
 from app.application.backtesting.backtest_service import BacktestService
 
 
@@ -57,4 +57,15 @@ async def run_backtest(
         timeframe=result.timeframe,
         completed_trades=len(trades),
         trades=trades,
+        metrics=PerformanceMetricsResponse(
+            total_trades=result.metrics.total_trades,
+            winning_trades=result.metrics.winning_trades,
+            losing_trades=result.metrics.losing_trades,
+            win_rate=result.metrics.win_rate,
+            total_pnl=result.metrics.total_pnl,
+            average_pnl=result.metrics.average_pnl,
+            total_r=result.metrics.total_r,
+            average_r=result.metrics.average_r,
+            maximum_drawdown=result.metrics.maximum_drawdown,
+        ),
     )

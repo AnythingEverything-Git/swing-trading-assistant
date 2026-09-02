@@ -55,6 +55,17 @@ type BacktestResponse = {
   timeframe: string
   completed_trades: number
   trades: BacktestTrade[]
+  metrics: {
+    total_trades: number
+    winning_trades: number
+    losing_trades: number
+    win_rate: string | number
+    total_pnl: string | number
+    average_pnl: string | number
+    total_r: string | number
+    average_r: string | number
+    maximum_drawdown: string | number
+  }
 }
 
 function App() {
@@ -311,6 +322,15 @@ function App() {
               <div><strong>Completed trades:</strong> {backtestResult.completed_trades}</div>
               <div><strong>Symbol:</strong> {backtestResult.symbol}</div>
               <div><strong>Timeframe:</strong> {backtestResult.timeframe}</div>
+              <div><strong>Total trades:</strong> {backtestResult.metrics.total_trades}</div>
+              <div><strong>Winning trades:</strong> {backtestResult.metrics.winning_trades}</div>
+              <div><strong>Losing trades:</strong> {backtestResult.metrics.losing_trades}</div>
+              <div><strong>Win rate:</strong> {String(backtestResult.metrics.win_rate)}%</div>
+              <div><strong>Total P&amp;L:</strong> {String(backtestResult.metrics.total_pnl)}</div>
+              <div><strong>Average P&amp;L:</strong> {String(backtestResult.metrics.average_pnl)}</div>
+              <div><strong>Total R:</strong> {String(backtestResult.metrics.total_r)}</div>
+              <div><strong>Average R:</strong> {String(backtestResult.metrics.average_r)}</div>
+              <div><strong>Maximum drawdown:</strong> {String(backtestResult.metrics.maximum_drawdown)}</div>
             </div>
             {backtestResult.trades.length === 0 ? (
               <div className="empty-state">No trades were generated for this history and risk configuration.</div>

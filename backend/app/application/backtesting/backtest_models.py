@@ -120,6 +120,19 @@ class BacktestSummary:
 
 
 @dataclass(frozen=True)
+class PerformanceMetrics:
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    win_rate: Decimal
+    total_pnl: Decimal
+    average_pnl: Decimal
+    total_r: Decimal
+    average_r: Decimal
+    maximum_drawdown: Decimal
+
+
+@dataclass(frozen=True)
 class BacktestResult:
     symbol: str
     timeframe: str
@@ -127,6 +140,7 @@ class BacktestResult:
     end: datetime
     trades: tuple[BacktestTrade, ...] = field(default_factory=tuple)
     summary: BacktestSummary | None = None
+    metrics: PerformanceMetrics | None = None
 
     def __post_init__(self) -> None:
         if not self.symbol or not self.symbol.strip():
@@ -143,5 +157,6 @@ __all__ = [
     "ExitReason",
     "BacktestTrade",
     "BacktestSummary",
+    "PerformanceMetrics",
     "BacktestResult",
 ]

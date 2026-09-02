@@ -137,8 +137,21 @@ class BacktestTradeResponse(BaseModel):
     exit_reason: str
 
 
+class PerformanceMetricsResponse(BaseModel):
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    win_rate: Decimal
+    total_pnl: Decimal
+    average_pnl: Decimal
+    total_r: Decimal
+    average_r: Decimal
+    maximum_drawdown: Decimal
+
+
 class BacktestResponse(BaseModel):
     symbol: str
     timeframe: str
     completed_trades: int
     trades: list[BacktestTradeResponse]
+    metrics: PerformanceMetricsResponse

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.api.deps import get_backtest_service
 from app.api.main import create_app
 from app.application.backtesting.backtest_models import BacktestResult, BacktestTrade, ExitReason
+from app.application.backtesting.performance_metrics import calculate_performance_metrics
 
 
 def make_result():
@@ -32,6 +33,7 @@ def make_result():
         start=datetime(2024, 1, 1, tzinfo=timezone.utc),
         end=datetime(2024, 1, 31, tzinfo=timezone.utc),
         trades=(trade,),
+        metrics=calculate_performance_metrics((trade,)),
     )
 
 
@@ -65,6 +67,17 @@ def test_backtest_api_returns_completed_trade():
     assert response.json()["trades"][0]["quantity"] == 50
     assert response.json()["trades"][0]["risk_amount"] == "100"
     assert response.json()["trades"][0]["pnl"] == "250"
+    assert response.json()["metrics"] == {
+        "total_trades": 1,
+        "winning_trades": 1,
+        "losing_trades": 0,
+        "win_rate": "100",
+        "total_pnl": "250",
+        "average_pnl": "250",
+        "total_r": "2.5",
+        "average_r": "2.5",
+        "maximum_drawdown": "0",
+    }
 
 
 def test_backtest_api_returns_empty_trade_list():
@@ -75,6 +88,7 @@ def test_backtest_api_returns_empty_trade_list():
         start=result.start,
         end=result.end,
         trades=(),
+        metrics=calculate_performance_metrics(()),
     )
     app = create_app()
     app.dependency_overrides[get_backtest_service] = lambda: FakeBacktestService(empty_result)
@@ -93,7 +107,23 @@ def test_backtest_api_returns_empty_trade_list():
         )
 
     assert response.status_code == 200
-    assert response.json() == {"symbol": "TST", "timeframe": "1d", "completed_trades": 0, "trades": []}
+    assert response.json() == {
+        "symbol": "TST",
+        "timeframe": "1d",
+        "completed_trades": 0,
+        "trades": [],
+        "metrics": {
+            "total_trades": 0,
+            "winning_trades": 0,
+            "losing_trades": 0,
+            "win_rate": "0",
+            "total_pnl": "0",
+            "average_pnl": "0",
+            "total_r": "0",
+            "average_r": "0",
+            "maximum_drawdown": "0",
+        },
+    }
 
 
 def test_backtest_api_rejects_invalid_date_range():

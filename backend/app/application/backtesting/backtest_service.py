@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.application.backtesting.backtest_models import BacktestResult, BacktestTrade, ExitReason
+from app.application.backtesting.performance_metrics import calculate_performance_metrics
 from app.application.backtesting.position_sizing import calculate_position_size
 from app.domain.market_data import Candle
 from app.domain.market_data.provider import MarketDataProvider
@@ -35,6 +36,7 @@ class BacktestService:
             start=start,
             end=end,
             trades=trades,
+            metrics=calculate_performance_metrics(trades),
         )
 
     def _simulate(
