@@ -167,14 +167,18 @@ class StrategyResult:
     reason: str | None = None
 
     def __post_init__(self) -> None:
-        if self.has_setup and self.candidate is None:
-            raise ValueError("candidate is required when has_setup is True")
-        if not self.has_setup and self.candidate is not None:
-            raise ValueError("candidate must be None when has_setup is False")
-        if self.has_setup and self.evidence is not None and self.status == "NO_SETUP":
-            object.__setattr__(self, "status", "VALID_SETUP")
-        if not self.has_setup and self.evidence is not None:
-            raise ValueError("evidence must be None when has_setup is False")
+        if self.has_setup:
+            if self.candidate is None:
+                raise ValueError("candidate is required when has_setup is True")
+            if self.evidence is None:
+                raise ValueError("evidence is required when has_setup is True")
+            if self.status == "NO_SETUP":
+                object.__setattr__(self, "status", "VALID_SETUP")
+        else:
+            if self.candidate is not None:
+                raise ValueError("candidate must be None when has_setup is False")
+            if self.evidence is not None:
+                raise ValueError("evidence must be None when has_setup is False")
         if not self.has_setup and not self.status:
             object.__setattr__(self, "status", "NO_SETUP")
 

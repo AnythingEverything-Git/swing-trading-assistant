@@ -6,7 +6,25 @@ from decimal import Decimal
 import pytest
 
 from app.domain.market_data import Candle
-from app.domain.strategy.strategy import StrategyInput, StrategyResult, TradeCandidate
+from app.domain.strategy.strategy import StrategyEvidence, StrategyInput, StrategyResult, TradeCandidate
+
+
+def _make_valid_evidence():
+    return StrategyEvidence(
+        resistance=Decimal("101.50"),
+        breakout_candle_index=19,
+        breakout_candle_time=datetime(2024, 1, 20, tzinfo=timezone.utc),
+        retest_candle_index=20,
+        retest_candle_time=datetime(2024, 1, 21, tzinfo=timezone.utc),
+        confirmation_candle_index=21,
+        confirmation_candle_time=datetime(2024, 1, 22, tzinfo=timezone.utc),
+        atr_value=Decimal("2.50"),
+        volume_sma_value=Decimal("1200"),
+        breakout_volume=2000,
+        retest_low=Decimal("99.00"),
+        confirmation_volume=2200,
+        decision="valid breakout -> retest -> confirmation",
+    )
 from app.infrastructure.market_data.mock_provider import MockMarketDataProvider
 from app.application.strategy.strategy_evaluation_service import StrategyEvaluationService
 
@@ -92,7 +110,8 @@ async def test_service_returns_strategy_result_unchanged():
         risk_reward_ratio=Decimal("0"),
         setup_name="breakout",
     )
-    expected = StrategyResult(has_setup=True, candidate=candidate, status="VALID_SETUP")
+    evidence = _make_valid_evidence()
+    expected = StrategyResult(has_setup=True, candidate=candidate, evidence=evidence, status="VALID_SETUP")
     provider = MockMarketDataProvider(candles=[candle])
     strategy = StubStrategy(expected)
 

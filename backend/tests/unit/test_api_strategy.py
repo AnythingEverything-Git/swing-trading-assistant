@@ -6,7 +6,25 @@ from fastapi.testclient import TestClient
 
 from app.api.main import create_app
 from app.api.deps import get_strategy_evaluation_service
-from app.domain.strategy.strategy import StrategyResult, TradeCandidate
+from app.domain.strategy.strategy import StrategyEvidence, StrategyResult, TradeCandidate
+
+
+def _make_valid_evidence():
+    return StrategyEvidence(
+        resistance=Decimal("101.50"),
+        breakout_candle_index=19,
+        breakout_candle_time=datetime(2024, 1, 20, tzinfo=timezone.utc),
+        retest_candle_index=20,
+        retest_candle_time=datetime(2024, 1, 21, tzinfo=timezone.utc),
+        confirmation_candle_index=21,
+        confirmation_candle_time=datetime(2024, 1, 22, tzinfo=timezone.utc),
+        atr_value=Decimal("2.50"),
+        volume_sma_value=Decimal("1200"),
+        breakout_volume=2000,
+        retest_low=Decimal("99.00"),
+        confirmation_volume=2200,
+        decision="valid breakout -> retest -> confirmation",
+    )
 
 
 class FakeStrategyService:
@@ -38,7 +56,8 @@ def test_strategy_evaluation_success(monkeypatch):
         risk_reward_ratio=Decimal("0"),
         setup_name="breakout",
     )
-    service = FakeStrategyService(result=StrategyResult(has_setup=True, candidate=candidate, status="VALID_SETUP"))
+    evidence = _make_valid_evidence()
+    service = FakeStrategyService(result=StrategyResult(has_setup=True, candidate=candidate, evidence=evidence, status="VALID_SETUP"))
 
     async def fake_get_strategy_evaluation_service():
         return service

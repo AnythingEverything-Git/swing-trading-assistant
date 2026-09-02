@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.domain.strategy.strategy import StrategyInput, StrategyResult, TradeCandidate
+from app.domain.strategy.strategy import StrategyEvidence, StrategyInput, StrategyResult, TradeCandidate
 from app.domain.market_data import Candle
 
 
@@ -80,10 +80,94 @@ def test_strategy_result_with_candidate():
         risk_reward_ratio=Decimal("0"),
         setup_name="breakout",
     )
+    evidence = StrategyEvidence(
+        resistance=Decimal("101.50"),
+        breakout_candle_index=19,
+        breakout_candle_time=datetime(2024, 1, 20, tzinfo=timezone.utc),
+        retest_candle_index=20,
+        retest_candle_time=datetime(2024, 1, 21, tzinfo=timezone.utc),
+        confirmation_candle_index=21,
+        confirmation_candle_time=datetime(2024, 1, 22, tzinfo=timezone.utc),
+        atr_value=Decimal("2.50"),
+        volume_sma_value=Decimal("1200"),
+        breakout_volume=2000,
+        retest_low=Decimal("99.00"),
+        confirmation_volume=2200,
+        decision="valid breakout -> retest -> confirmation",
+    )
 
-    result = StrategyResult(has_setup=True, candidate=candidate, status="VALID_SETUP")
+    result = StrategyResult(has_setup=True, candidate=candidate, evidence=evidence)
     assert result.has_setup is True
     assert result.candidate == candidate
+    assert result.evidence == evidence
+    assert result.status == "VALID_SETUP"
+
+
+def _make_valid_candidate():
+    return TradeCandidate(
+        symbol="TST",
+        timeframe="1d",
+        direction="LONG",
+        entry_price=Decimal("100.00"),
+        stop_loss=Decimal("98.00"),
+        target=Decimal("110.00"),
+        risk_per_share=Decimal("0"),
+        reward=Decimal("0"),
+        risk_reward_ratio=Decimal("0"),
+        setup_name="breakout",
+    )
+
+
+def _make_valid_evidence():
+    return StrategyEvidence(
+        resistance=Decimal("101.50"),
+        breakout_candle_index=19,
+        breakout_candle_time=datetime(2024, 1, 20, tzinfo=timezone.utc),
+        retest_candle_index=20,
+        retest_candle_time=datetime(2024, 1, 21, tzinfo=timezone.utc),
+        confirmation_candle_index=21,
+        confirmation_candle_time=datetime(2024, 1, 22, tzinfo=timezone.utc),
+        atr_value=Decimal("2.50"),
+        volume_sma_value=Decimal("1200"),
+        breakout_volume=2000,
+        retest_low=Decimal("99.00"),
+        confirmation_volume=2200,
+        decision="valid breakout -> retest -> confirmation",
+    )
+
+
+def test_strategy_result_requires_candidate_and_evidence_for_valid_setup():
+    candidate = _make_valid_candidate()
+    evidence = _make_valid_evidence()
+
+    result = StrategyResult(has_setup=True, candidate=candidate, evidence=evidence)
+    assert result.has_setup is True
+    assert result.candidate == candidate
+    assert result.evidence == evidence
+    assert result.status == "VALID_SETUP"
+
+    with pytest.raises(ValueError, match="candidate is required when has_setup is True"):
+        StrategyResult(has_setup=True, candidate=None, evidence=evidence)
+
+    with pytest.raises(ValueError, match="evidence is required when has_setup is True"):
+        StrategyResult(has_setup=True, candidate=candidate, evidence=None)
+
+
+def test_strategy_result_requires_candidate_and_evidence_to_be_absent_for_no_setup():
+    candidate = _make_valid_candidate()
+    evidence = _make_valid_evidence()
+
+    result = StrategyResult(has_setup=False, candidate=None, evidence=None)
+    assert result.has_setup is False
+    assert result.candidate is None
+    assert result.evidence is None
+    assert result.status == "NO_SETUP"
+
+    with pytest.raises(ValueError, match="candidate must be None when has_setup is False"):
+        StrategyResult(has_setup=False, candidate=candidate, evidence=None)
+
+    with pytest.raises(ValueError, match="evidence must be None when has_setup is False"):
+        StrategyResult(has_setup=False, candidate=None, evidence=evidence)
 
 
 def test_strategy_result_without_candidate():
