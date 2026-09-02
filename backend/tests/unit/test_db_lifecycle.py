@@ -69,10 +69,9 @@ def test_shutdown_disposes_engine(monkeypatch):
     assert getattr(engine, "_was_disposed", False) is True
 
 
-def test_missing_db_fails_clearly():
-    # Ensure DATABASE_URL not set
-    if "DATABASE_URL" in os.environ:
-        del os.environ["DATABASE_URL"]
+def test_missing_db_fails_clearly(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
 
     app = create_app()
     # entering the TestClient should fail during startup due to missing DB settings
