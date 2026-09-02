@@ -68,6 +68,80 @@ type BacktestResponse = {
   }
 }
 
+function valueClass(value: string | number) {
+  const numericValue = Number(value)
+  if (numericValue > 0) return 'value-positive'
+  if (numericValue < 0) return 'value-negative'
+  return 'value-neutral'
+}
+
+function decimalParts(value: string | number) {
+  const [coefficient, exponentText] = String(value).toLowerCase().split('e')
+  const sign = coefficient.startsWith('-') ? -1n : 1n
+  const unsigned = coefficient.replace(/^[+-]/, '')
+  const decimalDigits = unsigned.split('.')[1]?.length ?? 0
+  const digits = unsigned.replace('.', '') || '0'
+  const exponent = exponentText ? Number.parseInt(exponentText, 10) : 0
+  return {
+    integer: sign * BigInt(digits),
+    scale: decimalDigits - exponent,
+  }
+}
+
+function greatestCommonDivisor(left: bigint, right: bigint): bigint {
+  let a = left < 0n ? -left : left
+  let b = right < 0n ? -right : right
+  while (b !== 0n) {
+    const remainder = a % b
+    a = b
+    b = remainder
+  }
+  return a
+}
+
+function exactDecimalRatio(numeratorValue: string | number, denominatorValue: string | number) {
+  const numeratorParts = decimalParts(numeratorValue)
+  const denominatorParts = decimalParts(denominatorValue)
+  if (denominatorParts.integer === 0n) return '0'
+
+  let numerator = numeratorParts.integer
+  let denominator = denominatorParts.integer
+  const scaleDifference = denominatorParts.scale - numeratorParts.scale
+  if (scaleDifference >= 0) numerator *= 10n ** BigInt(scaleDifference)
+  else denominator *= 10n ** BigInt(-scaleDifference)
+
+  const divisor = greatestCommonDivisor(numerator, denominator)
+  numerator /= divisor
+  denominator /= divisor
+  if (denominator < 0n) {
+    numerator = -numerator
+    denominator = -denominator
+  }
+
+  let remainingDenominator = denominator
+  while (remainingDenominator % 2n === 0n) remainingDenominator /= 2n
+  while (remainingDenominator % 5n === 0n) remainingDenominator /= 5n
+  if (remainingDenominator !== 1n) return `${numerator}/${denominator}`
+
+  const sign = numerator < 0n ? '-' : ''
+  const absoluteNumerator = numerator < 0n ? -numerator : numerator
+  const integerPart = absoluteNumerator / denominator
+  let remainder = absoluteNumerator % denominator
+  if (remainder === 0n) return `${sign}${integerPart}`
+
+  let fraction = ''
+  while (remainder !== 0n) {
+    remainder *= 10n
+    fraction += String(remainder / denominator)
+    remainder %= denominator
+  }
+  return `${sign}${integerPart}.${fraction}`
+}
+
+function tradeR(trade: BacktestTrade) {
+  return exactDecimalRatio(trade.pnl, trade.risk_amount)
+}
+
 function App() {
   const [symbol, setSymbol] = useState('')
   const [timeframe, setTimeframe] = useState('1d')
@@ -318,36 +392,36 @@ function App() {
         {backtestResult && (
           <section className="result-card">
             <h2>Backtest results</h2>
-            <div className="result-grid">
-              <div><strong>Completed trades:</strong> {backtestResult.completed_trades}</div>
-              <div><strong>Symbol:</strong> {backtestResult.symbol}</div>
-              <div><strong>Timeframe:</strong> {backtestResult.timeframe}</div>
-              <div><strong>Total trades:</strong> {backtestResult.metrics.total_trades}</div>
-              <div><strong>Winning trades:</strong> {backtestResult.metrics.winning_trades}</div>
-              <div><strong>Losing trades:</strong> {backtestResult.metrics.losing_trades}</div>
-              <div><strong>Win rate:</strong> {String(backtestResult.metrics.win_rate)}%</div>
-              <div><strong>Total P&amp;L:</strong> {String(backtestResult.metrics.total_pnl)}</div>
-              <div><strong>Average P&amp;L:</strong> {String(backtestResult.metrics.average_pnl)}</div>
-              <div><strong>Total R:</strong> {String(backtestResult.metrics.total_r)}</div>
-              <div><strong>Average R:</strong> {String(backtestResult.metrics.average_r)}</div>
-              <div><strong>Maximum drawdown:</strong> {String(backtestResult.metrics.maximum_drawdown)}</div>
+            <div className="metric-grid">
+              <div className="metric-card"><span>Total Trades</span><strong>{backtestResult.metrics.total_trades}</strong></div>
+              <div className="metric-card"><span>Winning Trades</span><strong>{backtestResult.metrics.winning_trades}</strong></div>
+              <div className="metric-card"><span>Losing Trades</span><strong>{backtestResult.metrics.losing_trades}</strong></div>
+              <div className="metric-card"><span>Win Rate</span><strong>{String(backtestResult.metrics.win_rate)}%</strong></div>
+              <div className="metric-card"><span>Total P&amp;L</span><strong className={valueClass(backtestResult.metrics.total_pnl)}>{String(backtestResult.metrics.total_pnl)}</strong></div>
+              <div className="metric-card"><span>Average P&amp;L</span><strong className={valueClass(backtestResult.metrics.average_pnl)}>{String(backtestResult.metrics.average_pnl)}</strong></div>
+              <div className="metric-card"><span>Total R</span><strong>{String(backtestResult.metrics.total_r)}</strong></div>
+              <div className="metric-card"><span>Average R</span><strong>{String(backtestResult.metrics.average_r)}</strong></div>
+              <div className="metric-card"><span>Maximum Drawdown</span><strong className="value-neutral">{String(backtestResult.metrics.maximum_drawdown)}</strong></div>
             </div>
             {backtestResult.trades.length === 0 ? (
-              <div className="empty-state">No trades were generated for this history and risk configuration.</div>
+              <div className="empty-state"><strong>Backtest complete</strong><span>No trades were generated for this history and risk configuration.</span></div>
             ) : (
               <div className="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>Entry</th><th>Exit</th><th>Quantity</th><th>Risk</th><th>P&amp;L</th><th>Exit reason</th></tr>
+                    <tr><th>Entry</th><th>Exit</th><th>Quantity</th><th>Entry Price</th><th>Exit Price</th><th>Risk</th><th>P&amp;L</th><th>R</th><th>Exit Reason</th></tr>
                   </thead>
                   <tbody>
                     {backtestResult.trades.map((trade, index) => (
                       <tr key={`${trade.entry_time}-${index}`}>
-                        <td>{String(trade.entry_price)}<small>{trade.entry_time}</small></td>
-                        <td>{String(trade.exit_price)}<small>{trade.exit_time}</small></td>
+                        <td>{trade.entry_time}</td>
+                        <td>{trade.exit_time}</td>
                         <td>{trade.quantity}</td>
+                        <td>{String(trade.entry_price)}</td>
+                        <td>{String(trade.exit_price)}</td>
                         <td>{String(trade.risk_amount)}</td>
-                        <td>{String(trade.pnl)}</td>
+                        <td className={valueClass(trade.pnl)}>{String(trade.pnl)}</td>
+                        <td className={valueClass(trade.pnl)}>{tradeR(trade)}</td>
                         <td>{trade.exit_reason}</td>
                       </tr>
                     ))}

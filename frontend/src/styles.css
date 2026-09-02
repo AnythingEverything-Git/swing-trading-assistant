@@ -167,6 +167,48 @@ input:focus, select:focus {
   margin-bottom: 20px;
 }
 
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.metric-card {
+  display: grid;
+  gap: 8px;
+  min-height: 78px;
+  padding: 13px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.metric-card span {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.metric-card strong {
+  color: #f8fafc;
+  font-size: 1.1rem;
+}
+
+.value-positive {
+  color: #86efac !important;
+}
+
+.value-negative {
+  color: #fca5a5 !important;
+}
+
+.value-neutral {
+  color: #cbd5e1 !important;
+}
+
 .section-box {
   margin-top: 18px;
   border: 1px solid rgba(148, 163, 184, 0.2);
@@ -201,6 +243,8 @@ dd {
 }
 
 .empty-state {
+  display: grid;
+  gap: 4px;
   padding: 18px;
   border: 1px dashed rgba(148, 163, 184, 0.35);
   border-radius: 10px;
@@ -245,5 +289,9 @@ td small {
 
   .two-col {
     grid-template-columns: 1fr;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
