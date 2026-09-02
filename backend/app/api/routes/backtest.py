@@ -26,6 +26,8 @@ async def run_backtest(
             payload.end,
             payload.account_equity,
             payload.risk_percent,
+            slippage_per_share=payload.slippage_per_share,
+            cost_per_trade=payload.cost_per_trade,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

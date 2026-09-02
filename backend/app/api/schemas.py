@@ -117,6 +117,16 @@ class BacktestRequest(BaseModel):
     end: datetime
     account_equity: Decimal = Field(gt=Decimal("0"))
     risk_percent: Decimal = Field(gt=Decimal("0"))
+    slippage_per_share: Decimal = Field(
+        default=Decimal("0"),
+        ge=Decimal("0"),
+        description="Absolute per-share slippage applied against the trade (LONG: worse entry and exit).",
+    )
+    cost_per_trade: Decimal = Field(
+        default=Decimal("0"),
+        ge=Decimal("0"),
+        description="Flat round-trip transaction cost deducted once per completed trade.",
+    )
 
 
 class BacktestTradeResponse(BaseModel):

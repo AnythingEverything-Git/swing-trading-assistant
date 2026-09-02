@@ -149,6 +149,8 @@ function App() {
   const [end, setEnd] = useState('')
   const [accountEquity, setAccountEquity] = useState('10000')
   const [riskPercent, setRiskPercent] = useState('1')
+  const [slippagePerShare, setSlippagePerShare] = useState('0')
+  const [costPerTrade, setCostPerTrade] = useState('0')
   const [loading, setLoading] = useState(false)
   const [backtestLoading, setBacktestLoading] = useState(false)
   const [error, setError] = useState('')
@@ -222,7 +224,16 @@ function App() {
   }
 
   const handleBacktest = async () => {
-    if (!symbol.trim() || !timeframe.trim() || !start || !end || !accountEquity || !riskPercent) {
+    if (
+      !symbol.trim() ||
+      !timeframe.trim() ||
+      !start ||
+      !end ||
+      !accountEquity ||
+      !riskPercent ||
+      slippagePerShare === '' ||
+      costPerTrade === ''
+    ) {
       setBacktestError('Please complete the backtest fields before running.')
       setBacktestResult(null)
       return
@@ -249,6 +260,8 @@ function App() {
           end: endDate.toISOString(),
           account_equity: accountEquity,
           risk_percent: riskPercent,
+          slippage_per_share: slippagePerShare,
+          cost_per_trade: costPerTrade,
         }),
       })
 
@@ -317,6 +330,33 @@ function App() {
             <div className="field-group">
               <label htmlFor="risk-percent">Risk %</label>
               <input id="risk-percent" type="number" min="0" step="0.01" value={riskPercent} onChange={(event) => setRiskPercent(event.target.value)} />
+            </div>
+          </div>
+
+          <div className="field-row two-col">
+            <div className="field-group">
+              <label htmlFor="slippage-per-share">Slippage per share</label>
+              <input
+                id="slippage-per-share"
+                type="number"
+                min="0"
+                step="0.01"
+                value={slippagePerShare}
+                onChange={(event) => setSlippagePerShare(event.target.value)}
+                title="Absolute amount per share applied against entry and exit fills"
+              />
+            </div>
+            <div className="field-group">
+              <label htmlFor="cost-per-trade">Round-trip transaction cost</label>
+              <input
+                id="cost-per-trade"
+                type="number"
+                min="0"
+                step="0.01"
+                value={costPerTrade}
+                onChange={(event) => setCostPerTrade(event.target.value)}
+                title="Flat round-trip cost deducted once per completed trade"
+              />
             </div>
           </div>
 

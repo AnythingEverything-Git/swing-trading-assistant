@@ -40,8 +40,10 @@ def make_result():
 class FakeBacktestService:
     def __init__(self, result):
         self.result = result
+        self.calls: list[tuple[tuple, dict]] = []
 
-    async def run(self, *args):
+    async def run(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
         return self.result
 
 
@@ -196,3 +198,105 @@ def test_backtest_api_output_is_deterministic():
         second = client.post("/api/v1/backtest/run", json=payload).json()
 
     assert first == second
+
+
+def test_backtest_api_defaults_omitted_slippage_and_cost_to_zero():
+    service = FakeBacktestService(make_result())
+    app = create_app()
+    app.dependency_overrides[get_backtest_service] = lambda: service
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/backtest/run",
+            json={
+                "symbol": "TST",
+                "timeframe": "1d",
+                "start": "2024-01-01T00:00:00Z",
+                "end": "2024-01-31T00:00:00Z",
+                "account_equity": "10000",
+                "risk_percent": "1",
+            },
+        )
+
+    assert response.status_code == 200
+    assert len(service.calls) == 1
+    _, kwargs = service.calls[0]
+    assert kwargs["slippage_per_share"] == Decimal("0")
+    assert kwargs["cost_per_trade"] == Decimal("0")
+
+
+def test_backtest_api_rejects_negative_slippage_per_share():
+    app = create_app()
+    app.dependency_overrides[get_backtest_service] = lambda: FakeBacktestService(make_result())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/backtest/run",
+            json={
+                "symbol": "TST",
+                "timeframe": "1d",
+                "start": "2024-01-01T00:00:00Z",
+                "end": "2024-01-31T00:00:00Z",
+                "account_equity": "10000",
+                "risk_percent": "1",
+                "slippage_per_share": "-0.01",
+            },
+        )
+
+    assert response.status_code == 422
+
+
+def test_backtest_api_rejects_negative_cost_per_trade():
+    app = create_app()
+    app.dependency_overrides[get_backtest_service] = lambda: FakeBacktestService(make_result())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/backtest/run",
+            json={
+                "symbol": "TST",
+                "timeframe": "1d",
+                "start": "2024-01-01T00:00:00Z",
+                "end": "2024-01-31T00:00:00Z",
+                "account_equity": "10000",
+                "risk_percent": "1",
+                "cost_per_trade": "-1",
+            },
+        )
+
+    assert response.status_code == 422
+
+
+def test_backtest_api_passes_slippage_and_cost_to_service():
+    service = FakeBacktestService(make_result())
+    app = create_app()
+    app.dependency_overrides[get_backtest_service] = lambda: service
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/backtest/run",
+            json={
+                "symbol": "TST",
+                "timeframe": "1d",
+                "start": "2024-01-01T00:00:00Z",
+                "end": "2024-01-31T00:00:00Z",
+                "account_equity": "10000",
+                "risk_percent": "1",
+                "slippage_per_share": "0.25",
+                "cost_per_trade": "5.50",
+            },
+        )
+
+    assert response.status_code == 200
+    assert len(service.calls) == 1
+    args, kwargs = service.calls[0]
+    assert args == (
+        "TST",
+        "1d",
+        datetime(2024, 1, 1, tzinfo=timezone.utc),
+        datetime(2024, 1, 31, tzinfo=timezone.utc),
+        Decimal("10000"),
+        Decimal("1"),
+    )
+    assert kwargs["slippage_per_share"] == Decimal("0.25")
+    assert kwargs["cost_per_trade"] == Decimal("5.50")
