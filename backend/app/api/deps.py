@@ -58,15 +58,15 @@ async def get_ingestion_service(session=Depends(get_db), provider=Depends(get_up
     return MarketDataIngestionService(provider, inst_repo, candle_repo)
 
 
-async def get_strategy_evaluation_service(provider=Depends(get_upstox_provider)):
+async def get_strategy_evaluation_service(query_service: MarketDataQueryService = Depends(get_query_service)):
     from app.application.strategy.strategy_evaluation_service import StrategyEvaluationService
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    return StrategyEvaluationService(provider, BreakoutRetestConfirmationStrategy())
+    return StrategyEvaluationService(query_service, BreakoutRetestConfirmationStrategy())
 
 
-async def get_backtest_service(provider=Depends(get_upstox_provider)):
+async def get_backtest_service(query_service: MarketDataQueryService = Depends(get_query_service)):
     from app.application.backtesting.backtest_service import BacktestService
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
-    return BacktestService(provider, BreakoutRetestConfirmationStrategy())
+    return BacktestService(query_service, BreakoutRetestConfirmationStrategy())
