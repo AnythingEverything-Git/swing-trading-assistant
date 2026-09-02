@@ -424,3 +424,202 @@ async def test_backtest_compounds_equity_after_losing_trade():
     # Equity curve: 10000 → 9900 after first loss; peak 10000 → DD 100
     assert result.metrics is not None
     assert result.metrics.maximum_drawdown == Decimal("100")
+
+
+@pytest.mark.asyncio
+async def test_backtest_zero_slippage_and_cost_preserve_existing_pnl():
+    candles = make_candles(
+        ["90", "95", "100", "104"],
+        highs=["91", "96", "101", "106"],
+        lows=["89", "94", "99", "103"],
+    )
+    result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
+        "TST",
+        "1d",
+        candles[0].timestamp,
+        candles[-1].timestamp,
+        Decimal("10000"),
+        Decimal("1"),
+        slippage_per_share=Decimal("0"),
+        cost_per_trade=Decimal("0"),
+    )
+
+    trade = result.trades[0]
+    assert trade.entry_price == Decimal("100")
+    assert trade.exit_price == Decimal("105")
+    assert trade.pnl_per_share == Decimal("5")
+    assert trade.exit_reason.value == "TARGET"
+
+
+@pytest.mark.asyncio
+async def test_backtest_slippage_worsens_long_entry_and_exit():
+    # Signal entry 100, raw target exit 105; slippage 1 → entry 101, exit 104, pnl/share 3
+    candles = make_candles(
+        ["90", "95", "100", "104"],
+        highs=["91", "96", "101", "106"],
+        lows=["89", "94", "99", "103"],
+    )
+    result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
+        "TST",
+        "1d",
+        candles[0].timestamp,
+        candles[-1].timestamp,
+        Decimal("10000"),
+        Decimal("1"),
+        slippage_per_share=Decimal("1"),
+    )
+
+    trade = result.trades[0]
+    assert trade.entry_price == Decimal("101")
+    assert trade.exit_price == Decimal("104")
+    assert trade.pnl_per_share == Decimal("3")
+    assert trade.r_multiple == Decimal("3") / Decimal("2")
+
+
+@pytest.mark.asyncio
+async def test_backtest_flat_round_trip_cost_reduces_net_pnl_per_share():
+    # qty 50, gross (105-100)*50 = 250, cost 5 → net 245 → pnl/share 4.9
+    candles = make_candles(
+        ["90", "95", "100", "104"],
+        highs=["91", "96", "101", "106"],
+        lows=["89", "94", "99", "103"],
+    )
+    result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
+        "TST",
+        "1d",
+        candles[0].timestamp,
+        candles[-1].timestamp,
+        Decimal("10000"),
+        Decimal("1"),
+        cost_per_trade=Decimal("5"),
+    )
+
+    trade = result.trades[0]
+    assert trade.quantity == 50
+    assert trade.pnl_per_share == Decimal("4.9")
+    assert trade.r_multiple == Decimal("4.9") / Decimal("2")
+
+
+@pytest.mark.asyncio
+async def test_backtest_slippage_and_cost_are_reflected_in_equity_compounding():
+    # First trade: entry 101, exit 104, qty 50, cost 5 → net = 3*50 - 5 = 145
+    # Equity 10145 → second trade risk budget 101.45 → floor(101.45/2) = 50
+    # Without costs/slippage second qty would be 51 after +250.
+    candles = make_candles(
+        ["90", "95", "100", "104", "101", "100", "104"],
+        highs=["91", "96", "101", "106", "102", "101", "106"],
+        lows=["89", "94", "99", "103", "100", "99", "103"],
+    )
+    candidate = _make_candidate_at()
+    strategy = LastBarConfirmStrategy({2: candidate, 5: candidate})
+
+    result = await BacktestService(CandleProvider(candles), strategy).run(
+        "TST",
+        "1d",
+        candles[0].timestamp,
+        candles[-1].timestamp,
+        Decimal("10000"),
+        Decimal("1"),
+        slippage_per_share=Decimal("1"),
+        cost_per_trade=Decimal("5"),
+    )
+
+    assert len(result.trades) == 2
+    first, second = result.trades
+    assert first.pnl_per_share == Decimal("2.9")  # (3*50 - 5) / 50
+    assert first.quantity == 50
+    assert second.quantity == 50
+    assert second.quantity < 51
+
+
+@pytest.mark.asyncio
+async def test_backtest_gap_through_stop_applies_exit_slippage_to_open():
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    candles = [
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=0), open=Decimal("90"), high=Decimal("91"), low=Decimal("89"), close=Decimal("90"), volume=1000),
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=1), open=Decimal("95"), high=Decimal("96"), low=Decimal("94"), close=Decimal("95"), volume=1000),
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=2), open=Decimal("100"), high=Decimal("101"), low=Decimal("99"), close=Decimal("100"), volume=1000),
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=3), open=Decimal("96"), high=Decimal("97"), low=Decimal("95"), close=Decimal("96"), volume=1000),
+    ]
+    result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
+        "TST",
+        "1d",
+        candles[0].timestamp,
+        candles[-1].timestamp,
+        Decimal("10000"),
+        Decimal("1"),
+        slippage_per_share=Decimal("1"),
+    )
+
+    trade = result.trades[0]
+    assert trade.exit_reason.value == "GAP_THROUGH_STOP"
+    assert trade.entry_price == Decimal("101")
+    assert trade.exit_price == Decimal("95")  # open 96 - slippage 1
+    assert trade.pnl_per_share == Decimal("-6")
+
+
+@pytest.mark.asyncio
+async def test_backtest_gap_through_target_applies_exit_slippage_to_open():
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    candles = [
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=0), open=Decimal("90"), high=Decimal("91"), low=Decimal("89"), close=Decimal("90"), volume=1000),
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=1), open=Decimal("95"), high=Decimal("96"), low=Decimal("94"), close=Decimal("95"), volume=1000),
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=2), open=Decimal("100"), high=Decimal("101"), low=Decimal("99"), close=Decimal("100"), volume=1000),
+        Candle(symbol="TST", exchange="TEST", instrument_id=1, timeframe="1d", timestamp=start + timedelta(days=3), open=Decimal("107"), high=Decimal("108"), low=Decimal("106"), close=Decimal("107"), volume=1000),
+    ]
+    result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
+        "TST",
+        "1d",
+        candles[0].timestamp,
+        candles[-1].timestamp,
+        Decimal("10000"),
+        Decimal("1"),
+        slippage_per_share=Decimal("1"),
+    )
+
+    trade = result.trades[0]
+    assert trade.exit_reason.value == "GAP_THROUGH_TARGET"
+    assert trade.entry_price == Decimal("101")
+    assert trade.exit_price == Decimal("106")  # open 107 - slippage 1
+    assert trade.pnl_per_share == Decimal("5")
+
+
+@pytest.mark.asyncio
+async def test_backtest_end_of_data_applies_exit_slippage():
+    candles = make_candles(["90", "95", "100", "102"])
+    result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
+        "TST",
+        "1d",
+        candles[0].timestamp,
+        candles[-1].timestamp,
+        Decimal("1000"),
+        Decimal("1"),
+        slippage_per_share=Decimal("1"),
+    )
+
+    trade = result.trades[0]
+    assert trade.exit_reason.value == "END_OF_DATA"
+    assert trade.entry_price == Decimal("101")
+    assert trade.exit_price == Decimal("101")  # close 102 - 1
+    assert trade.pnl_per_share == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_backtest_skips_trade_when_slippage_breaks_entry_invariant():
+    candles = make_candles(
+        ["90", "95", "100", "104"],
+        highs=["91", "96", "101", "106"],
+        lows=["89", "94", "99", "103"],
+    )
+    # entry 100 + 6 = 106 is not < target 105
+    result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
+        "TST",
+        "1d",
+        candles[0].timestamp,
+        candles[-1].timestamp,
+        Decimal("10000"),
+        Decimal("1"),
+        slippage_per_share=Decimal("6"),
+    )
+
+    assert result.trades == ()
