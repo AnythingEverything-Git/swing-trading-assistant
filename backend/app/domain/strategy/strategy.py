@@ -10,7 +10,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Mapping, Protocol, Sequence
 
-from app.application.market_data.indicators import atr, volume_sma
+from app.domain.market_data.indicators import atr, volume_sma
 from app.domain.market_data import Candle
 
 Direction = Literal["LONG", "SHORT"]
