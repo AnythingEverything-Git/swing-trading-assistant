@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import './styles.css'
 import { SetupChart, type ChartCandle } from './components/SetupChart'
@@ -369,6 +369,44 @@ function tradeR(trade: BacktestTrade) {
   return exactDecimalRatio(trade.pnl, trade.risk_amount)
 }
 
+function calculateScanPositionSize(
+  accountEquity: string,
+  riskPercent: string,
+  riskPerShare: string | number | null | undefined,
+): { quantity: number | null; riskAmount: string | null } {
+  const equity = Number(accountEquity)
+  const risk = Number(riskPercent)
+  const perShare = Number(riskPerShare)
+  if (!Number.isFinite(equity) || equity <= 0 || !Number.isFinite(risk) || risk <= 0) {
+    return { quantity: null, riskAmount: null }
+  }
+  if (!Number.isFinite(perShare) || perShare <= 0) {
+    return { quantity: 0, riskAmount: '0' }
+  }
+  const quantity = Math.floor((equity * risk) / 100 / perShare)
+  return { quantity, riskAmount: String(quantity * perShare) }
+}
+
+function withPositionSizing(
+  result: OpportunityScanResponse,
+  accountEquity: string,
+  riskPercent: string,
+): OpportunityScanResponse {
+  const sizeOpportunity = (item: Opportunity): Opportunity => {
+    const sized = calculateScanPositionSize(
+      accountEquity,
+      riskPercent,
+      item.candidate.risk_per_share,
+    )
+    return { ...item, quantity: sized.quantity, risk_amount: sized.riskAmount }
+  }
+  return {
+    ...result,
+    opportunities: result.opportunities.map(sizeOpportunity),
+    top: result.top?.map(sizeOpportunity),
+  }
+}
+
 type AppView = 'scan' | 'research'
 type ScanUniverse = 'NIFTY_50' | 'NIFTY_100' | 'NIFTY_200' | 'NIFTY_500'
 
@@ -406,6 +444,9 @@ function App() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
   const [selectedKind, setSelectedKind] = useState<'eligible' | 'forming'>('eligible')
   const [showAllOpportunities, setShowAllOpportunities] = useState(false)
+  const [scanCriteriaCollapsed, setScanCriteriaCollapsed] = useState(false)
+  const [refreshInterval, setRefreshInterval] = useState('300')
+  const [autoRefreshActive, setAutoRefreshActive] = useState(true)
   const [productStatus, setProductStatus] = useState<ProductStatus | null>(null)
   const [scanHistory, setScanHistory] = useState<ScanRunSummary[]>([])
   const [chartCandles, setChartCandles] = useState<ChartCandle[]>([])
@@ -425,6 +466,12 @@ function App() {
     localStorage.setItem(
       RISK_STORAGE_KEY,
       JSON.stringify({ equity: accountEquity, riskPercent }),
+    )
+  }, [accountEquity, riskPercent])
+
+  useEffect(() => {
+    setScanResult((current) =>
+      current ? withPositionSizing(current, accountEquity, riskPercent) : current,
     )
   }, [accountEquity, riskPercent])
 
@@ -754,7 +801,7 @@ function App() {
       }
 
       const payload: OpportunityScanResponse = await response.json()
-      setScanResult(payload)
+      setScanResult(withPositionSizing(payload, accountEquity, riskPercent))
       setSelectedSymbol(null)
       setShowAllOpportunities(false)
       try {
@@ -771,6 +818,24 @@ function App() {
       setScanLoading(false)
     }
   }
+
+  const handleScanRef = useRef(handleScan)
+  handleScanRef.current = handleScan
+
+  // Auto-refresh scan at user-chosen interval
+  useEffect(() => {
+    const intervalMs = Number(refreshInterval) * 1000
+    if (!autoRefreshActive || intervalMs <= 0 || !scanResult || !scanCriteriaCollapsed) return
+    const timer = window.setInterval(() => {
+      void handleScanRef.current()
+    }, intervalMs)
+    return () => window.clearInterval(timer)
+  }, [autoRefreshActive, refreshInterval, scanResult?.scan_run_id, scanCriteriaCollapsed])
+
+  // Collapse criteria after first successful scan
+  useEffect(() => {
+    if (scanResult) setScanCriteriaCollapsed(true)
+  }, [scanResult?.scan_run_id])
 
   return (
     <main className="app-shell">
@@ -843,6 +908,16 @@ function App() {
             void handleScan()
           }}
         >
+          {scanResult && (
+            <button
+              type="button"
+              className="collapse-toggle"
+              onClick={() => setScanCriteriaCollapsed((c) => !c)}
+            >
+              {scanCriteriaCollapsed ? '▶ Show scan criteria' : '▼ Hide scan criteria'}
+            </button>
+          )}
+          <div className={`scan-criteria-fields ${scanCriteriaCollapsed ? 'collapsed' : ''}`}>
           <div className="field-group">
             <label htmlFor="scan-universe">Universe</label>
             <select
@@ -901,6 +976,9 @@ function App() {
                 value={riskPercent}
                 onChange={(event) => setRiskPercent(event.target.value)}
               />
+              <p className="field-hint">
+                Sizes Qty / ₹ at risk only (now {formatPrice((Number(accountEquity) * Number(riskPercent)) / 100)} max). Eligible names stay the same.
+              </p>
             </div>
           </div>
 
@@ -936,7 +1014,7 @@ function App() {
                   const response = await fetch(`${baseUrl}/api/v1/scan/runs/${id}`)
                   if (!response.ok) return
                   const payload = (await response.json()) as OpportunityScanResponse
-                  setScanResult(payload)
+                  setScanResult(withPositionSizing(payload, accountEquity, riskPercent))
                   setSelectedSymbol(null)
                   setShowAllOpportunities(false)
                 }}
@@ -951,6 +1029,8 @@ function App() {
             </div>
           )}
 
+          </div>{/* end scan-criteria-fields */}
+
           <div className="actions">
             <button type="submit" className="primary-button" disabled={scanLoading}>
               {scanLoading
@@ -958,6 +1038,36 @@ function App() {
                 : `Scan ${SCAN_UNIVERSES.find((item) => item.value === scanUniverse)?.label ?? scanUniverse}`}
             </button>
           </div>
+
+          {scanResult && (
+            <div className="refresh-controls">
+              <div className="field-group">
+                <label htmlFor="refresh-interval">Auto-refresh every</label>
+                <select
+                  id="refresh-interval"
+                  value={refreshInterval}
+                  onChange={(event) => {
+                    const val = event.target.value
+                    setRefreshInterval(val)
+                    setAutoRefreshActive(val !== '0')
+                  }}
+                >
+                  <option value="0">Off</option>
+                  <option value="30">30 seconds</option>
+                  <option value="60">1 minute</option>
+                  <option value="120">2 minutes</option>
+                  <option value="300">5 minutes</option>
+                  <option value="600">10 minutes</option>
+                </select>
+              </div>
+              {autoRefreshActive && (
+                <span className="refresh-indicator">
+                  {scanCriteriaCollapsed ? '⟳ Auto-refreshing' : '⏸ Paused while criteria is open'}
+                </span>
+              )}
+            </div>
+          )}
+
           <p className="field-hint">
             Full universe scan reads persisted daily candles and can take several seconds for larger indexes.
           </p>

@@ -15,6 +15,14 @@ then `python scripts/refresh_market_data.py`. Do not silently fall back to demo.
 
 Do not use UPSTOX_API_KEY / UPSTOX_API_SECRET for this provider; they are not read.
 
+Email alerts (Amazon SES SMTP by default):
+  EMAIL_PROVIDER              — ses (default) or smtp
+  AWS_SES_REGION              — e.g. ap-south-1 → host email-smtp.ap-south-1.amazonaws.com
+  AWS_SES_SMTP_USERNAME       — SES SMTP username from the SES console
+  AWS_SES_SMTP_PASSWORD       — SES SMTP password (create SMTP credentials; not the AWS console password)
+  ALERT_FROM_EMAIL            — must be a SES-verified identity
+  ALERT_TO_EMAILS             — comma-separated; must be verified while SES is in sandbox
+
 The repository-root `.env` is resolved from this file's location so scripts work
 whether launched from the repo root, `backend/`, or another working directory.
 Process environment variables still take precedence over the `.env` file.
@@ -52,6 +60,20 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     narrative_provider: str = "template"
+    # Email alerts: "ses" (Amazon SES SMTP) or "smtp" (generic SMTP).
+    email_provider: str = "ses"
+    aws_ses_region: str = "ap-south-1"
+    aws_ses_smtp_username: str | None = None
+    aws_ses_smtp_password: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = True
+    alert_from_email: str | None = None
+    alert_to_emails: str | None = None  # comma-separated list
+    # Pre-market alert schedule (IST 24h format, e.g. "08:45")
+    premarket_alert_time: str = "08:45"
 
     model_config = SettingsConfigDict(
         env_file=default_env_file(),

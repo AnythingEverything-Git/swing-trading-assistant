@@ -1,7 +1,7 @@
 # TradePilot AI — Project Plan (from now onwards)
 
 **Last updated:** 2026-09-03  
-**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan, ranked opportunities, forming watchlist, interactive TradingView-style charts, live current prices, quality scoring, position sizing, narratives, alerts, scan history, and backtest realism.  
+**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan, ranked opportunities, forming watchlist, interactive TradingView-style charts, live current prices, quality scoring, position sizing, narratives, scan history, backtest realism, auto-refresh scan (default 5 min), collapsible scan criteria, and Amazon SES email alerts (HTML template; pre-market + confirmation watch).  
 **Data:** 497 Nifty symbols ingested via Upstox 1d candles. Demo mode still available via `MARKET_DATA_SOURCE=demo`.
 
 ---
@@ -90,6 +90,13 @@ Frontend: ranked table + forming watchlist + interactive chart + live prices
 | Detail overlay, top-ranked cards, See more, CSV | Yes |
 | INR rounding + dark/light theme | Yes |
 | Demo runbook | Yes |
+| Auto-refresh scan (default 5 min; user can change / Off) | Yes |
+| Collapsible scan criteria (pause refresh while open) | Yes |
+| Instant Qty / risk update when equity or risk % changes | Yes |
+| Amazon SES email alerts (HTML + text template) | Yes (verified) |
+| Pre-market daily email alert | Yes |
+| Confirmation-watch email alert | Yes |
+| SES test send script | Yes |
 
 ### Explicitly not done
 
@@ -121,6 +128,8 @@ Frontend: ranked table + forming watchlist + interactive chart + live prices
 | UC14 | Operator | Reproduce from checkout | ✅ Demo runbook |
 | UC15 | Operator | Refresh market data | ✅ `refresh_market_data.py` |
 | UC16 | Operator | Audit a scan | ✅ `scan_run_id` + full JSON payload |
+| UC17 | Trader | Auto-refresh scan results | ✅ Default 5 min; Off / other rates; pauses when criteria open |
+| UC18 | Operator | Email alerts via Amazon SES | ✅ Pre-market summary + confirmation watch; HTML template |
 
 **Out of scope:** broker orders, portfolio tracking, WebSocket live ticks, auth/billing.
 
@@ -160,6 +169,13 @@ Frontend: ranked table + forming watchlist + interactive chart + live prices
 ### Checkpoint F — Research desk
 1. Menu → Research desk; live quote shown below form.
 2. Evaluate / backtest use same INR formatting.
+
+### Checkpoint G — Ops cadence (P5)
+1. After Scan, criteria collapse; toggle expands to edit anytime.
+2. Auto-refresh defaults to **5 minutes**; Off / other intervals available.
+3. Auto-refresh **pauses** while criteria is open; resumes when collapsed.
+4. Changing Risk % / equity updates **Qty** immediately (does not change eligible set).
+5. SES configured: `python scripts/send_test_alert_email.py` delivers HTML alert.
 
 ---
 
@@ -219,13 +235,17 @@ Detail overlay, NOW cue, loading copy, CSV, top-10 + See more, menu, multi-unive
 | P4.10 | ScanRun persistence with full payload | ✅ |
 | P4.11 | Backtest realism (compounding, DD, costs) | ✅ |
 
-### Phase 5 — Operational cadence
+### Phase 5 — Operational cadence — **Done**
 
 | ID | Task | Status |
 |----|------|--------|
-| P5.1 | Scheduled scan job | Ready (script exists) |
-| P5.2 | Live watermark refresh | Ready (incremental ingest) |
-| P5.3 | Telegram alert delivery | Ready (needs bot token) |
+| P5.1 | Auto-refresh scan (default 5 min; user changeable / Off) | ✅ |
+| P5.2 | Collapsible scan criteria (collapse after scan; pause refresh when open) | ✅ |
+| P5.3 | Amazon SES email delivery (HTML + text template) | ✅ Verified |
+| P5.4 | Pre-market daily email alert script | ✅ |
+| P5.5 | Confirmation-watch alert (forming → confirmed email) | ✅ |
+| P5.6 | Live watermark refresh | Ready (incremental ingest) |
+| P5.7 | Client-side Qty recompute on risk % / equity change | ✅ |
 
 ### Phase 6 — Explicitly deferred
 
@@ -241,7 +261,7 @@ P1  Live Upstox data                      ✅
 P2  Status ledger API+UI                  ✅
 P3  Opportunity UX + menu + universes     ✅
 P4  Product features (rank/chart/price)   ✅
-P5  Ops cadence                           Ready
+P5  Ops cadence (auto-refresh+email)       ✅
 P6  Deferred                              —
 ```
 
@@ -252,7 +272,7 @@ P6  Deferred                              —
 | P2 | Done |
 | P3 | Done |
 | P4 | Done |
-| P5 | Ready |
+| P5 | Done |
 | P6 | Deferred |
 
 ---
@@ -266,7 +286,7 @@ P6  Deferred                              —
 | P2 | Partial data does not abort or fake `NO_SETUP` |
 | P3 | Evidence in overlay; CSV; menu; universe select |
 | P4 | Ranked results + chart + live prices + forming + narratives |
-| P5 | Scheduled scan + watermark refresh + Telegram alerts |
+| P5 | Auto-refresh (5m default) + SES HTML email alerts (pre-market + confirmation) |
 
 ---
 
@@ -290,7 +310,9 @@ P6  Deferred                              —
 | Quality scoring | `backend/app/application/scan/quality_score.py` |
 | Scan presentation | `backend/app/application/scan/scan_presentation.py` |
 | Narratives | `backend/app/application/narrative/template_narrator.py` |
-| Alerts | `backend/app/application/alerts/composer.py` + `delivery.py` |
+| Alerts | `backend/app/application/alerts/composer.py` + `delivery.py` + `email_delivery.py` |
+| Pre-market / confirmation | `backend/scripts/run_premarket_alert.py` |
+| SES test email | `backend/scripts/send_test_alert_email.py` |
 | Product status | `backend/app/application/product/status_service.py` |
 | Universe registry | `backend/app/infrastructure/universe/static_file_universe.py` |
 | Query (persisted) | `backend/app/application/market_data/query_service.py` |
@@ -310,6 +332,6 @@ P6  Deferred                              —
 
 ## 9. One-line summary
 
-**Now:** Full-featured product — live Upstox data, ranked scan, interactive charts, live prices, forming watchlist, position sizing, narratives, alerts, scan history, backtest.  
-**Next:** Operational cadence (scheduled scans, watermark refresh, Telegram alerts).  
-**Verify:** Checkpoints A–F in §2c before claiming a release.
+**Now:** Full-featured product — live Upstox data, ranked scan, charts, live prices, forming watchlist, position sizing, narratives, scan history, backtest, 5‑min auto-refresh, Amazon SES HTML email alerts.  
+**Next:** Watermark refresh scheduling; deferred features (auth, SHORT, LLM, WebSocket).  
+**Verify:** Checkpoints A–G in §2c before claiming a release.
