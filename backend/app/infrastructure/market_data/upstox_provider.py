@@ -18,11 +18,11 @@ from __future__ import annotations
 from typing import Any, List, Callable, Mapping
 from datetime import datetime, timezone, date
 from decimal import Decimal
+from urllib.parse import quote
 
 from app.domain.market_data import Candle
 from app.domain.market_data.provider import MarketDataProvider
 from app.core.config import get_settings
-
 
 class UpstoxAPIError(RuntimeError):
     pass
@@ -99,12 +99,13 @@ class UpstoxMarketDataProvider(MarketDataProvider):
         to_date = end.date().isoformat()
 
         # Build V3 path: /v3/historical-candle/{instrument_key}/{unit}/{interval}/{to_date}/{from_date}
-        url = f"{self._base_url.rstrip('/')}/v3/historical-candle/{instrument_key}/{unit}/{interval}/{to_date}/{from_date}"
+        # Encode instrument_key so keys containing '|' (e.g. NSE_EQ|INE...) are valid URL path segments.
+        encoded_key = quote(str(instrument_key), safe="")
+        url = f"{self._base_url.rstrip('/')}/v3/historical-candle/{encoded_key}/{unit}/{interval}/{to_date}/{from_date}"
 
         headers = {}
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
-
         resp = await self._client.get(url, headers=headers, timeout=self._timeout)
 
         status = getattr(resp, "status_code", None) or getattr(resp, "status", None)

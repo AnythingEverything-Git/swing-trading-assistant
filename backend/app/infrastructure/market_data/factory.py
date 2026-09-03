@@ -10,6 +10,7 @@ from typing import Any, Callable, Mapping
 from types import SimpleNamespace
 
 from app.core.config import get_settings
+from .instrument_key_map import load_default_nse_instrument_key_map
 from .upstox_provider import UpstoxMarketDataProvider
 
 
@@ -21,6 +22,9 @@ class UpstoxProviderFactory:
       await factory.startup()  # creates client and provider
       provider = factory.provider
       await factory.shutdown()  # closes httpx client
+
+    When `instrument_key_map` is omitted, the packaged NSE symbol -> Upstox
+    instrument_key map is loaded so application layers can keep using NSE tickers.
     """
 
     def __init__(
@@ -28,14 +32,20 @@ class UpstoxProviderFactory:
         instrument_key_map: Mapping[str, str] | Callable[[str], str] | None = None,
         client_cls: Callable[..., Any] | None = None,
         timeout: float = 10.0,
+        *,
+        use_default_instrument_key_map: bool = True,
     ) -> None:
-        self._instrument_key_map = instrument_key_map
+        if instrument_key_map is not None:
+            self._instrument_key_map = instrument_key_map
+        elif use_default_instrument_key_map:
+            self._instrument_key_map = load_default_nse_instrument_key_map()
+        else:
+            self._instrument_key_map = None
         self._client_cls = client_cls
         self._timeout = timeout
 
         self._client = None
         self._provider: UpstoxMarketDataProvider | None = None
-
     @property
     def provider(self) -> UpstoxMarketDataProvider | None:
         return self._provider

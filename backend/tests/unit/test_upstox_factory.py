@@ -18,7 +18,7 @@ def test_factory_reads_settings_and_wires_provider(monkeypatch):
     fake_settings = SimpleNamespace(upstox_api_base_url="https://api.fake", upstox_access_token="tok")
     monkeypatch.setattr("app.infrastructure.market_data.factory.get_settings", lambda: fake_settings)
 
-    factory = UpstoxProviderFactory(client_cls=FakeAsyncClient)
+    factory = UpstoxProviderFactory(client_cls=FakeAsyncClient, use_default_instrument_key_map=False)
 
     async def _run():
         provider = await factory.startup()
@@ -26,10 +26,23 @@ def test_factory_reads_settings_and_wires_provider(monkeypatch):
         # provider should have been configured with the settings values
         assert provider._base_url == "https://api.fake"
         assert provider._token == "tok"
+        assert provider._instrument_key_map is None
 
         # shutdown closes the fake client
         await factory.shutdown()
         assert factory._client is None
+
+    asyncio.run(_run())
+
+
+def test_factory_loads_default_nse_instrument_key_map_when_omitted():
+    factory = UpstoxProviderFactory(client_cls=FakeAsyncClient)
+
+    async def _run():
+        provider = await factory.startup(base_url="https://custom", access_token="x")
+        assert callable(provider._instrument_key_map)
+        assert provider._instrument_key_map("RELIANCE") == "NSE_EQ|INE002A01018"
+        await factory.shutdown()
 
     asyncio.run(_run())
 
