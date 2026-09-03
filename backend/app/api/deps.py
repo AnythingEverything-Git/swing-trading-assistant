@@ -70,3 +70,15 @@ async def get_backtest_service(query_service: MarketDataQueryService = Depends(g
     from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
 
     return BacktestService(query_service, BreakoutRetestConfirmationStrategy())
+
+
+async def get_opportunity_scan_service(
+    evaluation_service=Depends(get_strategy_evaluation_service),
+):
+    """Compose OpportunityScanService over persisted-candle StrategyEvaluationService.
+
+    Candle source is MarketDataQueryService (PostgreSQL), not Demo/Upstox providers.
+    """
+    from app.application.scan.opportunity_scan_service import OpportunityScanService
+
+    return OpportunityScanService(evaluation_service)

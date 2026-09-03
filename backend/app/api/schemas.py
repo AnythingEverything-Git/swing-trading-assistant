@@ -110,6 +110,30 @@ class StrategyEvaluationResponse(BaseModel):
     reason: str | None = None
 
 
+class OpportunityScanRequest(BaseModel):
+    timeframe: str
+    start: datetime
+    end: datetime
+
+
+class EligibleOpportunityResponse(BaseModel):
+    symbol: str
+    candidate: StrategyCandidateResponse
+    evidence: StrategyEvidenceResponse
+
+
+class OpportunityScanResponse(BaseModel):
+    universe_name: str
+    universe_version: str
+    timeframe: str
+    start: datetime
+    end: datetime
+    symbols_scanned: int
+    eligible_count: int
+    no_setup_count: int
+    opportunities: list[EligibleOpportunityResponse]
+
+
 class BacktestRequest(BaseModel):
     symbol: str
     timeframe: str
