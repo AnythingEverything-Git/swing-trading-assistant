@@ -68,6 +68,24 @@ type BacktestResponse = {
   }
 }
 
+type Opportunity = {
+  symbol: string
+  candidate: Candidate
+  evidence: Evidence
+}
+
+type OpportunityScanResponse = {
+  universe_name: string
+  universe_version: string
+  timeframe: string
+  start: string
+  end: string
+  symbols_scanned: number
+  eligible_count: number
+  no_setup_count: number
+  opportunities: Opportunity[]
+}
+
 function valueClass(value: string | number) {
   const numericValue = Number(value)
   if (numericValue > 0) return 'value-positive'
@@ -157,6 +175,11 @@ function App() {
   const [backtestError, setBacktestError] = useState('')
   const [result, setResult] = useState<StrategyResponse | null>(null)
   const [backtestResult, setBacktestResult] = useState<BacktestResponse | null>(null)
+  const [scanStart, setScanStart] = useState('2025-12-07')
+  const [scanEnd, setScanEnd] = useState('2026-09-03')
+  const [scanLoading, setScanLoading] = useState(false)
+  const [scanError, setScanError] = useState('')
+  const [scanResult, setScanResult] = useState<OpportunityScanResponse | null>(null)
 
   const baseUrl = useMemo(() => import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000', [])
 
@@ -279,12 +302,74 @@ function App() {
     }
   }
 
+  const handleScan = async () => {
+    if (!scanStart || !scanEnd) {
+      setScanError('Please complete the scan date range before scanning.')
+      setScanResult(null)
+      return
+    }
+
+    const startDate = new Date(scanStart)
+    const endDate = new Date(scanEnd)
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      setScanError('Please enter valid date values.')
+      setScanResult(null)
+      return
+    }
+    if (startDate > endDate) {
+      setScanError('Start date must be less than or equal to end date.')
+      setScanResult(null)
+      return
+    }
+
+    setScanLoading(true)
+    setScanError('')
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/scan/opportunities`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          timeframe: '1d',
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+        }),
+      })
+
+      if (!response.ok) {
+        let detail = 'Scan request failed.'
+        try {
+          const payload = await response.json()
+          detail = payload.detail ?? payload.message ?? detail
+        } catch {
+          detail = response.statusText || detail
+        }
+        throw new Error(detail)
+      }
+
+      const payload: OpportunityScanResponse = await response.json()
+      setScanResult(payload)
+    } catch (caughtError) {
+      setScanError(caughtError instanceof Error ? caughtError.message : 'Unexpected error.')
+      setScanResult(null)
+    } finally {
+      setScanLoading(false)
+    }
+  }
+
   return (
     <main className="app-shell">
+      <header className="site-header">
+        <p className="brand-mark">TradePilot AI</p>
+        <p className="brand-tagline">
+          Find Nifty 500 swing setups with entry, stop, target, and evidence — same rules for scan and backtest.
+        </p>
+      </header>
+
       <section className="panel">
         <header className="header-block">
           <p className="eyebrow">Strategy Evaluation</p>
-          <h1>Swing Trading Assistant</h1>
+          <h1>Single-symbol workspace</h1>
+          <p className="header-copy">Evaluate one symbol now, or run a historical backtest with your risk settings.</p>
         </header>
 
         <form className="strategy-form" onSubmit={handleSubmit}>
@@ -360,12 +445,14 @@ function App() {
             </div>
           </div>
 
-          <button type="submit" className="primary-button" disabled={loading}>
-            {loading ? 'Evaluating...' : 'Evaluate'}
-          </button>
-          <button type="button" className="secondary-button" onClick={handleBacktest} disabled={backtestLoading}>
-            {backtestLoading ? 'Running backtest...' : 'Run backtest'}
-          </button>
+          <div className="actions">
+            <button type="submit" className="primary-button" disabled={loading}>
+              {loading ? 'Evaluating...' : 'Evaluate'}
+            </button>
+            <button type="button" className="secondary-button" onClick={handleBacktest} disabled={backtestLoading}>
+              {backtestLoading ? 'Running backtest...' : 'Run backtest'}
+            </button>
+          </div>
         </form>
 
         {error && <div className="status error">{error}</div>}
@@ -463,6 +550,134 @@ function App() {
                         <td className={valueClass(trade.pnl)}>{String(trade.pnl)}</td>
                         <td className={valueClass(trade.pnl)}>{tradeR(trade)}</td>
                         <td>{trade.exit_reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+      </section>
+
+      <section className="panel scan-panel">
+        <header className="header-block">
+          <p className="eyebrow">Nifty 500 Opportunity Scan</p>
+          <h1>Nifty 500 Swing Opportunities</h1>
+          <p className="header-copy">
+            Scan the full universe for valid breakout → retest → confirmation setups right now.
+          </p>
+        </header>
+
+        <form
+          className="strategy-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void handleScan()
+          }}
+        >
+          <div className="field-row two-col">
+            <div className="field-group">
+              <label htmlFor="scan-start">Start date</label>
+              <input
+                id="scan-start"
+                type="date"
+                value={scanStart}
+                onChange={(event) => setScanStart(event.target.value)}
+              />
+            </div>
+            <div className="field-group">
+              <label htmlFor="scan-end">End date</label>
+              <input
+                id="scan-end"
+                type="date"
+                value={scanEnd}
+                onChange={(event) => setScanEnd(event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="field-group">
+            <label htmlFor="scan-timeframe">Timeframe</label>
+            <input id="scan-timeframe" type="text" value="1d" readOnly disabled />
+          </div>
+
+          <div className="actions">
+            <button type="submit" className="primary-button" disabled={scanLoading}>
+              {scanLoading ? 'Scanning...' : 'Scan Nifty 500'}
+            </button>
+          </div>
+        </form>
+
+        {scanError && <div className="status error">{scanError}</div>}
+
+        {scanResult && (
+          <section className="result-card">
+            <h2>{scanResult.universe_name.replace('_', ' ')}</h2>
+            <div className="result-grid">
+              <div>
+                <strong>Universe version:</strong> {scanResult.universe_version}
+              </div>
+              <div>
+                <strong>Timeframe:</strong> {scanResult.timeframe}
+              </div>
+              <div>
+                <strong>Range:</strong> {scanResult.start} → {scanResult.end}
+              </div>
+            </div>
+
+            <div className="metric-grid">
+              <div className="metric-card">
+                <span>Stocks scanned</span>
+                <strong>{scanResult.symbols_scanned}</strong>
+              </div>
+              <div className="metric-card metric-accent">
+                <span>Eligible</span>
+                <strong>{scanResult.eligible_count}</strong>
+              </div>
+              <div className="metric-card">
+                <span>No setup</span>
+                <strong>{scanResult.no_setup_count}</strong>
+              </div>
+            </div>
+
+            {scanResult.eligible_count === 0 ? (
+              <div className="empty-state">
+                <strong>Scan complete</strong>
+                <span>No eligible swing opportunities were found for this range.</span>
+              </div>
+            ) : (
+              <div className="table-wrap scan-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Symbol</th>
+                      <th>Direction</th>
+                      <th>Entry</th>
+                      <th>Stop Loss</th>
+                      <th>Target</th>
+                      <th>R:R</th>
+                      <th>Why Eligible</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scanResult.opportunities.map((opportunity) => (
+                      <tr key={opportunity.symbol}>
+                        <td className="symbol-cell">{opportunity.symbol}</td>
+                        <td>
+                          <span
+                            className={`direction-pill ${
+                              opportunity.candidate.direction === 'LONG' ? 'long' : 'short'
+                            }`}
+                          >
+                            {opportunity.candidate.direction}
+                          </span>
+                        </td>
+                        <td>{String(opportunity.candidate.entry_price)}</td>
+                        <td>{String(opportunity.candidate.stop_loss)}</td>
+                        <td>{String(opportunity.candidate.target)}</td>
+                        <td>{String(opportunity.candidate.risk_reward_ratio)}</td>
+                        <td className="why-eligible">{opportunity.evidence.decision}</td>
                       </tr>
                     ))}
                   </tbody>
