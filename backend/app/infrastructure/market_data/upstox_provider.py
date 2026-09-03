@@ -15,9 +15,10 @@ Design notes:
 """
 from __future__ import annotations
 
-from typing import Any, List, Callable, Mapping
+from typing import Any, List, Callable, Mapping, Iterable
 from datetime import datetime, timezone, date
 from decimal import Decimal
+from inspect import isawaitable
 from urllib.parse import quote
 
 from app.domain.market_data import Candle
@@ -56,6 +57,21 @@ class UpstoxMarketDataProvider(MarketDataProvider):
         self._timeout = timeout
         self._instrument_key_map = instrument_key_map
 
+    def _resolve_instrument_key(self, symbol: str) -> str:
+        instrument_key: str
+        if self._instrument_key_map is None:
+            instrument_key = symbol
+        elif callable(self._instrument_key_map):
+            instrument_key = self._instrument_key_map(symbol)
+        else:
+            try:
+                instrument_key = self._instrument_key_map[symbol]
+            except KeyError as exc:
+                raise UpstoxAPIError(f"Instrument mapping missing for symbol: {symbol}") from exc
+        if not instrument_key:
+            raise UpstoxAPIError("instrument_key is required for Upstox provider")
+        return instrument_key
+
     async def get_candles(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> List[Candle]:
         # timeframe -> (unit, interval)
         timeframe_map = {
@@ -75,22 +91,7 @@ class UpstoxMarketDataProvider(MarketDataProvider):
         if not self._base_url:
             raise UpstoxAPIError("Upstox base URL not configured")
 
-        # Resolve instrument_key: either use mapping callable/dict or treat symbol
-        # as an instrument_key directly (caller responsibility).
-        instrument_key: str
-        if self._instrument_key_map is None:
-            instrument_key = symbol
-        elif callable(self._instrument_key_map):
-            instrument_key = self._instrument_key_map(symbol)
-        else:
-            # mapping is a Mapping[str,str]
-            try:
-                instrument_key = self._instrument_key_map[symbol]
-            except KeyError as exc:
-                raise UpstoxAPIError(f"Instrument mapping missing for symbol: {symbol}") from exc
-
-        if not instrument_key:
-            raise UpstoxAPIError("instrument_key is required for Upstox provider")
+        instrument_key = self._resolve_instrument_key(symbol)
 
         unit, interval = timeframe_map[timeframe]
 
@@ -113,7 +114,9 @@ class UpstoxMarketDataProvider(MarketDataProvider):
             raise UpstoxAPIError(f"Upstox API error: status={status}")
 
         try:
-            payload = await resp.json()
+            payload = resp.json()
+            if isawaitable(payload):
+                payload = await payload
         except Exception as exc:
             raise UpstoxAPIError("Invalid JSON from Upstox") from exc
 
@@ -188,4 +191,73 @@ class UpstoxMarketDataProvider(MarketDataProvider):
 
         # Chronological order
         result.sort(key=lambda c: c.timestamp)
+        return result
+
+    async def get_last_traded_prices(self, symbols: Iterable[str]) -> dict[str, dict[str, Any]]:
+        if not self._base_url:
+            raise UpstoxAPIError("Upstox base URL not configured")
+        symbols_list = [symbol.strip() for symbol in symbols if symbol and symbol.strip()]
+        if not symbols_list:
+            return {}
+
+        instrument_keys: list[str] = []
+        for symbol in symbols_list:
+            key = self._resolve_instrument_key(symbol)
+            instrument_keys.append(key)
+
+        encoded_keys = ",".join(instrument_keys)
+        url = f"{self._base_url.rstrip('/')}/v2/market-quote/quotes"
+        headers = {}
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+        resp = await self._client.get(
+            url,
+            params={"instrument_key": encoded_keys},
+            headers=headers,
+            timeout=self._timeout,
+        )
+        status = getattr(resp, "status_code", None) or getattr(resp, "status", None)
+        if status is None or int(status) >= 400:
+            raise UpstoxAPIError(f"Upstox quote API error: status={status}")
+
+        try:
+            payload = resp.json()
+            if isawaitable(payload):
+                payload = await payload
+        except Exception as exc:
+            raise UpstoxAPIError("Invalid JSON from Upstox quote API") from exc
+
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            raise UpstoxAPIError("Malformed Upstox quote response")
+
+        raw_data = payload.get("data")
+        if not isinstance(raw_data, dict):
+            return {}
+
+        result: dict[str, dict[str, Any]] = {}
+        for instrument_key, item in raw_data.items():
+            if not isinstance(item, dict):
+                continue
+            # Upstox typically returns data keys like "NSE_EQ:TCS" but also includes the trading
+            # symbol inside each item (field name: "symbol"). Use that for robust mapping.
+            symbol = item.get("symbol") or None
+            if not symbol:
+                # Fallback: parse key after ":" if present
+                if isinstance(instrument_key, str) and ":" in instrument_key:
+                    symbol = instrument_key.split(":", 1)[1]
+                else:
+                    continue
+            symbol = str(symbol).strip().upper()
+            ltp = item.get("last_price")
+            if ltp is None:
+                continue
+            try:
+                ltp_decimal = Decimal(str(ltp))
+            except Exception:
+                continue
+            result[symbol] = {
+                "last_price": ltp_decimal,
+                "instrument_key": instrument_key,
+                "raw": item,
+            }
         return result

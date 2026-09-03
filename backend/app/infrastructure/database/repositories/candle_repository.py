@@ -5,7 +5,7 @@ Implements save_many, get_latest, and get_range methods.
 from typing import List, Optional
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import select, desc, insert, or_, and_
+from sqlalchemy import select, desc, insert, or_, and_, func
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -128,3 +128,15 @@ class CandleRepository:
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def latest_timestamp(self, timeframe: str = "1d") -> datetime | None:
+        stmt = select(func.max(CandleORM.timestamp)).where(CandleORM.timeframe == timeframe)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def count_instruments(self, timeframe: str = "1d") -> int:
+        stmt = select(func.count(func.distinct(CandleORM.instrument_id))).where(
+            CandleORM.timeframe == timeframe
+        )
+        result = await self.session.execute(stmt)
+        return int(result.scalar_one() or 0)

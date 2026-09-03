@@ -49,6 +49,7 @@ class ScanRunSchema(BaseModel):
     parameters: Optional[Dict[str, Any]]
     result_count: int
     metadata: Optional[Dict[str, Any]]
+    result_payload: Optional[Dict[str, Any]] = None
 
 
 class MarketDataIngestRequest(BaseModel):
@@ -118,12 +119,50 @@ class OpportunityScanRequest(BaseModel):
         default="NIFTY_500",
         description="Index universe to scan: NIFTY_50, NIFTY_100, NIFTY_200, or NIFTY_500.",
     )
+    account_equity: Decimal | None = Field(
+        default=None,
+        gt=Decimal("0"),
+        description="Optional account equity for position sizing on each eligible.",
+    )
+    risk_percent: Decimal = Field(default=Decimal("1"), gt=Decimal("0"))
+    top_n: int = Field(default=5, ge=1, le=50)
+    min_score: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("100"))
 
 
 class EligibleOpportunityResponse(BaseModel):
     symbol: str
     candidate: StrategyCandidateResponse
     evidence: StrategyEvidenceResponse
+    quality_score: Decimal | None = None
+    rank: int | None = None
+    quantity: int | None = None
+    risk_amount: Decimal | None = None
+    narrative: str | None = None
+    invalidation: str | None = None
+    quality_reason: str | None = None
+    current_price: Decimal | None = None
+    current_price_change_percent: Decimal | None = None
+
+
+class FormingSetupResponse(BaseModel):
+    symbol: str
+    timeframe: str
+    stage: str
+    resistance: Decimal
+    breakout_candle_index: int
+    breakout_candle_time: datetime
+    breakout_volume: int | None
+    atr_value: Decimal
+    volume_sma_value: Decimal
+    bars_elapsed: int
+    bars_remaining: int
+    reason: str
+    narrative: str | None = None
+    retest_candle_index: int | None = None
+    retest_candle_time: datetime | None = None
+    retest_low: Decimal | None = None
+    current_price: Decimal | None = None
+    current_price_change_percent: Decimal | None = None
 
 
 class OpportunityScanResponse(BaseModel):
@@ -140,12 +179,46 @@ class OpportunityScanResponse(BaseModel):
     opportunities: list[EligibleOpportunityResponse]
     issues: list["ScanIssueResponse"] = []
     scan_run_id: int | None = None
+    forming_count: int = 0
+    forming: list[FormingSetupResponse] = []
+    top: list[EligibleOpportunityResponse] = []
+    data_source: str = "demo"
+    data_claim: str = "Demo candles — not live market data"
+    last_candle_time: datetime | None = None
+    alert_preview: str | None = None
 
 
 class ScanIssueResponse(BaseModel):
     symbol: str
     status: str
     detail: str
+
+
+class ScanRunSummaryResponse(BaseModel):
+    id: int
+    started_at: datetime
+    finished_at: datetime | None = None
+    universe_name: str | None = None
+    universe_version: str | None = None
+    result_count: int
+    symbols_scanned: int | None = None
+    data_source: str | None = None
+
+
+class ProductStatusResponse(BaseModel):
+    data_source: str
+    live_ready: bool
+    claim: str
+    last_candle_time: datetime | None = None
+    symbols_with_candles: int
+    environment: str
+    plug_and_play: str
+
+
+class MarketQuoteResponse(BaseModel):
+    symbol: str
+    current_price: Decimal | None = None
+    current_price_change_percent: Decimal | None = None
 
 
 class BacktestRequest(BaseModel):

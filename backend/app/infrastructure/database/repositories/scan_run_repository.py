@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
+from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.scan_run import ScanRun
@@ -24,6 +25,7 @@ class ScanRunRepository:
         parameters: dict[str, Any] | None = None,
         result_count: int = 0,
         metadata: dict[str, Any] | None = None,
+        result_payload: dict[str, Any] | None = None,
     ) -> ScanRun:
         row = ScanRunORM(
             started_at=started_at,
@@ -33,10 +35,22 @@ class ScanRunRepository:
             parameters=parameters,
             result_count=result_count,
             metadata_=metadata,
+            result_payload=result_payload,
         )
         self.session.add(row)
         await self.session.flush()
         return self._to_domain(row)
+
+    async def get_by_id(self, scan_run_id: int) -> ScanRun | None:
+        row = await self.session.get(ScanRunORM, scan_run_id)
+        if row is None:
+            return None
+        return self._to_domain(row)
+
+    async def list_recent(self, limit: int = 20) -> list[ScanRun]:
+        stmt = select(ScanRunORM).order_by(desc(ScanRunORM.id)).limit(max(1, min(limit, 100)))
+        result = await self.session.execute(stmt)
+        return [self._to_domain(row) for row in result.scalars().all()]
 
     @staticmethod
     def _to_domain(row: ScanRunORM) -> ScanRun:
@@ -49,4 +63,5 @@ class ScanRunRepository:
             parameters=row.parameters,
             result_count=row.result_count,
             metadata=row.metadata_,
+            result_payload=row.result_payload,
         )

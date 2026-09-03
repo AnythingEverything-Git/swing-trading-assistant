@@ -448,7 +448,7 @@ input[readonly] {
 }
 
 .metric-grid-five {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .metric-card {
@@ -613,7 +613,7 @@ td small {
 }
 
 .scan-table-wrap table {
-  min-width: 880px;
+  min-width: 1080px;
 }
 
 .why-eligible {
@@ -711,7 +711,7 @@ tbody tr:last-child td {
 }
 
 .detail-drawer {
-  width: min(760px, 100%);
+  width: min(880px, 100%);
   max-height: min(88vh, 900px);
   overflow: auto;
   border: 1px solid var(--line);
@@ -852,6 +852,143 @@ td.symbol-cell {
     flex: 1;
     text-align: center;
   }
+}
+
+.data-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 0.82rem;
+}
+
+.data-banner.demo {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+.data-banner.live {
+  border-color: color-mix(in srgb, var(--buy) 40%, var(--line));
+}
+
+.data-banner strong {
+  font-size: 0.84rem;
+}
+
+.data-banner span {
+  color: var(--muted);
+}
+
+.top-book,
+.forming-box {
+  margin: 16px 0 8px;
+}
+
+.top-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.top-card {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: inherit;
+  cursor: pointer;
+}
+
+.top-card:hover {
+  border-color: var(--accent);
+}
+
+.top-rank {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.setup-chart {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+}
+
+.setup-chart-host {
+  width: 100%;
+  height: 360px;
+}
+
+.candle-up {
+  fill: var(--buy);
+  stroke: var(--buy);
+  stroke-width: 1;
+}
+
+.candle-down {
+  fill: var(--sell);
+  stroke: var(--sell);
+  stroke-width: 1;
+}
+
+.guide-res line,
+.guide-entry line,
+.guide-stop line,
+.guide-target line {
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+.guide-res line { stroke: var(--accent); }
+.guide-entry line { stroke: var(--buy); }
+.guide-stop line { stroke: var(--sell); }
+.guide-target line { stroke: var(--ink-soft); }
+
+.guide-res text,
+.guide-entry text,
+.guide-stop text,
+.guide-target text {
+  font-size: 10px;
+  fill: var(--muted);
+}
+
+.chart-marker {
+  font-size: 10px;
+  font-weight: 800;
+  fill: var(--accent);
+  text-anchor: middle;
+}
+
+.invalidation-copy {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+.alert-preview {
+  margin: 12px 0;
+  font-size: 0.82rem;
+}
+
+.alert-preview pre {
+  white-space: pre-wrap;
+  background: var(--surface-muted);
+  padding: 10px;
+  border-radius: var(--radius-sm);
+}
+
+.disclaimer {
+  margin: 8px 4px 0;
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 
 @media (max-width: 720px) {

@@ -21,3 +21,4 @@ class ScanRunORM(Base):
     result_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Avoid attribute name `metadata` which is reserved by DeclarativeBase.
     metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
+    result_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

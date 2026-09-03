@@ -16,6 +16,7 @@ Root `.env` (example):
 ```env
 DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/swingdb
 ENVIRONMENT=development
+MARKET_DATA_SOURCE=demo
 UPSTOX_API_BASE_URL=https://api.upstox.com
 UPSTOX_ACCESS_TOKEN=
 ```
@@ -28,7 +29,20 @@ VITE_API_BASE_URL=http://localhost:8000
 
 If unset, the UI defaults to `http://localhost:8000`.
 
-**Note:** Leave `UPSTOX_ACCESS_TOKEN` empty for the demo path. Scan/evaluate/backtest read **PostgreSQL** via `MarketDataQueryService`, not Upstox.
+**Note:** Leave `UPSTOX_ACCESS_TOKEN` empty and `MARKET_DATA_SOURCE=demo` for the demo path. Scan/evaluate/backtest read **PostgreSQL** via `MarketDataQueryService`, not Upstox. The UI banner will say demo candles are not live.
+
+When the token arrives:
+
+```env
+MARKET_DATA_SOURCE=upstox
+UPSTOX_ACCESS_TOKEN=<token>
+```
+
+Restart the API, then from `backend/`:
+
+```bash
+python scripts/refresh_market_data.py --universe NIFTY_50
+```
 
 ## 2. Migrate schema
 
@@ -38,7 +52,7 @@ From the **repo root**:
 python -m alembic upgrade head
 ```
 
-Uses `DATABASE_URL` from the environment or app `.env`. Creates `instruments`, `candles`, and `scan_runs` (scan audit).
+Uses `DATABASE_URL` from the environment or app `.env`. Creates `instruments`, `candles`, and `scan_runs` (scan audit + ranked result payload).
 
 ## 3. Seed demo Nifty 500 candles (once, or after DB wipe)
 
@@ -111,12 +125,18 @@ Open: http://127.0.0.1:5173
 | No setup | ~389 |
 | Unavailable / Errors | 0 on a healthy demo seed |
 
-5. Opportunity table lists eligible symbols with Entry / SL / Target / R:R / Why Eligible — prices as **₹ with 2 decimals** (e.g. `₹219.78`).
-6. Click a row to open the trade-plan + evidence detail panel.
-7. Metric cards also show Unavailable / Errors (should be 0 after a full demo seed).
-8. **Export CSV** downloads the eligible list.
-9. Result metadata shows a **Scan run** id (persisted audit row).
-10. Top-bar **Dark / Light** toggle switches theme and persists after refresh.
+5. Opportunity table lists eligible symbols ranked by quality, with Entry / SL / Target / R:R / score / size.
+6. Click a row (or a Top-5 card) to open trade plan, grounded narrative, invalidation, and chart with levels.
+7. Metric cards also show Forming / Unavailable / Errors.
+8. **Export CSV** downloads the ranked eligible list.
+9. Result metadata shows a **Scan run** id; previous runs can be reloaded from the history select.
+10. The data banner must say **Demo candles — not live market data** until Upstox is wired.
+
+Optional post-close job (same demo candles):
+
+```bash
+python scripts/run_scheduled_scan.py --universe NIFTY_50 --start 2025-12-07 --end 2026-09-03
+```
 
 ## 7. Optional API check
 

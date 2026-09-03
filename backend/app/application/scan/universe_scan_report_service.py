@@ -13,9 +13,10 @@ from typing import Literal, Sequence
 
 from app.application.scan.opportunity_scan_service import EligibleOpportunity
 from app.application.strategy.strategy_evaluation_service import StrategyEvaluationService
+from app.domain.strategy.strategy import FormingSetup
 from app.domain.universe import StockUniverse
 
-SymbolScanStatus = Literal["ELIGIBLE", "NO_SETUP", "UNAVAILABLE", "ERROR"]
+SymbolScanStatus = Literal["ELIGIBLE", "FORMING", "NO_SETUP", "UNAVAILABLE", "ERROR"]
 
 _DEFAULT_ISSUE_LIMIT = 50
 
@@ -36,6 +37,8 @@ class UniverseScanReport:
     error_count: int
     opportunities: tuple[EligibleOpportunity, ...]
     issues: tuple[SymbolScanIssue, ...]
+    forming_count: int = 0
+    forming: tuple[FormingSetup, ...] = ()
 
 
 class UniverseScanReportService:
@@ -68,6 +71,7 @@ class UniverseScanReportService:
         end: datetime,
     ) -> UniverseScanReport:
         opportunities: list[EligibleOpportunity] = []
+        forming: list[FormingSetup] = []
         issues: list[SymbolScanIssue] = []
         no_setup_count = 0
         unavailable_count = 0
@@ -77,7 +81,12 @@ class UniverseScanReportService:
         for symbol in symbols:
             symbols_scanned += 1
             try:
-                result = await self.evaluation_service.evaluate(symbol, timeframe, start, end)
+                classify = getattr(self.evaluation_service, "classify", None)
+                if classify is not None:
+                    result, forming_setup = await classify(symbol, timeframe, start, end)
+                else:
+                    result = await self.evaluation_service.evaluate(symbol, timeframe, start, end)
+                    forming_setup = None
             except ValueError as exc:
                 unavailable_count += 1
                 if len(issues) < self.issue_limit:
@@ -91,17 +100,21 @@ class UniverseScanReportService:
                     issues.append(SymbolScanIssue(symbol=symbol, status="ERROR", detail=str(exc)))
                 continue
 
-            if not result.has_setup or result.candidate is None or result.evidence is None:
-                no_setup_count += 1
+            if result.has_setup and result.candidate is not None and result.evidence is not None:
+                opportunities.append(
+                    EligibleOpportunity(
+                        symbol=symbol,
+                        candidate=result.candidate,
+                        evidence=result.evidence,
+                    )
+                )
                 continue
 
-            opportunities.append(
-                EligibleOpportunity(
-                    symbol=symbol,
-                    candidate=result.candidate,
-                    evidence=result.evidence,
-                )
-            )
+            if forming_setup is not None:
+                forming.append(forming_setup)
+                continue
+
+            no_setup_count += 1
 
         return UniverseScanReport(
             symbols_scanned=symbols_scanned,
@@ -111,6 +124,8 @@ class UniverseScanReportService:
             error_count=error_count,
             opportunities=tuple(opportunities),
             issues=tuple(issues),
+            forming_count=len(forming),
+            forming=tuple(forming),
         )
 
 

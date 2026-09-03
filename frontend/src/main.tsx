@@ -1,10 +1,26 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import './styles.css'
+import { SetupChart, type ChartCandle } from './components/SetupChart'
 
 type ThemeMode = 'light' | 'dark'
 
 const THEME_STORAGE_KEY = 'tradepilot-theme'
+const RISK_STORAGE_KEY = 'tradepilot-risk-profile'
+
+function readStoredRisk(): { equity: string; riskPercent: string } {
+  try {
+    const raw = localStorage.getItem(RISK_STORAGE_KEY)
+    if (!raw) return { equity: '200000', riskPercent: '1' }
+    const parsed = JSON.parse(raw) as { equity?: string; riskPercent?: string }
+    return {
+      equity: parsed.equity || '200000',
+      riskPercent: parsed.riskPercent || '1',
+    }
+  } catch {
+    return { equity: '200000', riskPercent: '1' }
+  }
+}
 
 function readStoredTheme(): ThemeMode {
   const stored = localStorage.getItem(THEME_STORAGE_KEY)
@@ -143,6 +159,36 @@ type Opportunity = {
   symbol: string
   candidate: Candidate
   evidence: Evidence
+  quality_score?: string | number | null
+  rank?: number | null
+  quantity?: number | null
+  risk_amount?: string | number | null
+  narrative?: string | null
+  invalidation?: string | null
+  quality_reason?: string | null
+  current_price?: string | number | null
+  current_price_change_percent?: string | number | null
+}
+
+type FormingSetup = {
+  symbol: string
+  timeframe: string
+  stage: string
+  resistance: string | number
+  breakout_candle_index: number
+  breakout_candle_time: string
+  breakout_volume: number | null
+  atr_value: string | number
+  volume_sma_value: string | number
+  bars_elapsed: number
+  bars_remaining: number
+  reason: string
+  narrative?: string | null
+  retest_candle_index?: number | null
+  retest_candle_time?: string | null
+  retest_low?: string | number | null
+  current_price?: string | number | null
+  current_price_change_percent?: string | number | null
 }
 
 type OpportunityScanResponse = {
@@ -159,6 +205,39 @@ type OpportunityScanResponse = {
   opportunities: Opportunity[]
   issues?: { symbol: string; status: string; detail: string }[]
   scan_run_id?: number | null
+  forming_count?: number
+  forming?: FormingSetup[]
+  top?: Opportunity[]
+  data_source?: string
+  data_claim?: string
+  last_candle_time?: string | null
+  alert_preview?: string | null
+}
+
+type ProductStatus = {
+  data_source: string
+  live_ready: boolean
+  claim: string
+  last_candle_time: string | null
+  symbols_with_candles: number
+  environment: string
+  plug_and_play: string
+}
+
+type ScanRunSummary = {
+  id: number
+  started_at: string
+  finished_at: string | null
+  universe_name: string | null
+  result_count: number
+  symbols_scanned: number | null
+  data_source: string | null
+}
+
+type MarketQuote = {
+  symbol: string
+  current_price: string | number | null
+  current_price_change_percent: string | number | null
 }
 
 function csvEscape(value: string | number | null | undefined): string {
@@ -171,27 +250,35 @@ function csvEscape(value: string | number | null | undefined): string {
 
 function downloadEligibleCsv(result: OpportunityScanResponse) {
   const header = [
+    'rank',
     'symbol',
     'direction',
     'entry',
     'stop_loss',
     'target',
     'risk_reward',
+    'quality_score',
+    'quantity',
     'setup_name',
     'decision',
     'confirmation_time',
+    'narrative',
   ]
   const rows = result.opportunities.map((item) =>
     [
+      item.rank ?? '',
       item.symbol,
       item.candidate.direction,
       formatNumber(item.candidate.entry_price, 2),
       formatNumber(item.candidate.stop_loss, 2),
       formatNumber(item.candidate.target, 2),
       formatNumber(item.candidate.risk_reward_ratio, 2),
+      formatNumber(item.quality_score, 2),
+      item.quantity ?? '',
       item.candidate.setup_name,
       item.evidence.decision,
       formatDateTime(item.evidence.confirmation_candle_time),
+      item.narrative ?? '',
     ]
       .map(csvEscape)
       .join(','),
@@ -293,6 +380,7 @@ const SCAN_UNIVERSES: { value: ScanUniverse; label: string }[] = [
 ]
 
 function App() {
+  const storedRisk = readStoredRisk()
   const [theme, setTheme] = useState<ThemeMode>(() => readStoredTheme())
   const [activeView, setActiveView] = useState<AppView>('scan')
   const [scanUniverse, setScanUniverse] = useState<ScanUniverse>('NIFTY_500')
@@ -300,8 +388,8 @@ function App() {
   const [timeframe, setTimeframe] = useState('1d')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
-  const [accountEquity, setAccountEquity] = useState('10000')
-  const [riskPercent, setRiskPercent] = useState('1')
+  const [accountEquity, setAccountEquity] = useState(storedRisk.equity)
+  const [riskPercent, setRiskPercent] = useState(storedRisk.riskPercent)
   const [slippagePerShare, setSlippagePerShare] = useState('0')
   const [costPerTrade, setCostPerTrade] = useState('0')
   const [loading, setLoading] = useState(false)
@@ -316,7 +404,13 @@ function App() {
   const [scanError, setScanError] = useState('')
   const [scanResult, setScanResult] = useState<OpportunityScanResponse | null>(null)
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
+  const [selectedKind, setSelectedKind] = useState<'eligible' | 'forming'>('eligible')
   const [showAllOpportunities, setShowAllOpportunities] = useState(false)
+  const [productStatus, setProductStatus] = useState<ProductStatus | null>(null)
+  const [scanHistory, setScanHistory] = useState<ScanRunSummary[]>([])
+  const [chartCandles, setChartCandles] = useState<ChartCandle[]>([])
+  const [minScore, setMinScore] = useState('')
+  const [researchQuote, setResearchQuote] = useState<MarketQuote | null>(null)
 
   const OPPORTUNITY_PAGE_SIZE = 10
 
@@ -326,6 +420,29 @@ function App() {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem(THEME_STORAGE_KEY, theme)
   }, [theme])
+
+  useEffect(() => {
+    localStorage.setItem(
+      RISK_STORAGE_KEY,
+      JSON.stringify({ equity: accountEquity, riskPercent }),
+    )
+  }, [accountEquity, riskPercent])
+
+  useEffect(() => {
+    const loadMeta = async () => {
+      try {
+        const [statusResp, historyResp] = await Promise.all([
+          fetch(`${baseUrl}/api/v1/product/status`),
+          fetch(`${baseUrl}/api/v1/scan/runs?limit=8`),
+        ])
+        if (statusResp.ok) setProductStatus((await statusResp.json()) as ProductStatus)
+        if (historyResp.ok) setScanHistory((await historyResp.json()) as ScanRunSummary[])
+      } catch {
+        /* banner stays empty until a scan */
+      }
+    }
+    void loadMeta()
+  }, [baseUrl])
 
   useEffect(() => {
     if (!selectedSymbol) return
@@ -343,9 +460,110 @@ function App() {
   }, [selectedSymbol])
 
   const selectedOpportunity = useMemo(() => {
-    if (!scanResult || !selectedSymbol) return null
-    return scanResult.opportunities.find((item) => item.symbol === selectedSymbol) ?? null
-  }, [scanResult, selectedSymbol])
+    if (!scanResult || !selectedSymbol || selectedKind !== 'eligible') return null
+    return (
+      scanResult.opportunities.find((item) => item.symbol === selectedSymbol) ??
+      scanResult.top?.find((item) => item.symbol === selectedSymbol) ??
+      null
+    )
+  }, [scanResult, selectedSymbol, selectedKind])
+
+  const selectedForming = useMemo(() => {
+    if (!scanResult || !selectedSymbol || selectedKind !== 'forming') return null
+    return scanResult.forming?.find((item) => item.symbol === selectedSymbol) ?? null
+  }, [scanResult, selectedSymbol, selectedKind])
+
+  useEffect(() => {
+    if (!selectedSymbol || !scanStart || !scanEnd) {
+      setChartCandles([])
+      return
+    }
+    const startDate = new Date(scanStart)
+    const endDate = new Date(scanEnd)
+    const query = new URLSearchParams({
+      timeframe: '1d',
+      start: startDate.toISOString(),
+      end: endDate.toISOString(),
+    })
+    void fetch(`${baseUrl}/api/v1/market-data/candles/${encodeURIComponent(selectedSymbol)}?${query}`)
+      .then((response) => (response.ok ? response.json() : []))
+      .then((payload: ChartCandle[]) => setChartCandles(Array.isArray(payload) ? payload : []))
+      .catch(() => setChartCandles([]))
+  }, [baseUrl, selectedSymbol, scanStart, scanEnd])
+
+  useEffect(() => {
+    if (!scanResult) return
+    const allSymbols = new Set<string>()
+    scanResult.opportunities.forEach((item) => allSymbols.add(item.symbol))
+    scanResult.forming?.forEach((item) => allSymbols.add(item.symbol))
+    if (allSymbols.size === 0) return
+
+    const refreshQuotes = async () => {
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/v1/market-data/quotes?symbols=${encodeURIComponent(Array.from(allSymbols).join(','))}`,
+        )
+        if (!response.ok) return
+        const payload = (await response.json()) as {
+          symbol: string
+          current_price: string | number | null
+          current_price_change_percent: string | number | null
+        }[]
+        const quoteBySymbol = new Map(payload.map((item) => [item.symbol, item]))
+        setScanResult((current) => {
+          if (!current) return current
+          const withQuote = <T extends { symbol: string; current_price?: string | number | null; current_price_change_percent?: string | number | null }>(item: T): T => {
+            const quote = quoteBySymbol.get(item.symbol)
+            if (!quote) return item
+            return {
+              ...item,
+              current_price: quote.current_price,
+              current_price_change_percent: quote.current_price_change_percent,
+            }
+          }
+          return {
+            ...current,
+            opportunities: current.opportunities.map((item) => withQuote(item)),
+            top: current.top?.map((item) => withQuote(item)),
+            forming: current.forming?.map((item) => withQuote(item)),
+          }
+        })
+      } catch {
+        // ignore transient quote failures
+      }
+    }
+
+    void refreshQuotes()
+    const timer = window.setInterval(() => {
+      void refreshQuotes()
+    }, 15000)
+    return () => window.clearInterval(timer)
+  }, [baseUrl, scanResult?.scan_run_id])
+
+  useEffect(() => {
+    const normalized = symbol.trim().toUpperCase()
+    if (!normalized) {
+      setResearchQuote(null)
+      return
+    }
+    const refreshQuote = async () => {
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/v1/market-data/quotes?symbols=${encodeURIComponent(normalized)}`,
+        )
+        if (!response.ok) return
+        const payload = (await response.json()) as MarketQuote[]
+        setResearchQuote(payload[0] ?? null)
+      } catch {
+        // ignore quote failures
+      }
+    }
+    void refreshQuote()
+    const timer = window.setInterval(() => {
+      void refreshQuote()
+    }, 15000)
+    return () => window.clearInterval(timer)
+  }, [baseUrl, symbol])
 
   const visibleOpportunities = useMemo(() => {
     if (!scanResult) return []
@@ -517,6 +735,10 @@ function App() {
           timeframe: '1d',
           start: startDate.toISOString(),
           end: endDate.toISOString(),
+          account_equity: accountEquity || undefined,
+          risk_percent: riskPercent || '1',
+          top_n: 5,
+          min_score: minScore || undefined,
         }),
       })
 
@@ -535,6 +757,12 @@ function App() {
       setScanResult(payload)
       setSelectedSymbol(null)
       setShowAllOpportunities(false)
+      try {
+        const historyResp = await fetch(`${baseUrl}/api/v1/scan/runs?limit=8`)
+        if (historyResp.ok) setScanHistory((await historyResp.json()) as ScanRunSummary[])
+      } catch {
+        /* ignore history refresh */
+      }
     } catch (caughtError) {
       setScanError(caughtError instanceof Error ? caughtError.message : 'Unexpected error.')
       setScanResult(null)
@@ -586,6 +814,17 @@ function App() {
           <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
         </button>
       </header>
+
+      <div className={`data-banner ${productStatus?.live_ready ? 'live' : 'demo'}`}>
+        <strong>{scanResult?.data_claim ?? productStatus?.claim ?? 'Demo candles — not live market data'}</strong>
+        <span>
+          Source {scanResult?.data_source ?? productStatus?.data_source ?? 'demo'}
+          {productStatus?.last_candle_time || scanResult?.last_candle_time
+            ? ` · last bar ${formatDateTime(scanResult?.last_candle_time ?? productStatus?.last_candle_time)}`
+            : ''}
+          {productStatus ? ` · ${productStatus.symbols_with_candles} symbols in DB` : ''}
+        </span>
+      </div>
 
       {activeView === 'scan' && (
       <section className="panel scan-panel">
@@ -640,10 +879,77 @@ function App() {
             </div>
           </div>
 
-          <div className="field-group">
-            <label htmlFor="scan-timeframe">Timeframe</label>
-            <input id="scan-timeframe" type="text" value="1d" readOnly disabled />
+          <div className="field-row two-col">
+            <div className="field-group">
+              <label htmlFor="scan-equity">Account equity (₹)</label>
+              <input
+                id="scan-equity"
+                type="number"
+                min="0"
+                step="0.01"
+                value={accountEquity}
+                onChange={(event) => setAccountEquity(event.target.value)}
+              />
+            </div>
+            <div className="field-group">
+              <label htmlFor="scan-risk">Risk %</label>
+              <input
+                id="scan-risk"
+                type="number"
+                min="0"
+                step="0.01"
+                value={riskPercent}
+                onChange={(event) => setRiskPercent(event.target.value)}
+              />
+            </div>
           </div>
+
+          <div className="field-row two-col">
+            <div className="field-group">
+              <label htmlFor="scan-timeframe">Timeframe</label>
+              <input id="scan-timeframe" type="text" value="1d" readOnly disabled />
+            </div>
+            <div className="field-group">
+              <label htmlFor="scan-min-score">Min quality score</label>
+              <input
+                id="scan-min-score"
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                value={minScore}
+                onChange={(event) => setMinScore(event.target.value)}
+                placeholder="Optional"
+              />
+            </div>
+          </div>
+
+          {scanHistory.length > 0 && (
+            <div className="field-group">
+              <label htmlFor="scan-history">Reload a previous scan</label>
+              <select
+                id="scan-history"
+                defaultValue=""
+                onChange={async (event) => {
+                  const id = event.target.value
+                  if (!id) return
+                  const response = await fetch(`${baseUrl}/api/v1/scan/runs/${id}`)
+                  if (!response.ok) return
+                  const payload = (await response.json()) as OpportunityScanResponse
+                  setScanResult(payload)
+                  setSelectedSymbol(null)
+                  setShowAllOpportunities(false)
+                }}
+              >
+                <option value="">Select a scan run</option>
+                {scanHistory.map((run) => (
+                  <option key={run.id} value={run.id}>
+                    #{run.id} · {run.universe_name ?? 'scan'} · {run.result_count} eligible
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="actions">
             <button type="submit" className="primary-button" disabled={scanLoading}>
@@ -689,6 +995,10 @@ function App() {
                 <strong>{scanResult.eligible_count}</strong>
               </div>
               <div className="metric-card">
+                <span>Forming</span>
+                <strong>{scanResult.forming_count ?? 0}</strong>
+              </div>
+              <div className="metric-card">
                 <span>No setup</span>
                 <strong>{scanResult.no_setup_count}</strong>
               </div>
@@ -716,6 +1026,90 @@ function App() {
               </div>
             )}
 
+            {(scanResult.top?.length ?? 0) > 0 && (
+              <div className="top-book">
+                <h3>Top {scanResult.top!.length} for this account</h3>
+                <p className="field-hint">
+                  Ranked by setup quality. Prices come from the strategy — the model only explains and ranks.
+                </p>
+                <div className="top-grid">
+                  {scanResult.top!.map((item) => (
+                    <button
+                      type="button"
+                      className="top-card"
+                      key={`top-${item.symbol}`}
+                      onClick={() => {
+                        setSelectedKind('eligible')
+                        setSelectedSymbol(item.symbol)
+                      }}
+                    >
+                      <span className="top-rank">#{item.rank}</span>
+                      <strong>{item.symbol}</strong>
+                      <span>Now {formatPrice(item.current_price)}</span>
+                      <span className={valueClass(item.current_price_change_percent ?? 0)}>
+                        {formatPercent(item.current_price_change_percent)}
+                      </span>
+                      <span>{formatPrice(item.candidate.entry_price)}</span>
+                      <span>Score {formatNumber(item.quality_score, 1)}</span>
+                      {item.quantity != null && <span>Qty {item.quantity}</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(scanResult.forming?.length ?? 0) > 0 && (
+              <div className="forming-box">
+                <h3>Forming watchlist</h3>
+                <p className="field-hint">In retest or confirmation window. No Entry / SL / Target until NOW confirmation.</p>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Symbol</th>
+                        <th>Stage</th>
+                        <th>Current</th>
+                        <th>Change</th>
+                        <th>Resistance</th>
+                        <th>Bars left</th>
+                        <th>Why</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {scanResult.forming!.map((item) => (
+                        <tr
+                          key={`forming-${item.symbol}`}
+                          onClick={() => {
+                            setSelectedKind('forming')
+                            setSelectedSymbol(item.symbol)
+                          }}
+                          tabIndex={0}
+                          role="button"
+                        >
+                          <td className="symbol-cell">{item.symbol}</td>
+                          <td>{item.stage.replace(/_/g, ' ')}</td>
+                          <td className="num-cell">{formatPrice(item.current_price)}</td>
+                          <td className={`num-cell ${valueClass(item.current_price_change_percent ?? 0)}`}>
+                            {formatPercent(item.current_price_change_percent)}
+                          </td>
+                          <td className="num-cell">{formatPrice(item.resistance)}</td>
+                          <td className="num-cell">{item.bars_remaining}</td>
+                          <td className="why-eligible">{item.narrative ?? item.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+        {scanResult.alert_preview && (
+          <details className="alert-preview">
+            <summary>Alert preview</summary>
+            <pre>{scanResult.alert_preview}</pre>
+          </details>
+        )}
+
             {scanResult.eligible_count === 0 ? (
               <div className="empty-state">
                 <strong>Scan complete</strong>
@@ -740,12 +1134,17 @@ function App() {
                   <table>
                     <thead>
                       <tr>
+                        <th>Rank</th>
                         <th>Symbol</th>
                         <th>Direction</th>
                         <th>Entry</th>
+                        <th>Current</th>
+                        <th>Change</th>
                         <th>Stop Loss</th>
                         <th>Target</th>
                         <th>R:R</th>
+                        <th>Score</th>
+                        <th>Qty</th>
                         <th>Why Eligible</th>
                       </tr>
                     </thead>
@@ -754,7 +1153,10 @@ function App() {
                         <tr
                           key={opportunity.symbol}
                           className={selectedSymbol === opportunity.symbol ? 'row-selected' : undefined}
-                          onClick={() => setSelectedSymbol(opportunity.symbol)}
+                          onClick={() => {
+                            setSelectedKind('eligible')
+                            setSelectedSymbol(opportunity.symbol)
+                          }}
                           onKeyDown={(event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault()
@@ -765,6 +1167,7 @@ function App() {
                           role="button"
                           aria-pressed={selectedSymbol === opportunity.symbol}
                         >
+                          <td className="num-cell">{opportunity.rank ?? '—'}</td>
                           <td className="symbol-cell">{opportunity.symbol}</td>
                           <td>
                             <span
@@ -776,10 +1179,16 @@ function App() {
                             </span>
                           </td>
                           <td className="num-cell">{formatPrice(opportunity.candidate.entry_price)}</td>
+                          <td className="num-cell">{formatPrice(opportunity.current_price)}</td>
+                          <td className={`num-cell ${valueClass(opportunity.current_price_change_percent ?? 0)}`}>
+                            {formatPercent(opportunity.current_price_change_percent)}
+                          </td>
                           <td className="num-cell">{formatPrice(opportunity.candidate.stop_loss)}</td>
                           <td className="num-cell">{formatPrice(opportunity.candidate.target)}</td>
                           <td className="num-cell">{formatRatio(opportunity.candidate.risk_reward_ratio)}</td>
-                          <td className="why-eligible">{opportunity.evidence.decision}</td>
+                          <td className="num-cell">{formatNumber(opportunity.quality_score, 1)}</td>
+                          <td className="num-cell">{opportunity.quantity ?? '—'}</td>
+                          <td className="why-eligible">{opportunity.narrative ?? opportunity.evidence.decision}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -806,7 +1215,7 @@ function App() {
       </section>
       )}
 
-      {selectedOpportunity && (
+      {(selectedOpportunity || selectedForming) && (
         <div
           className="detail-overlay"
           role="presentation"
@@ -821,16 +1230,22 @@ function App() {
           >
             <div className="detail-drawer-header">
               <div className="opportunity-detail-header">
-                <h3 id="opportunity-detail-title">{selectedOpportunity.symbol}</h3>
-                <span
-                  className={`now-badge ${
-                    confirmationMatchesScanEnd(selectedOpportunity) ? 'now-active' : 'now-neutral'
-                  }`}
-                >
-                  {confirmationMatchesScanEnd(selectedOpportunity)
-                    ? 'Confirmation aligns with scan end (NOW window)'
-                    : 'Confirmation on last bar of evaluated series required'}
-                </span>
+                <h3 id="opportunity-detail-title">
+                  {selectedOpportunity?.symbol ?? selectedForming?.symbol}
+                </h3>
+                {selectedOpportunity ? (
+                  <span
+                    className={`now-badge ${
+                      confirmationMatchesScanEnd(selectedOpportunity) ? 'now-active' : 'now-neutral'
+                    }`}
+                  >
+                    {confirmationMatchesScanEnd(selectedOpportunity)
+                      ? 'Confirmation aligns with scan end (NOW window)'
+                      : 'Confirmation on last bar of evaluated series required'}
+                  </span>
+                ) : (
+                  <span className="now-badge now-neutral">Forming — no trade plan yet</span>
+                )}
               </div>
               <button
                 type="button"
@@ -842,10 +1257,33 @@ function App() {
               </button>
             </div>
             <p className="field-hint">
-              Eligibility requires breakout → retest → confirmation, with confirmation on the final
-              candle of the series sent to the strategy.
+              {selectedOpportunity?.narrative ??
+                selectedForming?.narrative ??
+                'Eligibility requires breakout → retest → confirmation, with confirmation on the final candle.'}
             </p>
 
+            <div className="section-box">
+              <h3>Chart</h3>
+              <SetupChart
+                candles={chartCandles}
+                levels={{
+                  resistance: selectedOpportunity?.evidence.resistance ?? selectedForming?.resistance,
+                  support: selectedOpportunity?.evidence.retest_low ?? selectedForming?.retest_low,
+                  entry: selectedOpportunity?.candidate.entry_price,
+                  stop: selectedOpportunity?.candidate.stop_loss,
+                  target: selectedOpportunity?.candidate.target,
+                  breakoutIndex:
+                    selectedOpportunity?.evidence.breakout_candle_index ??
+                    selectedForming?.breakout_candle_index,
+                  retestIndex:
+                    selectedOpportunity?.evidence.retest_candle_index ??
+                    selectedForming?.retest_candle_index,
+                  confirmationIndex: selectedOpportunity?.evidence.confirmation_candle_index,
+                }}
+              />
+            </div>
+
+            {selectedOpportunity && (
             <div className="section-box">
               <h3>Trade plan</h3>
               <dl>
@@ -866,6 +1304,16 @@ function App() {
                   <dd>{formatPrice(selectedOpportunity.candidate.entry_price)}</dd>
                 </div>
                 <div>
+                  <dt>Current price</dt>
+                  <dd>{formatPrice(selectedOpportunity.current_price)}</dd>
+                </div>
+                <div>
+                  <dt>Change</dt>
+                  <dd className={valueClass(selectedOpportunity.current_price_change_percent ?? 0)}>
+                    {formatPercent(selectedOpportunity.current_price_change_percent)}
+                  </dd>
+                </div>
+                <div>
                   <dt>Stop loss</dt>
                   <dd>{formatPrice(selectedOpportunity.candidate.stop_loss)}</dd>
                 </div>
@@ -881,9 +1329,26 @@ function App() {
                   <dt>Setup</dt>
                   <dd className="plain-value">{selectedOpportunity.candidate.setup_name}</dd>
                 </div>
+                <div>
+                  <dt>Quality</dt>
+                  <dd>{formatNumber(selectedOpportunity.quality_score, 1)}</dd>
+                </div>
+                <div>
+                  <dt>Shares</dt>
+                  <dd>{selectedOpportunity.quantity ?? '—'}</dd>
+                </div>
+                <div>
+                  <dt>₹ at risk</dt>
+                  <dd>{formatPrice(selectedOpportunity.risk_amount)}</dd>
+                </div>
               </dl>
+              {selectedOpportunity.invalidation && (
+                <p className="invalidation-copy">{selectedOpportunity.invalidation}</p>
+              )}
             </div>
+            )}
 
+            {selectedOpportunity && (
             <div className="section-box">
               <h3>Evidence</h3>
               <dl>
@@ -980,6 +1445,41 @@ function App() {
                 </div>
               </dl>
             </div>
+            )}
+
+            {selectedForming && (
+              <div className="section-box">
+                <h3>Forming setup</h3>
+                <dl>
+                  <div>
+                    <dt>Stage</dt>
+                    <dd>{selectedForming.stage.replace(/_/g, ' ')}</dd>
+                  </div>
+                  <div>
+                    <dt>Resistance</dt>
+                    <dd>{formatPrice(selectedForming.resistance)}</dd>
+                  </div>
+                  <div>
+                    <dt>Current price</dt>
+                    <dd>{formatPrice(selectedForming.current_price)}</dd>
+                  </div>
+                  <div>
+                    <dt>Change</dt>
+                    <dd className={valueClass(selectedForming.current_price_change_percent ?? 0)}>
+                      {formatPercent(selectedForming.current_price_change_percent)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Bars remaining</dt>
+                    <dd>{selectedForming.bars_remaining}</dd>
+                  </div>
+                  <div>
+                    <dt>Why</dt>
+                    <dd className="evidence-decision">{selectedForming.reason}</dd>
+                  </div>
+                </dl>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1084,6 +1584,11 @@ function App() {
               {backtestLoading ? 'Running backtest...' : 'Run backtest'}
             </button>
           </div>
+          {researchQuote && (
+            <p className="field-hint">
+              Current price: {formatPrice(researchQuote.current_price)} ({formatPercent(researchQuote.current_price_change_percent)})
+            </p>
+          )}
         </form>
 
         {error && <div className="status error">{error}</div>}
@@ -1309,6 +1814,10 @@ function App() {
         )}
       </section>
       )}
+      <p className="disclaimer">
+        Educational decision support only. TradePilot does not place orders and is not investment advice.
+        Live market claims require MARKET_DATA_SOURCE=upstox and a valid Upstox token.
+      </p>
     </main>
   )
 }

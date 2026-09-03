@@ -176,6 +176,12 @@ def test_scan_opportunities_success_maps_candidate_and_evidence():
     assert opp["evidence"]["breakout_candle_index"] == 19
     assert opp["evidence"]["confirmation_candle_index"] == 21
     assert opp["evidence"]["decision"] == "valid breakout -> retest -> confirmation"
+    assert data["data_source"] in {"demo", "upstox"}
+    assert data["forming_count"] == 0
+    assert data["top"][0]["symbol"] == "INFY"
+    assert data["top"][0]["narrative"]
+    assert data["top"][0]["quality_score"] is not None
+    assert data["alert_preview"]
 
 
 def test_scan_opportunities_no_setup_count_is_reported_directly():

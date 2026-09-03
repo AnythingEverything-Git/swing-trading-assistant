@@ -14,6 +14,7 @@ from app.domain.market_data.indicators import atr, volume_sma
 from app.domain.market_data import Candle
 
 Direction = Literal["LONG", "SHORT"]
+FormingStage = Literal["AWAITING_RETEST", "AWAITING_CONFIRMATION"]
 
 
 def _as_decimal(value: Decimal | int | float | str, field_name: str) -> Decimal:
@@ -181,6 +182,44 @@ class StrategyResult:
                 raise ValueError("evidence must be None when has_setup is False")
         if not self.has_setup and not self.status:
             object.__setattr__(self, "status", "NO_SETUP")
+
+
+@dataclass(frozen=True)
+class FormingSetup:
+    """Incomplete breakout sequence still inside its retest or confirmation window.
+
+    Never carries Entry / SL / Target. Those exist only after last-bar confirmation.
+    """
+
+    symbol: str
+    timeframe: str
+    stage: FormingStage
+    resistance: Decimal
+    breakout_candle_index: int
+    breakout_candle_time: datetime
+    breakout_volume: int | None
+    atr_value: Decimal
+    volume_sma_value: Decimal
+    bars_elapsed: int
+    bars_remaining: int
+    reason: str
+    retest_candle_index: int | None = None
+    retest_candle_time: datetime | None = None
+    retest_low: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        if self.stage not in {"AWAITING_RETEST", "AWAITING_CONFIRMATION"}:
+            raise ValueError("stage must be AWAITING_RETEST or AWAITING_CONFIRMATION")
+        if not self.symbol or not self.symbol.strip():
+            raise ValueError("symbol must be a non-empty string")
+        if self.bars_elapsed < 0 or self.bars_remaining < 0:
+            raise ValueError("bars_elapsed and bars_remaining must be non-negative")
+        object.__setattr__(self, "resistance", _as_decimal(self.resistance, "resistance", positive=True))
+        object.__setattr__(self, "atr_value", _as_decimal(self.atr_value, "atr_value", positive=True))
+        object.__setattr__(self, "volume_sma_value", _as_decimal(self.volume_sma_value, "volume_sma_value", positive=True))
+        if self.stage == "AWAITING_CONFIRMATION":
+            if self.retest_candle_index is None or self.retest_candle_time is None or self.retest_low is None:
+                raise ValueError("AWAITING_CONFIRMATION requires retest fields")
 
 
 class Strategy(Protocol):
@@ -371,3 +410,125 @@ class BreakoutRetestConfirmationStrategy:
             return result
 
         return StrategyResult(has_setup=False, status="NO_SETUP", reason="no valid setup")
+
+    def inspect_forming(self, strategy_input: StrategyInput) -> FormingSetup | None:
+        """Return an in-progress setup near the last bar, or None.
+
+        Does not change the NOW contract: last-bar confirmation remains `evaluate()`.
+        If `evaluate()` already yields a valid setup, forming is None.
+        """
+        if self.evaluate(strategy_input).has_setup:
+            return None
+
+        candles = list(strategy_input.candles)
+        if len(candles) < 20:
+            return None
+
+        atr_values = self._calculate_atr_values(candles)
+        volume_sma_values = self._calculate_volume_sma_values(candles)
+        last_index = len(candles) - 1
+        latest: FormingSetup | None = None
+
+        for breakout_index in range(2, len(candles)):
+            resistance = None
+            for idx in range(2, breakout_index - 1):
+                if self._is_confirmed_swing_high(candles, idx):
+                    resistance = candles[idx].high
+            if resistance is None:
+                continue
+
+            atr_value = atr_values[breakout_index]
+            volume_sma_value = volume_sma_values[breakout_index]
+            candle = candles[breakout_index]
+            if atr_value is None or volume_sma_value is None:
+                continue
+            if candle.close <= resistance + (Decimal("0.10") * atr_value):
+                continue
+            if candle.volume is None or volume_sma_value <= 0:
+                continue
+            if candle.volume < (Decimal("1.5") * volume_sma_value):
+                continue
+
+            retest_index = None
+            retest_low = None
+            invalidated = False
+            retest_limit = min(len(candles), breakout_index + 1 + self.max_retest_window)
+            for candidate_index in range(breakout_index + 1, retest_limit):
+                candidate = candles[candidate_index]
+                candidate_atr = atr_values[candidate_index]
+                if candidate_atr is None:
+                    continue
+                if candidate.close < resistance - (Decimal("0.20") * candidate_atr):
+                    invalidated = True
+                    break
+                if candidate.low <= resistance + (Decimal("0.20") * candidate_atr) and candidate.close >= resistance:
+                    retest_index = candidate_index
+                    retest_low = candidate.low
+                    break
+
+            if invalidated:
+                continue
+
+            if retest_index is None or retest_low is None:
+                elapsed = last_index - breakout_index
+                if elapsed < 0 or elapsed > self.max_retest_window:
+                    continue
+                latest = FormingSetup(
+                    symbol=strategy_input.symbol,
+                    timeframe=strategy_input.timeframe,
+                    stage="AWAITING_RETEST",
+                    resistance=resistance,
+                    breakout_candle_index=breakout_index,
+                    breakout_candle_time=candle.timestamp,
+                    breakout_volume=candle.volume,
+                    atr_value=atr_value,
+                    volume_sma_value=volume_sma_value,
+                    bars_elapsed=elapsed,
+                    bars_remaining=self.max_retest_window - elapsed,
+                    reason="volume breakout in place; retest window still open",
+                )
+                continue
+
+            confirmation_index = None
+            confirmation_limit = min(len(candles), retest_index + self.max_confirmation_window + 1)
+            for candidate_index in range(retest_index + 1, confirmation_limit):
+                candidate = candles[candidate_index]
+                candidate_sma = volume_sma_values[candidate_index]
+                if candidate_sma is None:
+                    continue
+                if candidate.close <= candles[candidate_index - 1].high:
+                    continue
+                if candidate.close <= resistance:
+                    continue
+                if candidate.volume is None:
+                    continue
+                if candidate.volume < candidate_sma:
+                    continue
+                confirmation_index = candidate_index
+                break
+
+            if confirmation_index is not None:
+                continue
+
+            elapsed = last_index - retest_index
+            if elapsed < 0 or elapsed > self.max_confirmation_window:
+                continue
+            latest = FormingSetup(
+                symbol=strategy_input.symbol,
+                timeframe=strategy_input.timeframe,
+                stage="AWAITING_CONFIRMATION",
+                resistance=resistance,
+                breakout_candle_index=breakout_index,
+                breakout_candle_time=candle.timestamp,
+                breakout_volume=candle.volume,
+                atr_value=atr_value,
+                volume_sma_value=volume_sma_value,
+                bars_elapsed=elapsed,
+                bars_remaining=self.max_confirmation_window - elapsed,
+                reason="retest complete; waiting for confirmation close above resistance",
+                retest_candle_index=retest_index,
+                retest_candle_time=candles[retest_index].timestamp,
+                retest_low=retest_low,
+            )
+
+        return latest

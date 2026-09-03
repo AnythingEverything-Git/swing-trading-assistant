@@ -6,8 +6,12 @@ This file exposes a Settings class to be used by application and infra. The
 the env file.
 
 Upstox market-data configuration (no OAuth flow in-app):
+  MARKET_DATA_SOURCE    — demo (default) or upstox. Scan always reads PostgreSQL.
   UPSTOX_API_BASE_URL   — optional; defaults to https://api.upstox.com in the provider
   UPSTOX_ACCESS_TOKEN   — Bearer token for historical candle requests
+
+Plug-and-play live: set MARKET_DATA_SOURCE=upstox and UPSTOX_ACCESS_TOKEN, restart,
+then `python scripts/refresh_market_data.py`. Do not silently fall back to demo.
 
 Do not use UPSTOX_API_KEY / UPSTOX_API_SECRET for this provider; they are not read.
 
@@ -38,9 +42,16 @@ def default_env_file() -> Path:
 class Settings(BaseSettings):
     database_url: str
     environment: str = "development"
+    # Candle ingest source. Scan/evaluate/backtest always read PostgreSQL.
+    # demo  — DemoMarketDataProvider (default until live token exists)
+    # upstox — Upstox historical API; requires UPSTOX_ACCESS_TOKEN
+    market_data_source: str = "demo"
     # Optional Upstox configuration (no secrets committed)
     upstox_api_base_url: str | None = None
     upstox_access_token: str | None = None
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+    narrative_provider: str = "template"
 
     model_config = SettingsConfigDict(
         env_file=default_env_file(),

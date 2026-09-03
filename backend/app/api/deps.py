@@ -10,6 +10,8 @@ from app.application.market_data.query_service import MarketDataQueryService
 from typing import Optional
 
 from app.infrastructure.market_data.mock_provider import MockMarketDataProvider
+from app.infrastructure.market_data.source import resolve_ingest_provider
+from app.application.product.status_service import ProductStatusService
 
 
 async def get_db(request: Request):
@@ -38,24 +40,34 @@ async def get_query_service(session=Depends(get_db)) -> MarketDataQueryService:
     return MarketDataQueryService(inst_repo, candle_repo)
 
 
-async def get_upstox_provider(request: Request):
-    """Return the Upstox provider instance created at app startup.
-
-    Tests can override this dependency to provide a mock provider.
-    """
-    provider = getattr(request.app.state, "upstox_provider", None)
-    if provider is None:
-        # fallback to a Mock provider for tests if nothing configured
+async def get_ingest_provider(request: Request):
+    """Provider used to write candles. Demo by default; Upstox when configured."""
+    cached = getattr(request.app.state, "ingest_provider", None)
+    if cached is not None:
+        return cached
+    upstox = getattr(request.app.state, "upstox_provider", None)
+    try:
+        return resolve_ingest_provider(upstox_provider=upstox)
+    except Exception:
         return MockMarketDataProvider()
-    return provider
 
 
-async def get_ingestion_service(session=Depends(get_db), provider=Depends(get_upstox_provider)):
+async def get_upstox_provider(request: Request):
+    """Return the ingest provider (name kept for existing test overrides)."""
+    return await get_ingest_provider(request)
+
+
+async def get_ingestion_service(session=Depends(get_db), provider=Depends(get_ingest_provider)):
     inst_repo = InstrumentRepository(session)
     candle_repo = CandleRepository(session)
     from app.application.market_data.market_data_ingestion_service import MarketDataIngestionService
 
     return MarketDataIngestionService(provider, inst_repo, candle_repo)
+
+
+async def get_product_status_service(session=Depends(get_db)) -> ProductStatusService:
+    candle_repo = CandleRepository(session)
+    return ProductStatusService(candle_repo)
 
 
 async def get_strategy_evaluation_service(query_service: MarketDataQueryService = Depends(get_query_service)):

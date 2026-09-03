@@ -13,7 +13,9 @@ from ..core.config import get_settings
 from ..infrastructure.database import session as db_session
 from ..core.config import get_settings
 from ..infrastructure.market_data.factory import UpstoxProviderFactory
-from .routes import backtest, market_data, scan, strategy
+from ..infrastructure.market_data.demo_provider import DemoMarketDataProvider
+from ..infrastructure.market_data.source import live_ready, normalize_market_data_source
+from .routes import backtest, market_data, product, scan, strategy
 
 
 def create_app() -> FastAPI:
@@ -37,20 +39,23 @@ def create_app() -> FastAPI:
         app.state.engine = engine
         app.state.sessionmaker = sessionmaker
 
-        # Optionally create Upstox provider factory and provider if configured
-        try:
+        source = normalize_market_data_source(getattr(settings, "market_data_source", "demo"))
+        app.state.market_data_source = source
+        app.state.upstox_factory = None
+        app.state.upstox_provider = None
+        app.state.ingest_provider = DemoMarketDataProvider()
+
+        if source == "upstox":
+            if not live_ready(settings):
+                raise RuntimeError(
+                    "MARKET_DATA_SOURCE=upstox requires UPSTOX_ACCESS_TOKEN. "
+                    "Leave MARKET_DATA_SOURCE=demo until the token is available."
+                )
             factory = UpstoxProviderFactory()
-            # Only start factory if Upstox settings are present
-            if getattr(get_settings(), "upstox_api_base_url", None) or getattr(get_settings(), "upstox_access_token", None):
-                provider = await factory.startup()
-                app.state.upstox_factory = factory
-                app.state.upstox_provider = provider
-            else:
-                app.state.upstox_factory = None
-                app.state.upstox_provider = None
-        except Exception:
-            app.state.upstox_factory = None
-            app.state.upstox_provider = None
+            provider = await factory.startup()
+            app.state.upstox_factory = factory
+            app.state.upstox_provider = provider
+            app.state.ingest_provider = provider
 
         try:
             yield
@@ -83,6 +88,7 @@ def create_app() -> FastAPI:
     app.include_router(strategy.router)
     app.include_router(backtest.router)
     app.include_router(scan.router)
+    app.include_router(product.router)
 
     @app.get("/health", response_model=HealthCheck)
     def health():

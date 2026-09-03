@@ -1,7 +1,7 @@
 """Domain `ScanRun` type for auditability.
 
-Contains metadata about a scan execution; the full instrument list is not stored
-inside ScanRun (per architecture rules).
+Contains metadata about a scan execution. Full ranked results may be stored in
+`result_payload` for history replay; that payload is presentation JSON, not a second eligibility engine.
 """
 from pydantic import BaseModel
 from datetime import datetime
@@ -17,3 +17,4 @@ class ScanRun(BaseModel):
     parameters: Optional[Dict[str, Any]] = None
     result_count: int = 0
     metadata: Optional[Dict[str, Any]] = None
+    result_payload: Optional[Dict[str, Any]] = None

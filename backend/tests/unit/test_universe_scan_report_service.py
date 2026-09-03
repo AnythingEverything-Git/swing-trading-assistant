@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from app.application.scan.universe_scan_report_service import UniverseScanReportService
-from app.domain.strategy.strategy import StrategyEvidence, StrategyResult, TradeCandidate
+from app.domain.strategy.strategy import FormingSetup, StrategyEvidence, StrategyResult, TradeCandidate
 from app.domain.universe import UniverseSnapshot
 
 
@@ -130,6 +130,41 @@ async def test_report_scan_universe_uses_snapshot_symbols():
     assert report.unavailable_count == 0
     assert report.error_count == 0
     assert report.issues == ()
+
+
+@pytest.mark.asyncio
+async def test_report_classifies_forming_separately_from_no_setup():
+    forming = FormingSetup(
+        symbol="FORM",
+        timeframe="1d",
+        stage="AWAITING_RETEST",
+        resistance=Decimal("101.50"),
+        breakout_candle_index=19,
+        breakout_candle_time=datetime(2024, 1, 20, tzinfo=timezone.utc),
+        breakout_volume=2000,
+        atr_value=Decimal("2.50"),
+        volume_sma_value=Decimal("1200"),
+        bars_elapsed=0,
+        bars_remaining=5,
+        reason="volume breakout in place; retest window still open",
+    )
+
+    class FakeClassify:
+        async def classify(self, symbol, timeframe, start, end):
+            if symbol == "FORM":
+                return StrategyResult(has_setup=False, status="NO_SETUP"), forming
+            return StrategyResult(has_setup=False, status="NO_SETUP"), None
+
+    report = await UniverseScanReportService(FakeClassify()).scan(
+        ["FORM", "FLAT"],
+        "1d",
+        START,
+        END,
+    )
+    assert report.forming_count == 1
+    assert report.no_setup_count == 1
+    assert report.eligible_count == 0
+    assert report.forming[0].symbol == "FORM"
 
 
 @pytest.mark.asyncio
