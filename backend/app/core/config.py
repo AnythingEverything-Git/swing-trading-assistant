@@ -10,8 +10,29 @@ Upstox market-data configuration (no OAuth flow in-app):
   UPSTOX_ACCESS_TOKEN   — Bearer token for historical candle requests
 
 Do not use UPSTOX_API_KEY / UPSTOX_API_SECRET for this provider; they are not read.
+
+The repository-root `.env` is resolved from this file's location so scripts work
+whether launched from the repo root, `backend/`, or another working directory.
+Process environment variables still take precedence over the `.env` file.
 """
-from pydantic_settings import BaseSettings
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def repository_root() -> Path:
+    """Return the repository root (parent of `backend/`).
+
+    `config.py` lives at `backend/app/core/config.py` → parents[3] is the root.
+    """
+    return Path(__file__).resolve().parents[3]
+
+
+def default_env_file() -> Path:
+    """Absolute path to the repository-root `.env` (not CWD-relative)."""
+    return repository_root() / ".env"
 
 
 class Settings(BaseSettings):
@@ -21,7 +42,11 @@ class Settings(BaseSettings):
     upstox_api_base_url: str | None = None
     upstox_access_token: str | None = None
 
-    model_config = {"env_file": ".env"}
+    model_config = SettingsConfigDict(
+        env_file=default_env_file(),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 def get_settings() -> Settings:

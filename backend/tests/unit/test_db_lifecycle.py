@@ -73,6 +73,15 @@ def test_missing_db_fails_clearly(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
+    # Root `.env` is resolved by absolute path from config.py; isolate this test
+    # so "missing DATABASE_URL" is not satisfied by the repository-root file.
+    from app.core.config import Settings
+
+    def _settings_without_repo_dotenv():
+        return Settings(_env_file=tmp_path / "missing.env")
+
+    monkeypatch.setattr("app.api.main.get_settings", _settings_without_repo_dotenv)
+
     app = create_app()
     # entering the TestClient should fail during startup due to missing DB settings
     with pytest.raises(Exception):
