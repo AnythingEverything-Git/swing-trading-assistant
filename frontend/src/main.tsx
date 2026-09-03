@@ -1,6 +1,77 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import './styles.css'
+
+type ThemeMode = 'light' | 'dark'
+
+const THEME_STORAGE_KEY = 'tradepilot-theme'
+
+function readStoredTheme(): ThemeMode {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY)
+  if (stored === 'light' || stored === 'dark') return stored
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function formatPrice(value: string | number | null | undefined): string {
+  if (value == null || value === '') return '—'
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '—'
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(numeric)
+}
+
+function formatNumber(value: string | number | null | undefined, digits = 2): string {
+  if (value == null || value === '') return '—'
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '—'
+  return new Intl.NumberFormat('en-IN', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(numeric)
+}
+
+function formatRatio(value: string | number | null | undefined): string {
+  if (value == null || value === '') return '—'
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '—'
+  return `${formatNumber(numeric, 2)}x`
+}
+
+function formatPercent(value: string | number | null | undefined): string {
+  if (value == null || value === '') return '—'
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '—'
+  return `${formatNumber(numeric, 2)}%`
+}
+
+function formatVolume(value: string | number | null | undefined): string {
+  if (value == null || value === '') return '—'
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '—'
+  return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(numeric)
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value.slice(0, 10)
+  return new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(date)
+}
+
+function formatBarRef(index: number, time: string): { bar: string; when: string } {
+  return {
+    bar: `#${index}`,
+    when: formatDateTime(time),
+  }
+}
 
 type Candidate = {
   symbol: string
@@ -83,7 +154,58 @@ type OpportunityScanResponse = {
   symbols_scanned: number
   eligible_count: number
   no_setup_count: number
+  unavailable_count?: number
+  error_count?: number
   opportunities: Opportunity[]
+  issues?: { symbol: string; status: string; detail: string }[]
+  scan_run_id?: number | null
+}
+
+function csvEscape(value: string | number | null | undefined): string {
+  const text = value == null ? '' : String(value)
+  if (/[",\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`
+  }
+  return text
+}
+
+function downloadEligibleCsv(result: OpportunityScanResponse) {
+  const header = [
+    'symbol',
+    'direction',
+    'entry',
+    'stop_loss',
+    'target',
+    'risk_reward',
+    'setup_name',
+    'decision',
+    'confirmation_time',
+  ]
+  const rows = result.opportunities.map((item) =>
+    [
+      item.symbol,
+      item.candidate.direction,
+      formatNumber(item.candidate.entry_price, 2),
+      formatNumber(item.candidate.stop_loss, 2),
+      formatNumber(item.candidate.target, 2),
+      formatNumber(item.candidate.risk_reward_ratio, 2),
+      item.candidate.setup_name,
+      item.evidence.decision,
+      formatDateTime(item.evidence.confirmation_candle_time),
+    ]
+      .map(csvEscape)
+      .join(','),
+  )
+  const blob = new Blob([[header.join(','), ...rows].join('\n')], {
+    type: 'text/csv;charset=utf-8',
+  })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  const endDay = result.end.slice(0, 10)
+  anchor.href = url
+  anchor.download = `tradepilot-eligibles-${endDay}.csv`
+  anchor.click()
+  URL.revokeObjectURL(url)
 }
 
 function valueClass(value: string | number) {
@@ -160,7 +282,20 @@ function tradeR(trade: BacktestTrade) {
   return exactDecimalRatio(trade.pnl, trade.risk_amount)
 }
 
+type AppView = 'scan' | 'research'
+type ScanUniverse = 'NIFTY_50' | 'NIFTY_100' | 'NIFTY_200' | 'NIFTY_500'
+
+const SCAN_UNIVERSES: { value: ScanUniverse; label: string }[] = [
+  { value: 'NIFTY_50', label: 'Nifty 50' },
+  { value: 'NIFTY_100', label: 'Nifty 100' },
+  { value: 'NIFTY_200', label: 'Nifty 200' },
+  { value: 'NIFTY_500', label: 'Nifty 500' },
+]
+
 function App() {
+  const [theme, setTheme] = useState<ThemeMode>(() => readStoredTheme())
+  const [activeView, setActiveView] = useState<AppView>('scan')
+  const [scanUniverse, setScanUniverse] = useState<ScanUniverse>('NIFTY_500')
   const [symbol, setSymbol] = useState('')
   const [timeframe, setTimeframe] = useState('1d')
   const [start, setStart] = useState('')
@@ -180,8 +315,54 @@ function App() {
   const [scanLoading, setScanLoading] = useState(false)
   const [scanError, setScanError] = useState('')
   const [scanResult, setScanResult] = useState<OpportunityScanResponse | null>(null)
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
+  const [showAllOpportunities, setShowAllOpportunities] = useState(false)
+
+  const OPPORTUNITY_PAGE_SIZE = 10
 
   const baseUrl = useMemo(() => import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000', [])
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem(THEME_STORAGE_KEY, theme)
+  }, [theme])
+
+  useEffect(() => {
+    if (!selectedSymbol) return
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedSymbol(null)
+    }
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [selectedSymbol])
+
+  const selectedOpportunity = useMemo(() => {
+    if (!scanResult || !selectedSymbol) return null
+    return scanResult.opportunities.find((item) => item.symbol === selectedSymbol) ?? null
+  }, [scanResult, selectedSymbol])
+
+  const visibleOpportunities = useMemo(() => {
+    if (!scanResult) return []
+    if (showAllOpportunities) return scanResult.opportunities
+    return scanResult.opportunities.slice(0, OPPORTUNITY_PAGE_SIZE)
+  }, [scanResult, showAllOpportunities])
+
+  const hiddenOpportunityCount = scanResult
+    ? Math.max(0, scanResult.opportunities.length - OPPORTUNITY_PAGE_SIZE)
+    : 0
+
+  const confirmationMatchesScanEnd = (opportunity: Opportunity) => {
+    if (!scanResult?.end) return false
+    const confirmationDay = opportunity.evidence.confirmation_candle_time.slice(0, 10)
+    const endDay = scanResult.end.slice(0, 10)
+    return confirmationDay === endDay
+  }
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -306,6 +487,7 @@ function App() {
     if (!scanStart || !scanEnd) {
       setScanError('Please complete the scan date range before scanning.')
       setScanResult(null)
+      setSelectedSymbol(null)
       return
     }
 
@@ -314,11 +496,13 @@ function App() {
     if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
       setScanError('Please enter valid date values.')
       setScanResult(null)
+      setSelectedSymbol(null)
       return
     }
     if (startDate > endDate) {
       setScanError('Start date must be less than or equal to end date.')
       setScanResult(null)
+      setSelectedSymbol(null)
       return
     }
 
@@ -329,6 +513,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          universe: scanUniverse,
           timeframe: '1d',
           start: startDate.toISOString(),
           end: endDate.toISOString(),
@@ -348,9 +533,12 @@ function App() {
 
       const payload: OpportunityScanResponse = await response.json()
       setScanResult(payload)
+      setSelectedSymbol(null)
+      setShowAllOpportunities(false)
     } catch (caughtError) {
       setScanError(caughtError instanceof Error ? caughtError.message : 'Unexpected error.')
       setScanResult(null)
+      setSelectedSymbol(null)
     } finally {
       setScanLoading(false)
     }
@@ -358,16 +546,448 @@ function App() {
 
   return (
     <main className="app-shell">
-      <header className="site-header">
-        <p className="brand-mark">TradePilot AI</p>
-        <p className="brand-tagline">
-          Find Nifty 500 swing setups with entry, stop, target, and evidence — same rules for scan and backtest.
-        </p>
+      <header className="top-bar">
+        <div className="brand-block">
+          <p className="brand-mark">TradePilot AI</p>
+          <p className="brand-tagline">Nifty swing setups · entry · stop · target · evidence</p>
+        </div>
+        <nav className="app-menu" aria-label="Primary">
+          <button
+            type="button"
+            className={`menu-link ${activeView === 'scan' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveView('scan')
+              setSelectedSymbol(null)
+            }}
+          >
+            Watchlist scan
+          </button>
+          <button
+            type="button"
+            className={`menu-link ${activeView === 'research' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveView('research')
+              setSelectedSymbol(null)
+            }}
+          >
+            Research desk
+          </button>
+        </nav>
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+        >
+          <span className="theme-toggle-icon" aria-hidden="true">
+            {theme === 'dark' ? '○' : '●'}
+          </span>
+          <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
+        </button>
       </header>
 
+      {activeView === 'scan' && (
+      <section className="panel scan-panel">
+        <header className="header-block">
+          <p className="eyebrow">Watchlist scan</p>
+          <h1>Index Swing Opportunities</h1>
+          <p className="header-copy">
+            Scan Nifty 50 / 100 / 200 / 500 for valid breakout → retest → confirmation setups right now.
+          </p>
+        </header>
+
+        <form
+          className="strategy-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void handleScan()
+          }}
+        >
+          <div className="field-group">
+            <label htmlFor="scan-universe">Universe</label>
+            <select
+              id="scan-universe"
+              value={scanUniverse}
+              onChange={(event) => setScanUniverse(event.target.value as ScanUniverse)}
+            >
+              {SCAN_UNIVERSES.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field-row two-col">
+            <div className="field-group">
+              <label htmlFor="scan-start">Start date</label>
+              <input
+                id="scan-start"
+                type="date"
+                value={scanStart}
+                onChange={(event) => setScanStart(event.target.value)}
+              />
+            </div>
+            <div className="field-group">
+              <label htmlFor="scan-end">End date</label>
+              <input
+                id="scan-end"
+                type="date"
+                value={scanEnd}
+                onChange={(event) => setScanEnd(event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="field-group">
+            <label htmlFor="scan-timeframe">Timeframe</label>
+            <input id="scan-timeframe" type="text" value="1d" readOnly disabled />
+          </div>
+
+          <div className="actions">
+            <button type="submit" className="primary-button" disabled={scanLoading}>
+              {scanLoading
+                ? 'Scanning...'
+                : `Scan ${SCAN_UNIVERSES.find((item) => item.value === scanUniverse)?.label ?? scanUniverse}`}
+            </button>
+          </div>
+          <p className="field-hint">
+            Full universe scan reads persisted daily candles and can take several seconds for larger indexes.
+          </p>
+        </form>
+
+        {scanError && <div className="status error">{scanError}</div>}
+
+        {scanResult && (
+          <section className="result-card">
+            <h2>{scanResult.universe_name.replace('_', ' ')}</h2>
+            <div className="result-grid">
+              <div>
+                <strong>Universe version:</strong> {scanResult.universe_version}
+              </div>
+              <div>
+                <strong>Timeframe:</strong> {scanResult.timeframe}
+              </div>
+              <div>
+                <strong>Range:</strong> {formatDateTime(scanResult.start)} → {formatDateTime(scanResult.end)}
+              </div>
+              {scanResult.scan_run_id != null && (
+                <div>
+                  <strong>Scan run:</strong> #{scanResult.scan_run_id}
+                </div>
+              )}
+            </div>
+
+            <div className="metric-grid metric-grid-five">
+              <div className="metric-card">
+                <span>Stocks scanned</span>
+                <strong>{scanResult.symbols_scanned}</strong>
+              </div>
+              <div className="metric-card metric-accent">
+                <span>Eligible</span>
+                <strong>{scanResult.eligible_count}</strong>
+              </div>
+              <div className="metric-card">
+                <span>No setup</span>
+                <strong>{scanResult.no_setup_count}</strong>
+              </div>
+              <div className="metric-card">
+                <span>Unavailable</span>
+                <strong>{scanResult.unavailable_count ?? 0}</strong>
+              </div>
+              <div className="metric-card">
+                <span>Errors</span>
+                <strong>{scanResult.error_count ?? 0}</strong>
+              </div>
+            </div>
+
+            {(scanResult.issues?.length ?? 0) > 0 && (
+              <div className="issues-box">
+                <h3>Data issues</h3>
+                <ul>
+                  {scanResult.issues!.map((issue) => (
+                    <li key={`${issue.symbol}-${issue.status}`}>
+                      <strong>{issue.symbol}</strong> · {issue.status}
+                      <span>{issue.detail}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {scanResult.eligible_count === 0 ? (
+              <div className="empty-state">
+                <strong>Scan complete</strong>
+                <span>No eligible swing opportunities were found for this range.</span>
+              </div>
+            ) : (
+              <>
+                <div className="table-toolbar">
+                  <p className="field-hint">
+                    Showing {visibleOpportunities.length} of {scanResult.opportunities.length}. Click a
+                    row for trade plan and evidence.
+                  </p>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => downloadEligibleCsv(scanResult)}
+                  >
+                    Export CSV
+                  </button>
+                </div>
+                <div className="table-wrap scan-table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Symbol</th>
+                        <th>Direction</th>
+                        <th>Entry</th>
+                        <th>Stop Loss</th>
+                        <th>Target</th>
+                        <th>R:R</th>
+                        <th>Why Eligible</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleOpportunities.map((opportunity) => (
+                        <tr
+                          key={opportunity.symbol}
+                          className={selectedSymbol === opportunity.symbol ? 'row-selected' : undefined}
+                          onClick={() => setSelectedSymbol(opportunity.symbol)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              setSelectedSymbol(opportunity.symbol)
+                            }
+                          }}
+                          tabIndex={0}
+                          role="button"
+                          aria-pressed={selectedSymbol === opportunity.symbol}
+                        >
+                          <td className="symbol-cell">{opportunity.symbol}</td>
+                          <td>
+                            <span
+                              className={`direction-pill ${
+                                opportunity.candidate.direction === 'LONG' ? 'long' : 'short'
+                              }`}
+                            >
+                              {opportunity.candidate.direction}
+                            </span>
+                          </td>
+                          <td className="num-cell">{formatPrice(opportunity.candidate.entry_price)}</td>
+                          <td className="num-cell">{formatPrice(opportunity.candidate.stop_loss)}</td>
+                          <td className="num-cell">{formatPrice(opportunity.candidate.target)}</td>
+                          <td className="num-cell">{formatRatio(opportunity.candidate.risk_reward_ratio)}</td>
+                          <td className="why-eligible">{opportunity.evidence.decision}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {hiddenOpportunityCount > 0 && (
+                  <div className="see-more-row">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setShowAllOpportunities((current) => !current)}
+                    >
+                      {showAllOpportunities
+                        ? 'Show less'
+                        : `See more (${hiddenOpportunityCount} more)`}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        )}
+      </section>
+      )}
+
+      {selectedOpportunity && (
+        <div
+          className="detail-overlay"
+          role="presentation"
+          onClick={() => setSelectedSymbol(null)}
+        >
+          <div
+            className="detail-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="opportunity-detail-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="detail-drawer-header">
+              <div className="opportunity-detail-header">
+                <h3 id="opportunity-detail-title">{selectedOpportunity.symbol}</h3>
+                <span
+                  className={`now-badge ${
+                    confirmationMatchesScanEnd(selectedOpportunity) ? 'now-active' : 'now-neutral'
+                  }`}
+                >
+                  {confirmationMatchesScanEnd(selectedOpportunity)
+                    ? 'Confirmation aligns with scan end (NOW window)'
+                    : 'Confirmation on last bar of evaluated series required'}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="detail-close"
+                aria-label="Close opportunity detail"
+                onClick={() => setSelectedSymbol(null)}
+              >
+                Close
+              </button>
+            </div>
+            <p className="field-hint">
+              Eligibility requires breakout → retest → confirmation, with confirmation on the final
+              candle of the series sent to the strategy.
+            </p>
+
+            <div className="section-box">
+              <h3>Trade plan</h3>
+              <dl>
+                <div>
+                  <dt>Direction</dt>
+                  <dd>
+                    <span
+                      className={`direction-pill ${
+                        selectedOpportunity.candidate.direction === 'LONG' ? 'long' : 'short'
+                      }`}
+                    >
+                      {selectedOpportunity.candidate.direction}
+                    </span>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Entry</dt>
+                  <dd>{formatPrice(selectedOpportunity.candidate.entry_price)}</dd>
+                </div>
+                <div>
+                  <dt>Stop loss</dt>
+                  <dd>{formatPrice(selectedOpportunity.candidate.stop_loss)}</dd>
+                </div>
+                <div>
+                  <dt>Target</dt>
+                  <dd>{formatPrice(selectedOpportunity.candidate.target)}</dd>
+                </div>
+                <div>
+                  <dt>Risk / reward</dt>
+                  <dd>{formatRatio(selectedOpportunity.candidate.risk_reward_ratio)}</dd>
+                </div>
+                <div>
+                  <dt>Setup</dt>
+                  <dd className="plain-value">{selectedOpportunity.candidate.setup_name}</dd>
+                </div>
+              </dl>
+            </div>
+
+            <div className="section-box">
+              <h3>Evidence</h3>
+              <dl>
+                <div>
+                  <dt>Decision</dt>
+                  <dd className="evidence-decision">{selectedOpportunity.evidence.decision}</dd>
+                </div>
+                <div>
+                  <dt>Resistance</dt>
+                  <dd>{formatPrice(selectedOpportunity.evidence.resistance)}</dd>
+                </div>
+                <div>
+                  <dt>Breakout</dt>
+                  <dd className="bar-ref">
+                    <span>
+                      {
+                        formatBarRef(
+                          selectedOpportunity.evidence.breakout_candle_index,
+                          selectedOpportunity.evidence.breakout_candle_time,
+                        ).bar
+                      }
+                    </span>
+                    <small>
+                      {
+                        formatBarRef(
+                          selectedOpportunity.evidence.breakout_candle_index,
+                          selectedOpportunity.evidence.breakout_candle_time,
+                        ).when
+                      }
+                    </small>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Retest</dt>
+                  <dd className="bar-ref">
+                    <span>
+                      {
+                        formatBarRef(
+                          selectedOpportunity.evidence.retest_candle_index,
+                          selectedOpportunity.evidence.retest_candle_time,
+                        ).bar
+                      }
+                    </span>
+                    <small>
+                      {
+                        formatBarRef(
+                          selectedOpportunity.evidence.retest_candle_index,
+                          selectedOpportunity.evidence.retest_candle_time,
+                        ).when
+                      }
+                    </small>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Confirmation</dt>
+                  <dd className="bar-ref">
+                    <span>
+                      {
+                        formatBarRef(
+                          selectedOpportunity.evidence.confirmation_candle_index,
+                          selectedOpportunity.evidence.confirmation_candle_time,
+                        ).bar
+                      }
+                    </span>
+                    <small>
+                      {
+                        formatBarRef(
+                          selectedOpportunity.evidence.confirmation_candle_index,
+                          selectedOpportunity.evidence.confirmation_candle_time,
+                        ).when
+                      }
+                    </small>
+                  </dd>
+                </div>
+                <div>
+                  <dt>ATR</dt>
+                  <dd>{formatNumber(selectedOpportunity.evidence.atr_value, 2)}</dd>
+                </div>
+                <div>
+                  <dt>Volume SMA</dt>
+                  <dd>{formatVolume(selectedOpportunity.evidence.volume_sma_value)}</dd>
+                </div>
+                <div>
+                  <dt>Breakout volume</dt>
+                  <dd>{formatVolume(selectedOpportunity.evidence.breakout_volume)}</dd>
+                </div>
+                <div>
+                  <dt>Retest low</dt>
+                  <dd>{formatPrice(selectedOpportunity.evidence.retest_low)}</dd>
+                </div>
+                <div>
+                  <dt>Confirmation volume</dt>
+                  <dd>{formatVolume(selectedOpportunity.evidence.confirmation_volume)}</dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeView === 'research' && (
       <section className="panel">
         <header className="header-block">
-          <p className="eyebrow">Strategy Evaluation</p>
+          <p className="eyebrow">Research desk</p>
           <h1>Single-symbol workspace</h1>
           <p className="header-copy">Evaluate one symbol now, or run a historical backtest with your risk settings.</p>
         </header>
@@ -380,7 +1000,7 @@ function App() {
               type="text"
               value={symbol}
               onChange={(event) => setSymbol(event.target.value)}
-              placeholder="e.g. TST"
+              placeholder="e.g. ZYDUSLIFE"
             />
           </div>
 
@@ -400,7 +1020,6 @@ function App() {
               <label htmlFor="start">Start date</label>
               <input id="start" type="date" value={start} onChange={(event) => setStart(event.target.value)} />
             </div>
-
             <div className="field-group">
               <label htmlFor="end">End date</label>
               <input id="end" type="date" value={end} onChange={(event) => setEnd(event.target.value)} />
@@ -410,11 +1029,25 @@ function App() {
           <div className="field-row two-col">
             <div className="field-group">
               <label htmlFor="account-equity">Account equity</label>
-              <input id="account-equity" type="number" min="0" step="0.01" value={accountEquity} onChange={(event) => setAccountEquity(event.target.value)} />
+              <input
+                id="account-equity"
+                type="number"
+                min="0"
+                step="0.01"
+                value={accountEquity}
+                onChange={(event) => setAccountEquity(event.target.value)}
+              />
             </div>
             <div className="field-group">
               <label htmlFor="risk-percent">Risk %</label>
-              <input id="risk-percent" type="number" min="0" step="0.01" value={riskPercent} onChange={(event) => setRiskPercent(event.target.value)} />
+              <input
+                id="risk-percent"
+                type="number"
+                min="0"
+                step="0.01"
+                value={riskPercent}
+                onChange={(event) => setRiskPercent(event.target.value)}
+              />
             </div>
           </div>
 
@@ -428,7 +1061,6 @@ function App() {
                 step="0.01"
                 value={slippagePerShare}
                 onChange={(event) => setSlippagePerShare(event.target.value)}
-                title="Absolute amount per share applied against entry and exit fills"
               />
             </div>
             <div className="field-group">
@@ -440,7 +1072,6 @@ function App() {
                 step="0.01"
                 value={costPerTrade}
                 onChange={(event) => setCostPerTrade(event.target.value)}
-                title="Flat round-trip cost deducted once per completed trade"
               />
             </div>
           </div>
@@ -479,16 +1110,54 @@ function App() {
               <div className="section-box">
                 <h3>Candidate</h3>
                 <dl>
-                  <div><dt>Symbol</dt><dd>{result.candidate.symbol}</dd></div>
-                  <div><dt>Timeframe</dt><dd>{result.candidate.timeframe}</dd></div>
-                  <div><dt>Direction</dt><dd>{result.candidate.direction}</dd></div>
-                  <div><dt>Entry</dt><dd>{String(result.candidate.entry_price)}</dd></div>
-                  <div><dt>Stop loss</dt><dd>{String(result.candidate.stop_loss)}</dd></div>
-                  <div><dt>Target</dt><dd>{String(result.candidate.target)}</dd></div>
-                  <div><dt>Risk per share</dt><dd>{String(result.candidate.risk_per_share)}</dd></div>
-                  <div><dt>Reward</dt><dd>{String(result.candidate.reward)}</dd></div>
-                  <div><dt>Risk/reward</dt><dd>{String(result.candidate.risk_reward_ratio)}</dd></div>
-                  <div><dt>Setup</dt><dd>{result.candidate.setup_name}</dd></div>
+                  <div>
+                    <dt>Symbol</dt>
+                    <dd className="plain-value">{result.candidate.symbol}</dd>
+                  </div>
+                  <div>
+                    <dt>Timeframe</dt>
+                    <dd>{result.candidate.timeframe}</dd>
+                  </div>
+                  <div>
+                    <dt>Direction</dt>
+                    <dd>
+                      <span
+                        className={`direction-pill ${
+                          result.candidate.direction === 'LONG' ? 'long' : 'short'
+                        }`}
+                      >
+                        {result.candidate.direction}
+                      </span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Entry</dt>
+                    <dd>{formatPrice(result.candidate.entry_price)}</dd>
+                  </div>
+                  <div>
+                    <dt>Stop loss</dt>
+                    <dd>{formatPrice(result.candidate.stop_loss)}</dd>
+                  </div>
+                  <div>
+                    <dt>Target</dt>
+                    <dd>{formatPrice(result.candidate.target)}</dd>
+                  </div>
+                  <div>
+                    <dt>Risk per share</dt>
+                    <dd>{formatPrice(result.candidate.risk_per_share)}</dd>
+                  </div>
+                  <div>
+                    <dt>Reward</dt>
+                    <dd>{formatPrice(result.candidate.reward)}</dd>
+                  </div>
+                  <div>
+                    <dt>Risk/reward</dt>
+                    <dd>{formatRatio(result.candidate.risk_reward_ratio)}</dd>
+                  </div>
+                  <div>
+                    <dt>Setup</dt>
+                    <dd className="plain-value">{result.candidate.setup_name}</dd>
+                  </div>
                 </dl>
               </div>
             )}
@@ -497,19 +1166,55 @@ function App() {
               <div className="section-box">
                 <h3>Evidence</h3>
                 <dl>
-                  <div><dt>Resistance</dt><dd>{String(result.evidence.resistance)}</dd></div>
-                  <div><dt>Breakout index</dt><dd>{String(result.evidence.breakout_candle_index)}</dd></div>
-                  <div><dt>Breakout time</dt><dd>{result.evidence.breakout_candle_time}</dd></div>
-                  <div><dt>Retest index</dt><dd>{String(result.evidence.retest_candle_index)}</dd></div>
-                  <div><dt>Retest time</dt><dd>{result.evidence.retest_candle_time}</dd></div>
-                  <div><dt>Confirmation index</dt><dd>{String(result.evidence.confirmation_candle_index)}</dd></div>
-                  <div><dt>Confirmation time</dt><dd>{result.evidence.confirmation_candle_time}</dd></div>
-                  <div><dt>ATR</dt><dd>{String(result.evidence.atr_value)}</dd></div>
-                  <div><dt>Volume SMA</dt><dd>{String(result.evidence.volume_sma_value)}</dd></div>
-                  <div><dt>Breakout volume</dt><dd>{String(result.evidence.breakout_volume)}</dd></div>
-                  <div><dt>Retest low</dt><dd>{String(result.evidence.retest_low)}</dd></div>
-                  <div><dt>Confirmation volume</dt><dd>{String(result.evidence.confirmation_volume)}</dd></div>
-                  <div><dt>Decision</dt><dd>{result.evidence.decision}</dd></div>
+                  <div>
+                    <dt>Resistance</dt>
+                    <dd>{formatPrice(result.evidence.resistance)}</dd>
+                  </div>
+                  <div>
+                    <dt>Breakout</dt>
+                    <dd className="bar-ref">
+                      <span>{formatBarRef(result.evidence.breakout_candle_index, result.evidence.breakout_candle_time).bar}</span>
+                      <small>{formatBarRef(result.evidence.breakout_candle_index, result.evidence.breakout_candle_time).when}</small>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Retest</dt>
+                    <dd className="bar-ref">
+                      <span>{formatBarRef(result.evidence.retest_candle_index, result.evidence.retest_candle_time).bar}</span>
+                      <small>{formatBarRef(result.evidence.retest_candle_index, result.evidence.retest_candle_time).when}</small>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Confirmation</dt>
+                    <dd className="bar-ref">
+                      <span>{formatBarRef(result.evidence.confirmation_candle_index, result.evidence.confirmation_candle_time).bar}</span>
+                      <small>{formatBarRef(result.evidence.confirmation_candle_index, result.evidence.confirmation_candle_time).when}</small>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>ATR</dt>
+                    <dd>{formatNumber(result.evidence.atr_value, 2)}</dd>
+                  </div>
+                  <div>
+                    <dt>Volume SMA</dt>
+                    <dd>{formatVolume(result.evidence.volume_sma_value)}</dd>
+                  </div>
+                  <div>
+                    <dt>Breakout volume</dt>
+                    <dd>{formatVolume(result.evidence.breakout_volume)}</dd>
+                  </div>
+                  <div>
+                    <dt>Retest low</dt>
+                    <dd>{formatPrice(result.evidence.retest_low)}</dd>
+                  </div>
+                  <div>
+                    <dt>Confirmation volume</dt>
+                    <dd>{formatVolume(result.evidence.confirmation_volume)}</dd>
+                  </div>
+                  <div>
+                    <dt>Decision</dt>
+                    <dd className="evidence-decision">{result.evidence.decision}</dd>
+                  </div>
                 </dl>
               </div>
             )}
@@ -520,35 +1225,79 @@ function App() {
           <section className="result-card">
             <h2>Backtest results</h2>
             <div className="metric-grid">
-              <div className="metric-card"><span>Total Trades</span><strong>{backtestResult.metrics.total_trades}</strong></div>
-              <div className="metric-card"><span>Winning Trades</span><strong>{backtestResult.metrics.winning_trades}</strong></div>
-              <div className="metric-card"><span>Losing Trades</span><strong>{backtestResult.metrics.losing_trades}</strong></div>
-              <div className="metric-card"><span>Win Rate</span><strong>{String(backtestResult.metrics.win_rate)}%</strong></div>
-              <div className="metric-card"><span>Total P&amp;L</span><strong className={valueClass(backtestResult.metrics.total_pnl)}>{String(backtestResult.metrics.total_pnl)}</strong></div>
-              <div className="metric-card"><span>Average P&amp;L</span><strong className={valueClass(backtestResult.metrics.average_pnl)}>{String(backtestResult.metrics.average_pnl)}</strong></div>
-              <div className="metric-card"><span>Total R</span><strong>{String(backtestResult.metrics.total_r)}</strong></div>
-              <div className="metric-card"><span>Average R</span><strong>{String(backtestResult.metrics.average_r)}</strong></div>
-              <div className="metric-card"><span>Maximum Drawdown</span><strong className="value-neutral">{String(backtestResult.metrics.maximum_drawdown)}</strong></div>
+              <div className="metric-card">
+                <span>Total Trades</span>
+                <strong>{backtestResult.metrics.total_trades}</strong>
+              </div>
+              <div className="metric-card">
+                <span>Winning Trades</span>
+                <strong>{backtestResult.metrics.winning_trades}</strong>
+              </div>
+              <div className="metric-card">
+                <span>Losing Trades</span>
+                <strong>{backtestResult.metrics.losing_trades}</strong>
+              </div>
+              <div className="metric-card">
+                <span>Win Rate</span>
+                <strong>{formatPercent(backtestResult.metrics.win_rate)}</strong>
+              </div>
+              <div className="metric-card">
+                <span>Total P&amp;L</span>
+                <strong className={valueClass(backtestResult.metrics.total_pnl)}>
+                  {formatPrice(backtestResult.metrics.total_pnl)}
+                </strong>
+              </div>
+              <div className="metric-card">
+                <span>Average P&amp;L</span>
+                <strong className={valueClass(backtestResult.metrics.average_pnl)}>
+                  {formatPrice(backtestResult.metrics.average_pnl)}
+                </strong>
+              </div>
+              <div className="metric-card">
+                <span>Total R</span>
+                <strong>{formatNumber(backtestResult.metrics.total_r, 2)}</strong>
+              </div>
+              <div className="metric-card">
+                <span>Average R</span>
+                <strong>{formatNumber(backtestResult.metrics.average_r, 2)}</strong>
+              </div>
+              <div className="metric-card">
+                <span>Maximum Drawdown</span>
+                <strong className="value-neutral">{formatPrice(backtestResult.metrics.maximum_drawdown)}</strong>
+              </div>
             </div>
             {backtestResult.trades.length === 0 ? (
-              <div className="empty-state"><strong>Backtest complete</strong><span>No trades were generated for this history and risk configuration.</span></div>
+              <div className="empty-state">
+                <strong>Backtest complete</strong>
+                <span>No trades were generated for this history and risk configuration.</span>
+              </div>
             ) : (
               <div className="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>Entry</th><th>Exit</th><th>Quantity</th><th>Entry Price</th><th>Exit Price</th><th>Risk</th><th>P&amp;L</th><th>R</th><th>Exit Reason</th></tr>
+                    <tr>
+                      <th>Entry</th>
+                      <th>Exit</th>
+                      <th>Qty</th>
+                      <th>Entry Price</th>
+                      <th>Exit Price</th>
+                      <th>Risk</th>
+                      <th>P&amp;L</th>
+                      <th>R</th>
+                      <th>Exit Reason</th>
+                    </tr>
                   </thead>
                   <tbody>
                     {backtestResult.trades.map((trade, index) => (
                       <tr key={`${trade.entry_time}-${index}`}>
-                        <td>{trade.entry_time}</td>
-                        <td>{trade.exit_time}</td>
-                        <td>{trade.quantity}</td>
-                        <td>{String(trade.entry_price)}</td>
-                        <td>{String(trade.exit_price)}</td>
-                        <td>{String(trade.risk_amount)}</td>
-                        <td className={valueClass(trade.pnl)}>{String(trade.pnl)}</td>
-                        <td className={valueClass(trade.pnl)}>{tradeR(trade)}</td>
+                        <td>{formatDateTime(trade.entry_time)}</td>
+                        <td>{formatDateTime(trade.exit_time)}</td>
+                        <td className="num-cell">{formatVolume(trade.quantity)}</td>
+                        <td className="num-cell">{formatPrice(trade.entry_price)}</td>
+                        <td className="num-cell">{formatPrice(trade.exit_price)}</td>
+                        <td className="num-cell">{formatPrice(trade.risk_amount)}</td>
+                        <td className={`num-cell ${valueClass(trade.pnl)}`}>{formatPrice(trade.pnl)}</td>
+                        <td className={`num-cell ${valueClass(trade.pnl)}`}>{tradeR(trade)}</td>
                         <td>{trade.exit_reason}</td>
                       </tr>
                     ))}
@@ -559,134 +1308,7 @@ function App() {
           </section>
         )}
       </section>
-
-      <section className="panel scan-panel">
-        <header className="header-block">
-          <p className="eyebrow">Nifty 500 Opportunity Scan</p>
-          <h1>Nifty 500 Swing Opportunities</h1>
-          <p className="header-copy">
-            Scan the full universe for valid breakout → retest → confirmation setups right now.
-          </p>
-        </header>
-
-        <form
-          className="strategy-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void handleScan()
-          }}
-        >
-          <div className="field-row two-col">
-            <div className="field-group">
-              <label htmlFor="scan-start">Start date</label>
-              <input
-                id="scan-start"
-                type="date"
-                value={scanStart}
-                onChange={(event) => setScanStart(event.target.value)}
-              />
-            </div>
-            <div className="field-group">
-              <label htmlFor="scan-end">End date</label>
-              <input
-                id="scan-end"
-                type="date"
-                value={scanEnd}
-                onChange={(event) => setScanEnd(event.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="field-group">
-            <label htmlFor="scan-timeframe">Timeframe</label>
-            <input id="scan-timeframe" type="text" value="1d" readOnly disabled />
-          </div>
-
-          <div className="actions">
-            <button type="submit" className="primary-button" disabled={scanLoading}>
-              {scanLoading ? 'Scanning...' : 'Scan Nifty 500'}
-            </button>
-          </div>
-        </form>
-
-        {scanError && <div className="status error">{scanError}</div>}
-
-        {scanResult && (
-          <section className="result-card">
-            <h2>{scanResult.universe_name.replace('_', ' ')}</h2>
-            <div className="result-grid">
-              <div>
-                <strong>Universe version:</strong> {scanResult.universe_version}
-              </div>
-              <div>
-                <strong>Timeframe:</strong> {scanResult.timeframe}
-              </div>
-              <div>
-                <strong>Range:</strong> {scanResult.start} → {scanResult.end}
-              </div>
-            </div>
-
-            <div className="metric-grid">
-              <div className="metric-card">
-                <span>Stocks scanned</span>
-                <strong>{scanResult.symbols_scanned}</strong>
-              </div>
-              <div className="metric-card metric-accent">
-                <span>Eligible</span>
-                <strong>{scanResult.eligible_count}</strong>
-              </div>
-              <div className="metric-card">
-                <span>No setup</span>
-                <strong>{scanResult.no_setup_count}</strong>
-              </div>
-            </div>
-
-            {scanResult.eligible_count === 0 ? (
-              <div className="empty-state">
-                <strong>Scan complete</strong>
-                <span>No eligible swing opportunities were found for this range.</span>
-              </div>
-            ) : (
-              <div className="table-wrap scan-table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Symbol</th>
-                      <th>Direction</th>
-                      <th>Entry</th>
-                      <th>Stop Loss</th>
-                      <th>Target</th>
-                      <th>R:R</th>
-                      <th>Why Eligible</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scanResult.opportunities.map((opportunity) => (
-                      <tr key={opportunity.symbol}>
-                        <td className="symbol-cell">{opportunity.symbol}</td>
-                        <td>
-                          <span
-                            className={`direction-pill ${
-                              opportunity.candidate.direction === 'LONG' ? 'long' : 'short'
-                            }`}
-                          >
-                            {opportunity.candidate.direction}
-                          </span>
-                        </td>
-                        <td>{String(opportunity.candidate.entry_price)}</td>
-                        <td>{String(opportunity.candidate.stop_loss)}</td>
-                        <td>{String(opportunity.candidate.target)}</td>
-                        <td>{String(opportunity.candidate.risk_reward_ratio)}</td>
-                        <td className="why-eligible">{opportunity.evidence.decision}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        )}
-      </section>
+      )}
     </main>
   )
 }

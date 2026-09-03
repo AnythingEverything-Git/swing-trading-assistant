@@ -7,6 +7,7 @@ Usage (from the backend directory):
 
     python scripts/seed_demo_nifty500.py
     python scripts/seed_demo_nifty500.py --start 2024-01-01 --end 2024-09-01
+    python scripts/seed_demo_nifty500.py --to-today
 """
 from __future__ import annotations
 
@@ -50,6 +51,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Inclusive UTC end date (YYYY-MM-DD). Default: today UTC.",
     )
+    parser.add_argument(
+        "--to-today",
+        action="store_true",
+        help=(
+            "Demo refresh: end at today UTC and re-seed the full window "
+            "(~9 months unless --start is set). Prefer this over partial watermark "
+            "ingest — demo OHLC is generated for the requested range."
+        ),
+    )
     return parser
 
 
@@ -57,18 +67,23 @@ async def seed_demo_nifty500(
     *,
     start: datetime | None = None,
     end: datetime | None = None,
+    to_today: bool = False,
 ):
     settings = get_settings()
     if settings.environment.strip().lower() == "production":
         raise SystemExit("Refusing to seed demo data: environment is production")
 
     default_start, default_end = default_demo_seed_range()
-    resolved_end = end or default_end
-    resolved_start = start or default_start
-    if start is None and end is not None:
-        resolved_start = resolved_end - (default_end - default_start)
-    if start is not None and end is None:
+    if to_today:
         resolved_end = default_end
+        resolved_start = start or default_start
+    else:
+        resolved_end = end or default_end
+        resolved_start = start or default_start
+        if start is None and end is not None:
+            resolved_start = resolved_end - (default_end - default_start)
+        if start is not None and end is None:
+            resolved_end = default_end
     if resolved_start > resolved_end:
         raise SystemExit("start must be <= end")
 
@@ -98,7 +113,11 @@ def _run_async(coro):
 
 def main() -> None:
     args = _build_arg_parser().parse_args()
-    result = _run_async(seed_demo_nifty500(start=args.start, end=args.end))
+    if args.to_today and args.end is not None:
+        raise SystemExit("Use either --to-today or --end, not both")
+    result = _run_async(
+        seed_demo_nifty500(start=args.start, end=args.end, to_today=args.to_today)
+    )
 
     failed = [item for item in result.ingestion.results if not item.success]
     print("Demo Nifty 500 seed complete")

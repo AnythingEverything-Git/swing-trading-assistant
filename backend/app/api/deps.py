@@ -82,3 +82,12 @@ async def get_opportunity_scan_service(
     from app.application.scan.opportunity_scan_service import OpportunityScanService
 
     return OpportunityScanService(evaluation_service)
+
+
+async def get_universe_scan_report_service(
+    evaluation_service=Depends(get_strategy_evaluation_service),
+):
+    """Compose UniverseScanReportService for per-symbol outcome classification."""
+    from app.application.scan.universe_scan_report_service import UniverseScanReportService
+
+    return UniverseScanReportService(evaluation_service)

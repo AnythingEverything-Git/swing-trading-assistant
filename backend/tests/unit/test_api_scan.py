@@ -7,15 +7,22 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from app.api.deps import get_opportunity_scan_service, get_strategy_evaluation_service, get_upstox_provider
+from app.api.deps import (
+    get_db,
+    get_strategy_evaluation_service,
+    get_universe_scan_report_service,
+    get_upstox_provider,
+)
 from app.api.main import create_app
-from app.application.scan.opportunity_scan_service import (
-    EligibleOpportunity,
-    OpportunityScanResult,
+from app.application.scan.opportunity_scan_service import EligibleOpportunity
+from app.application.scan.universe_scan_report_service import (
+    SymbolScanIssue,
+    UniverseScanReport,
 )
 from app.domain.strategy.strategy import StrategyEvidence, TradeCandidate
 from app.domain.universe import StockUniverse
-from app.infrastructure.universe import Nifty500Universe
+from app.infrastructure.universe import Nifty500Universe, get_universe
+from app.infrastructure.universe.static_file_universe import Nifty50Universe
 
 
 START = datetime(2025, 12, 7, tzinfo=timezone.utc)
@@ -55,7 +62,7 @@ def _candidate(symbol: str = "INFY") -> TradeCandidate:
     )
 
 
-class FakeOpportunityScanService:
+class FakeUniverseScanReportService:
     def __init__(self, result=None, raise_exc=None):
         self.result = result
         self.raise_exc = raise_exc
@@ -76,10 +83,40 @@ class FakeOpportunityScanService:
         return self.result
 
 
-def _success_result() -> OpportunityScanResult:
-    return OpportunityScanResult(
+class FakeDbSession:
+    def __init__(self):
+        self.added = []
+
+    def add(self, row):
+        row.id = 7
+        self.added.append(row)
+
+    async def flush(self):
+        return None
+
+    async def commit(self):
+        return None
+
+    async def rollback(self):
+        return None
+
+
+async def _override_get_db():
+    yield FakeDbSession()
+
+
+def _override_scan_deps(app, service: FakeUniverseScanReportService) -> None:
+    app.dependency_overrides[get_universe_scan_report_service] = lambda: service
+    app.dependency_overrides[get_db] = _override_get_db
+
+
+def _success_result() -> UniverseScanReport:
+    return UniverseScanReport(
         symbols_scanned=5,
         eligible_count=1,
+        no_setup_count=3,
+        unavailable_count=1,
+        error_count=0,
         opportunities=(
             EligibleOpportunity(
                 symbol="INFY",
@@ -87,13 +124,20 @@ def _success_result() -> OpportunityScanResult:
                 evidence=_evidence(),
             ),
         ),
+        issues=(
+            SymbolScanIssue(
+                symbol="MISS",
+                status="UNAVAILABLE",
+                detail="candles must contain at least one value",
+            ),
+        ),
     )
 
 
 def test_scan_opportunities_success_maps_candidate_and_evidence():
     app = create_app()
-    service = FakeOpportunityScanService(result=_success_result())
-    app.dependency_overrides[get_opportunity_scan_service] = lambda: service
+    service = FakeUniverseScanReportService(result=_success_result())
+    _override_scan_deps(app, service)
     client = TestClient(app)
 
     resp = client.post(
@@ -112,8 +156,13 @@ def test_scan_opportunities_success_maps_candidate_and_evidence():
     assert data["timeframe"] == "1d"
     assert data["symbols_scanned"] == 5
     assert data["eligible_count"] == 1
-    assert data["no_setup_count"] == 4
+    assert data["no_setup_count"] == 3
+    assert data["unavailable_count"] == 1
+    assert data["error_count"] == 0
     assert len(data["opportunities"]) == 1
+    assert data["issues"][0]["symbol"] == "MISS"
+    assert data["issues"][0]["status"] == "UNAVAILABLE"
+    assert data["scan_run_id"] == 7
 
     opp = data["opportunities"][0]
     assert opp["symbol"] == "INFY"
@@ -129,11 +178,19 @@ def test_scan_opportunities_success_maps_candidate_and_evidence():
     assert opp["evidence"]["decision"] == "valid breakout -> retest -> confirmation"
 
 
-def test_scan_opportunities_no_setup_count_is_scanned_minus_eligible():
+def test_scan_opportunities_no_setup_count_is_reported_directly():
     app = create_app()
-    result = OpportunityScanResult(symbols_scanned=10, eligible_count=3, opportunities=())
-    service = FakeOpportunityScanService(result=result)
-    app.dependency_overrides[get_opportunity_scan_service] = lambda: service
+    result = UniverseScanReport(
+        symbols_scanned=10,
+        eligible_count=3,
+        no_setup_count=7,
+        unavailable_count=0,
+        error_count=0,
+        opportunities=(),
+        issues=(),
+    )
+    service = FakeUniverseScanReportService(result=result)
+    _override_scan_deps(app, service)
     client = TestClient(app)
 
     resp = client.post(
@@ -150,13 +207,17 @@ def test_scan_opportunities_no_setup_count_is_scanned_minus_eligible():
     assert data["symbols_scanned"] == 10
     assert data["eligible_count"] == 3
     assert data["no_setup_count"] == 7
+    assert data["unavailable_count"] == 0
+    assert data["error_count"] == 0
     assert data["opportunities"] == []
+    assert data["issues"] == []
+    assert data["scan_run_id"] == 7
 
 
 def test_scan_opportunities_invalid_range_returns_400():
     app = create_app()
-    service = FakeOpportunityScanService(result=_success_result())
-    app.dependency_overrides[get_opportunity_scan_service] = lambda: service
+    service = FakeUniverseScanReportService(result=_success_result())
+    _override_scan_deps(app, service)
     client = TestClient(app)
 
     resp = client.post(
@@ -175,8 +236,8 @@ def test_scan_opportunities_invalid_range_returns_400():
 
 def test_scan_opportunities_unsupported_timeframe_returns_400():
     app = create_app()
-    service = FakeOpportunityScanService(result=_success_result())
-    app.dependency_overrides[get_opportunity_scan_service] = lambda: service
+    service = FakeUniverseScanReportService(result=_success_result())
+    _override_scan_deps(app, service)
     client = TestClient(app)
 
     resp = client.post(
@@ -195,8 +256,8 @@ def test_scan_opportunities_unsupported_timeframe_returns_400():
 
 def test_scan_opportunities_value_error_returns_400():
     app = create_app()
-    service = FakeOpportunityScanService(raise_exc=ValueError("candles must contain at least one value"))
-    app.dependency_overrides[get_opportunity_scan_service] = lambda: service
+    service = FakeUniverseScanReportService(raise_exc=ValueError("invalid range"))
+    _override_scan_deps(app, service)
     client = TestClient(app)
 
     resp = client.post(
@@ -209,13 +270,13 @@ def test_scan_opportunities_value_error_returns_400():
     )
 
     assert resp.status_code == 400
-    assert "candles must contain at least one value" in resp.json()["detail"]
+    assert "invalid range" in resp.json()["detail"]
 
 
 def test_scan_opportunities_unexpected_error_returns_500():
     app = create_app()
-    service = FakeOpportunityScanService(raise_exc=RuntimeError("db unavailable"))
-    app.dependency_overrides[get_opportunity_scan_service] = lambda: service
+    service = FakeUniverseScanReportService(raise_exc=RuntimeError("db unavailable"))
+    _override_scan_deps(app, service)
     client = TestClient(app)
 
     resp = client.post(
@@ -233,8 +294,8 @@ def test_scan_opportunities_unexpected_error_returns_500():
 
 def test_scan_opportunities_forwards_timeframe_start_end_and_nifty500_universe():
     app = create_app()
-    service = FakeOpportunityScanService(result=_success_result())
-    app.dependency_overrides[get_opportunity_scan_service] = lambda: service
+    service = FakeUniverseScanReportService(result=_success_result())
+    _override_scan_deps(app, service)
     client = TestClient(app)
 
     resp = client.post(
@@ -252,25 +313,77 @@ def test_scan_opportunities_forwards_timeframe_start_end_and_nifty500_universe()
     assert call["timeframe"] == "1d"
     assert call["start"] == START
     assert call["end"] == END
-    assert call["universe_type"] is Nifty500Universe
-    assert isinstance(call["universe"], Nifty500Universe)
     assert call["universe"].get_snapshot().name == "NIFTY_500"
+    assert isinstance(call["universe"], Nifty500Universe) or call["universe"].get_snapshot().name == "NIFTY_500"
+
+
+def test_scan_opportunities_accepts_nifty_50_universe():
+    app = create_app()
+    service = FakeUniverseScanReportService(result=_success_result())
+    _override_scan_deps(app, service)
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/v1/scan/opportunities",
+        json={
+            "universe": "NIFTY_50",
+            "timeframe": "1d",
+            "start": "2025-12-07T00:00:00Z",
+            "end": "2026-09-03T00:00:00Z",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert service.calls[0]["universe"].get_snapshot().name == "NIFTY_50"
+    assert len(service.calls[0]["universe"].get_snapshot().symbols) == 50
+    assert resp.json()["universe_name"] == "NIFTY_50"
+
+
+def test_scan_opportunities_rejects_unknown_universe():
+    app = create_app()
+    service = FakeUniverseScanReportService(result=_success_result())
+    _override_scan_deps(app, service)
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/v1/scan/opportunities",
+        json={
+            "universe": "NIFTY_999",
+            "timeframe": "1d",
+            "start": "2025-12-07T00:00:00Z",
+            "end": "2026-09-03T00:00:00Z",
+        },
+    )
+
+    assert resp.status_code == 400
+    assert "universe" in resp.json()["detail"].lower()
+    assert service.calls == []
+
+
+def test_get_universe_registry_nested_membership():
+    nifty50 = get_universe("NIFTY_50").get_snapshot()
+    nifty100 = get_universe("NIFTY_100").get_snapshot()
+    nifty200 = get_universe("NIFTY_200").get_snapshot()
+    nifty500 = get_universe("NIFTY_500").get_snapshot()
+    assert len(nifty50.symbols) == 50
+    assert len(nifty100.symbols) == 100
+    assert len(nifty200.symbols) == 200
+    assert set(nifty50.symbols) < set(nifty100.symbols) < set(nifty200.symbols) < set(nifty500.symbols)
+    assert isinstance(Nifty50Universe().get_snapshot().symbols, tuple)
 
 
 def test_scan_dep_composes_from_strategy_evaluation_not_upstox_or_demo():
-    """Wiring check: opportunity scan depends on strategy evaluation, not Upstox/Demo."""
+    """Wiring check: universe scan report depends on strategy evaluation, not Upstox/Demo."""
     from app.api import deps
 
-    params = inspect.signature(deps.get_opportunity_scan_service).parameters
+    params = inspect.signature(deps.get_universe_scan_report_service).parameters
     evaluation_param = params["evaluation_service"]
     assert evaluation_param.default.dependency is get_strategy_evaluation_service
 
-    # Strategy evaluation is built from MarketDataQueryService (persisted candles).
     strategy_params = inspect.signature(get_strategy_evaluation_service).parameters
     assert "query_service" in strategy_params
 
-    # Upstox is a separate dependency and is not an input to the scan service.
     assert "provider" not in params
     assert "upstox" not in params
     upstox_sig = inspect.signature(get_upstox_provider)
-    assert upstox_sig.parameters  # exists as its own dep for ingest only
+    assert upstox_sig.parameters

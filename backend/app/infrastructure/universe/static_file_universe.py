@@ -8,11 +8,27 @@ from __future__ import annotations
 import json
 from datetime import date, datetime
 from pathlib import Path
+from typing import Literal
 
-from app.domain.universe.universe import UniverseSnapshot, normalize_symbols
+from app.domain.universe.universe import StockUniverse, UniverseSnapshot, normalize_symbols
 
+_DATA_DIR = Path(__file__).resolve().parent / "data"
 
-_DEFAULT_NIFTY500_PATH = Path(__file__).resolve().parent / "data" / "nifty500_constituents.json"
+UniverseName = Literal["NIFTY_50", "NIFTY_100", "NIFTY_200", "NIFTY_500"]
+
+_UNIVERSE_FILES: dict[UniverseName, Path] = {
+    "NIFTY_50": _DATA_DIR / "nifty_50_constituents.json",
+    "NIFTY_100": _DATA_DIR / "nifty_100_constituents.json",
+    "NIFTY_200": _DATA_DIR / "nifty_200_constituents.json",
+    "NIFTY_500": _DATA_DIR / "nifty500_constituents.json",
+}
+
+SUPPORTED_UNIVERSE_NAMES: tuple[UniverseName, ...] = (
+    "NIFTY_50",
+    "NIFTY_100",
+    "NIFTY_200",
+    "NIFTY_500",
+)
 
 
 class StaticFileStockUniverse:
@@ -54,7 +70,31 @@ class Nifty500Universe(StaticFileStockUniverse):
     """Nifty 500 constituents from the packaged replaceable snapshot file."""
 
     def __init__(self, path: Path | str | None = None) -> None:
-        super().__init__(path or _DEFAULT_NIFTY500_PATH)
+        super().__init__(path or _UNIVERSE_FILES["NIFTY_500"])
+
+
+class Nifty200Universe(StaticFileStockUniverse):
+    def __init__(self, path: Path | str | None = None) -> None:
+        super().__init__(path or _UNIVERSE_FILES["NIFTY_200"])
+
+
+class Nifty100Universe(StaticFileStockUniverse):
+    def __init__(self, path: Path | str | None = None) -> None:
+        super().__init__(path or _UNIVERSE_FILES["NIFTY_100"])
+
+
+class Nifty50Universe(StaticFileStockUniverse):
+    def __init__(self, path: Path | str | None = None) -> None:
+        super().__init__(path or _UNIVERSE_FILES["NIFTY_50"])
+
+
+def get_universe(name: str) -> StockUniverse:
+    """Resolve a supported index universe by name."""
+    key = name.strip().upper()
+    if key not in _UNIVERSE_FILES:
+        supported = ", ".join(SUPPORTED_UNIVERSE_NAMES)
+        raise ValueError(f"unsupported universe '{name}'; expected one of: {supported}")
+    return StaticFileStockUniverse(_UNIVERSE_FILES[key])  # type: ignore[index]
 
 
 def _parse_as_of(value: object) -> date | None:
@@ -69,4 +109,13 @@ def _parse_as_of(value: object) -> date | None:
     raise ValueError("as_of must be an ISO date string, date, or null")
 
 
-__all__ = ["StaticFileStockUniverse", "Nifty500Universe"]
+__all__ = [
+    "StaticFileStockUniverse",
+    "Nifty500Universe",
+    "Nifty200Universe",
+    "Nifty100Universe",
+    "Nifty50Universe",
+    "UniverseName",
+    "SUPPORTED_UNIVERSE_NAMES",
+    "get_universe",
+]

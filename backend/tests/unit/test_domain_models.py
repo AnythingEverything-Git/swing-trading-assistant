@@ -70,5 +70,6 @@ def test_candle_is_immutable_and_rejects_invalid_prices():
 
 
 def test_scanrun_instantiation():
-    sr = ScanRun(id=uuid4(), started_at=datetime.now(timezone.utc), result_count=0)
+    sr = ScanRun(id=1, started_at=datetime.now(timezone.utc), result_count=0)
     assert sr.result_count == 0
+    assert sr.id == 1

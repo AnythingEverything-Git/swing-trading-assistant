@@ -1,18 +1,24 @@
 """Thin FastAPI surface for Nifty 500 opportunity scans over persisted candles."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, timezone
 
-from app.api.deps import get_opportunity_scan_service
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_db, get_universe_scan_report_service
 from app.api.schemas import (
     EligibleOpportunityResponse,
     OpportunityScanRequest,
     OpportunityScanResponse,
+    ScanIssueResponse,
     StrategyCandidateResponse,
     StrategyEvidenceResponse,
 )
-from app.application.scan.opportunity_scan_service import OpportunityScanService
-from app.infrastructure.universe import Nifty500Universe
+from app.application.scan.universe_scan_report_service import UniverseScanReportService
+from app.infrastructure.database.repositories.scan_run_repository import ScanRunRepository
+from app.infrastructure.universe import get_universe
+from app.infrastructure.universe.static_file_universe import SUPPORTED_UNIVERSE_NAMES
 
 router = APIRouter(prefix="/api/v1/scan", tags=["scan"])
 
@@ -22,15 +28,24 @@ _SUPPORTED_TIMEFRAMES = frozenset({"1d"})
 @router.post("/opportunities", response_model=OpportunityScanResponse)
 async def scan_opportunities(
     payload: OpportunityScanRequest,
-    svc: OpportunityScanService = Depends(get_opportunity_scan_service),
+    svc: UniverseScanReportService = Depends(get_universe_scan_report_service),
+    session: AsyncSession = Depends(get_db),
 ) -> OpportunityScanResponse:
     if payload.start > payload.end:
         raise HTTPException(status_code=400, detail="start must be <= end")
     if payload.timeframe not in _SUPPORTED_TIMEFRAMES:
         raise HTTPException(status_code=400, detail="timeframe must be '1d'")
 
-    universe = Nifty500Universe()
+    try:
+        universe = get_universe(payload.universe)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"universe must be one of: {', '.join(SUPPORTED_UNIVERSE_NAMES)}",
+        ) from exc
+
     snapshot = universe.get_snapshot()
+    started_at = datetime.now(timezone.utc)
 
     try:
         result = await svc.scan_universe(universe, payload.timeframe, payload.start, payload.end)
@@ -38,6 +53,29 @@ async def scan_opportunities(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    finished_at = datetime.now(timezone.utc)
+    scan_run = await ScanRunRepository(session).create(
+        started_at=started_at,
+        finished_at=finished_at,
+        universe_date=payload.end,
+        universe_version=snapshot.version,
+        parameters={
+            "universe_name": snapshot.name,
+            "timeframe": payload.timeframe,
+            "start": payload.start.isoformat(),
+            "end": payload.end.isoformat(),
+        },
+        result_count=result.eligible_count,
+        metadata={
+            "symbols_scanned": result.symbols_scanned,
+            "eligible_count": result.eligible_count,
+            "no_setup_count": result.no_setup_count,
+            "unavailable_count": result.unavailable_count,
+            "error_count": result.error_count,
+            "issues_recorded": len(result.issues),
+        },
+    )
 
     opportunities = [
         EligibleOpportunityResponse(
@@ -73,6 +111,11 @@ async def scan_opportunities(
         for opp in result.opportunities
     ]
 
+    issues = [
+        ScanIssueResponse(symbol=item.symbol, status=item.status, detail=item.detail)
+        for item in result.issues
+    ]
+
     return OpportunityScanResponse(
         universe_name=snapshot.name,
         universe_version=snapshot.version,
@@ -81,6 +124,10 @@ async def scan_opportunities(
         end=payload.end,
         symbols_scanned=result.symbols_scanned,
         eligible_count=result.eligible_count,
-        no_setup_count=result.symbols_scanned - result.eligible_count,
+        no_setup_count=result.no_setup_count,
+        unavailable_count=result.unavailable_count,
+        error_count=result.error_count,
         opportunities=opportunities,
+        issues=issues,
+        scan_run_id=scan_run.id,
     )

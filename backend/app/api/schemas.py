@@ -41,7 +41,7 @@ class MarketDataCandleResponse(BaseModel):
 
 
 class ScanRunSchema(BaseModel):
-    id: UUID
+    id: int
     started_at: datetime
     finished_at: Optional[datetime]
     universe_date: Optional[datetime]
@@ -114,6 +114,10 @@ class OpportunityScanRequest(BaseModel):
     timeframe: str
     start: datetime
     end: datetime
+    universe: str = Field(
+        default="NIFTY_500",
+        description="Index universe to scan: NIFTY_50, NIFTY_100, NIFTY_200, or NIFTY_500.",
+    )
 
 
 class EligibleOpportunityResponse(BaseModel):
@@ -131,7 +135,17 @@ class OpportunityScanResponse(BaseModel):
     symbols_scanned: int
     eligible_count: int
     no_setup_count: int
+    unavailable_count: int = 0
+    error_count: int = 0
     opportunities: list[EligibleOpportunityResponse]
+    issues: list["ScanIssueResponse"] = []
+    scan_run_id: int | None = None
+
+
+class ScanIssueResponse(BaseModel):
+    symbol: str
+    status: str
+    detail: str
 
 
 class BacktestRequest(BaseModel):
