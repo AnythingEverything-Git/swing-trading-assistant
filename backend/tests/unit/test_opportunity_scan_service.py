@@ -14,11 +14,12 @@ from app.domain.strategy.strategy import (
     StrategyResult,
     TradeCandidate,
 )
+from app.domain.universe import StockUniverse, UniverseSnapshot
 from app.infrastructure.market_data.deterministic_setup_series import (
     build_two_independent_setup_series,
 )
 from app.infrastructure.market_data.mock_provider import MockMarketDataProvider
-
+from app.infrastructure.universe import Nifty500Universe
 
 def _evidence() -> StrategyEvidence:
     return StrategyEvidence(
@@ -82,6 +83,30 @@ class FakeEvaluationService:
     ) -> StrategyResult:
         self.calls.append((symbol, timeframe, start, end))
         return self.results_by_symbol[symbol]
+
+
+class FakeStockUniverse:
+    """Tiny deterministic StockUniverse for unit tests."""
+
+    def __init__(self, symbols: tuple[str, ...], *, name: str = "TEST_UNIVERSE", version: str = "v1") -> None:
+        self._snapshot = UniverseSnapshot(name=name, version=version, as_of=None, symbols=symbols)
+        self.snapshot_calls = 0
+
+    def get_snapshot(self) -> UniverseSnapshot:
+        self.snapshot_calls += 1
+        return self._snapshot
+
+
+class RaisingEvaluationService:
+    """Simulates StrategyEvaluationService failure on missing/incomplete candles."""
+
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+        self.calls = 0
+
+    async def evaluate(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> StrategyResult:
+        self.calls += 1
+        raise self.exc
 
 
 START = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -190,3 +215,83 @@ async def test_confirmation_not_on_last_bar_remains_ineligible_via_real_strategy
     assert later.symbols_scanned == 1
     assert later.eligible_count == 0
     assert later.opportunities == ()
+
+
+@pytest.mark.asyncio
+async def test_scan_universe_uses_fake_stock_universe_symbols():
+    universe: StockUniverse = FakeStockUniverse(("AAA", "BBB", "CCC"))
+    evaluation = FakeEvaluationService(
+        {
+            "AAA": _no_setup_result(),
+            "BBB": _setup_result("BBB"),
+            "CCC": _no_setup_result(),
+        }
+    )
+
+    result = await OpportunityScanService(evaluation).scan_universe(universe, "1d", START, END)
+
+    assert universe.snapshot_calls == 1
+    assert result.symbols_scanned == 3
+    assert result.eligible_count == 1
+    assert [item.symbol for item in result.opportunities] == ["BBB"]
+    assert [call[0] for call in evaluation.calls] == ["AAA", "BBB", "CCC"]
+
+
+@pytest.mark.asyncio
+async def test_scan_universe_preserves_eligible_and_no_setup_semantics():
+    universe = FakeStockUniverse(("WIN", "SKIP"))
+    win = _setup_result("WIN")
+    evaluation = FakeEvaluationService({"WIN": win, "SKIP": _no_setup_result()})
+
+    result = await OpportunityScanService(evaluation).scan_universe(universe, "1d", START, END)
+
+    assert result.symbols_scanned == 2
+    assert result.eligible_count == 1
+    assert result.opportunities[0].candidate is win.candidate
+    assert result.opportunities[0].evidence is win.evidence
+
+
+@pytest.mark.asyncio
+async def test_explicit_symbol_scan_still_works_alongside_universe_path():
+    evaluation = FakeEvaluationService({"AAA": _setup_result("AAA")})
+    service = OpportunityScanService(evaluation)
+
+    explicit = await service.scan(["AAA"], "1d", START, END)
+    from_universe = await service.scan_universe(FakeStockUniverse(("AAA",)), "1d", START, END)
+
+    assert explicit.eligible_count == 1
+    assert from_universe.eligible_count == 1
+    assert explicit.opportunities[0].symbol == from_universe.opportunities[0].symbol
+
+
+@pytest.mark.asyncio
+async def test_missing_market_data_is_not_misclassified_as_no_setup():
+    evaluation = RaisingEvaluationService(ValueError("candles must contain at least one value"))
+
+    with pytest.raises(ValueError, match="candles must contain at least one value"):
+        await OpportunityScanService(evaluation).scan(["MISSING"], "1d", START, END)
+
+    assert evaluation.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_nifty500_universe_wires_through_without_full_market_data_scan(monkeypatch):
+    """Accept real Nifty500Universe type; avoid evaluating all 498 constituents."""
+    tiny = UniverseSnapshot(
+        name="NIFTY_500",
+        version="test-wiring",
+        as_of=None,
+        symbols=("RELIANCE", "TCS"),
+    )
+    universe = Nifty500Universe()
+    monkeypatch.setattr(universe, "get_snapshot", lambda: tiny)
+    evaluation = FakeEvaluationService(
+        {"RELIANCE": _no_setup_result(), "TCS": _setup_result("TCS")}
+    )
+
+    result = await OpportunityScanService(evaluation).scan_universe(universe, "1d", START, END)
+
+    assert result.symbols_scanned == 2
+    assert result.eligible_count == 1
+    assert result.opportunities[0].symbol == "TCS"
+    assert [call[0] for call in evaluation.calls] == ["RELIANCE", "TCS"]
