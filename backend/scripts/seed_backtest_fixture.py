@@ -11,6 +11,7 @@ Usage (from the backend directory):
 from __future__ import annotations
 
 import asyncio
+import selectors
 import sys
 from pathlib import Path
 
@@ -60,8 +61,19 @@ async def seed_backtest_fixture() -> tuple[int, int]:
     return fetched, persisted
 
 
+def _run_async(coro):
+    """Run a coroutine with a psycopg-compatible event loop on Windows."""
+    if sys.platform.startswith("win"):
+        # psycopg async requires SelectorEventLoop; Windows defaults to ProactorEventLoop.
+        return asyncio.run(
+            coro,
+            loop_factory=lambda: asyncio.SelectorEventLoop(selectors.SelectSelector()),
+        )
+    return asyncio.run(coro)
+
+
 def main() -> None:
-    fetched, persisted = asyncio.run(seed_backtest_fixture())
+    fetched, persisted = _run_async(seed_backtest_fixture())
     print(
         f"Seeded backtest fixture TST/1d: "
         f"candles_fetched={fetched} candles_persisted={persisted}"

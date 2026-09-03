@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import selectors
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -84,9 +85,20 @@ async def seed_demo_nifty500(
     return result
 
 
+def _run_async(coro):
+    """Run a coroutine with a psycopg-compatible event loop on Windows."""
+    if sys.platform.startswith("win"):
+        # psycopg async requires SelectorEventLoop; Windows defaults to ProactorEventLoop.
+        return asyncio.run(
+            coro,
+            loop_factory=lambda: asyncio.SelectorEventLoop(selectors.SelectSelector()),
+        )
+    return asyncio.run(coro)
+
+
 def main() -> None:
     args = _build_arg_parser().parse_args()
-    result = asyncio.run(seed_demo_nifty500(start=args.start, end=args.end))
+    result = _run_async(seed_demo_nifty500(start=args.start, end=args.end))
 
     failed = [item for item in result.ingestion.results if not item.success]
     print("Demo Nifty 500 seed complete")

@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 
+from app.application.market_data.demo_universe_seed_service import DEFAULT_DEMO_SEED_LOOKBACK_DAYS
 from app.domain.market_data.provider import MarketDataProvider
 from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy, StrategyInput
 from app.infrastructure.market_data.demo_provider import (
@@ -17,6 +19,30 @@ from app.infrastructure.market_data.mock_provider import MockMarketDataProvider
 START = datetime(2023, 1, 1, tzinfo=timezone.utc)
 END_60 = START + timedelta(days=59)
 END_120 = START + timedelta(days=119)
+# Matches the default demo Nifty 500 seed window length (~9 months).
+SEED_END = START + timedelta(days=DEFAULT_DEMO_SEED_LOOKBACK_DAYS)
+
+_EXPLICIT_DEMO_SYMBOLS = (
+    "DEMO_SETUP",
+    "DEMO_SIDEWAYS",
+    "DEMO_TREND",
+    "DEMO_CHOP",
+    "DEMO_DOWN",
+)
+
+# Symbols that previously failed seed with non-positive lows under additive downtrend drift.
+_FORMERLY_FAILING_SYMBOLS = ("SBIN", "CIPLA", "ABBOTINDIA")
+
+
+def _assert_positive_finite_ohlc(candles) -> None:
+    for candle in candles:
+        for value in (candle.open, candle.high, candle.low, candle.close):
+            assert isinstance(value, Decimal)
+            assert value.is_finite()
+            assert value > 0
+        assert candle.low <= candle.open <= candle.high
+        assert candle.low <= candle.close <= candle.high
+        assert candle.volume is not None and candle.volume > 0
 
 
 @pytest.mark.asyncio
@@ -65,19 +91,37 @@ async def test_requested_date_range_is_respected():
 @pytest.mark.asyncio
 async def test_ohlc_invariants_and_positive_volume():
     provider = DemoMarketDataProvider()
-    for symbol in ("DEMO_SETUP", "DEMO_SIDEWAYS", "DEMO_TREND", "DEMO_CHOP", "DEMO_DOWN", "RELIANCE"):
+    for symbol in (*_EXPLICIT_DEMO_SYMBOLS, "RELIANCE"):
         candles = await provider.get_candles(symbol, "1d", START, END_120)
         assert len(candles) == 120
-        for candle in candles:
-            assert candle.open > 0
-            assert candle.high > 0
-            assert candle.low > 0
-            assert candle.close > 0
-            assert candle.low <= candle.open <= candle.high
-            assert candle.low <= candle.close <= candle.high
-            assert candle.volume is not None and candle.volume > 0
-            assert candle.timeframe == "1d"
-            assert candle.exchange == "DEMO"
+        _assert_positive_finite_ohlc(candles)
+        assert all(c.timeframe == "1d" and c.exchange == "DEMO" for c in candles)
+
+
+@pytest.mark.asyncio
+async def test_all_explicit_regimes_stay_positive_over_seed_length_range():
+    provider = DemoMarketDataProvider()
+    for symbol in _EXPLICIT_DEMO_SYMBOLS:
+        candles = await provider.get_candles(symbol, "1d", START, SEED_END)
+        assert len(candles) == DEFAULT_DEMO_SEED_LOOKBACK_DAYS + 1
+        _assert_positive_finite_ohlc(candles)
+        assert DemoMarketDataProvider.regime_for_symbol(symbol) in {
+            "breakout_setup",
+            "sideways",
+            "uptrend",
+            "choppy",
+            "downtrend",
+        }
+
+
+@pytest.mark.asyncio
+async def test_formerly_failing_symbols_stay_valid_over_seed_length_range():
+    provider = DemoMarketDataProvider()
+    for symbol in _FORMERLY_FAILING_SYMBOLS:
+        assert DemoMarketDataProvider.regime_for_symbol(symbol) == "downtrend"
+        candles = await provider.get_candles(symbol, "1d", START, SEED_END)
+        assert len(candles) == DEFAULT_DEMO_SEED_LOOKBACK_DAYS + 1
+        _assert_positive_finite_ohlc(candles)
 
 
 @pytest.mark.asyncio
@@ -86,6 +130,7 @@ async def test_sufficient_history_for_long_ranges():
     candles = await provider.get_candles("DEMO_TREND", "1d", START, START + timedelta(days=251))
     assert len(candles) == 252
     assert len(candles) > 20
+    _assert_positive_finite_ohlc(candles)
 
 
 @pytest.mark.asyncio

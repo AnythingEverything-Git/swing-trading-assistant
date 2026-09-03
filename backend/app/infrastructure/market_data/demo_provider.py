@@ -181,13 +181,42 @@ def _daily_timestamps(start: datetime, end: datetime) -> list[datetime]:
     return out
 
 
-def _ohlc_from_open_close(open_p: Decimal, close_p: Decimal, wick: Decimal, volume: int) -> tuple[Decimal, Decimal, Decimal, Decimal, int]:
-    high = max(open_p, close_p) + wick
-    low = min(open_p, close_p) - wick
-    if low <= 0:
-        low = min(open_p, close_p) * Decimal("0.5")
-        if low <= 0:
-            low = Decimal("0.01")
+def _relative_return(regime: str, rng: _LCG) -> Decimal:
+    """Daily simple return with r > -1 so price * (1 + r) stays strictly positive.
+
+    Magnitudes mirror the former absolute drifts near a ~100 reference level,
+    but scale with price so long downtrends cannot cross or approach zero.
+    """
+    if regime == "uptrend":
+        return Decimal("0.0035") + Decimal(str(rng.uniform() * 0.0025))
+    if regime == "downtrend":
+        return Decimal("-0.0035") - Decimal(str(rng.uniform() * 0.0025))
+    if regime == "sideways":
+        return Decimal(str(rng.uniform_signed() * 0.0015))
+    # choppy / default — larger swings, still bounded away from -100%
+    return Decimal(str(rng.uniform_signed() * 0.012))
+
+
+def _ohlc_from_open_close(
+    open_p: Decimal,
+    close_p: Decimal,
+    wick_frac: Decimal,
+    volume: int,
+) -> tuple[Decimal, Decimal, Decimal, Decimal, int]:
+    """Build OHLC from positive open/close and a proportional wick fraction.
+
+    Requires open_p > 0, close_p > 0, and 0 <= wick_frac < 1. Low is then
+    min(open, close) * (1 - wick_frac) > 0 by construction (before quantize).
+    """
+    body_low = min(open_p, close_p)
+    body_high = max(open_p, close_p)
+    # Keep wick strictly inside the body so low cannot reach zero.
+    safe_frac = wick_frac if wick_frac < Decimal("1") else Decimal("0.25")
+    if safe_frac < 0:
+        safe_frac = Decimal("0")
+    wick = body_low * safe_frac
+    high = body_high + wick
+    low = body_low - wick
     return (
         _quantize(open_p),
         _quantize(high),
@@ -208,22 +237,13 @@ def _generate_regime_walk(
     base_volume = 1000 + (int(base) % 500)
 
     for index in range(len(dates)):
-        if regime == "uptrend":
-            drift = Decimal("0.35") + Decimal(str(rng.uniform() * 0.25))
-        elif regime == "downtrend":
-            drift = Decimal("-0.35") - Decimal(str(rng.uniform() * 0.25))
-        elif regime == "sideways":
-            drift = Decimal(str(rng.uniform_signed() * 0.15))
-        else:  # choppy / default
-            drift = Decimal(str(rng.uniform_signed() * 1.2))
-
+        ret = _relative_return(regime, rng)
         open_p = price
-        close_p = price + drift
-        if close_p <= 0:
-            close_p = Decimal("0.50")
-        wick = Decimal("0.20") + Decimal(str(rng.uniform() * 0.40))
+        # Multiplicative update: positive price and ret > -1 ⇒ close_p > 0.
+        close_p = price * (Decimal("1") + ret)
+        wick_frac = Decimal("0.002") + Decimal(str(rng.uniform() * 0.004))
         vol = base_volume + int(rng.uniform() * 400) + (index % 7) * 10
-        levels.append(_ohlc_from_open_close(open_p, close_p, wick, vol))
+        levels.append(_ohlc_from_open_close(open_p, close_p, wick_frac, vol))
         price = close_p
 
     return levels
