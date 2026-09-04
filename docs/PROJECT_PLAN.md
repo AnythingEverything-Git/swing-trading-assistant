@@ -1,7 +1,7 @@
 # TradePilot AI — Project Plan (from now onwards)
 
 **Last updated:** 2026-09-04  
-**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan for LONG breakout and SHORT breakdown setups, ranked opportunities, forming watchlist, interactive TradingView-style charts, live current prices (smooth tick animation), quality scoring, position sizing, **optional practice (paper) trading** (watch entry → fill → Stop/Target exits; live strip; capital P/L; start-trade alerts; duration timer + market ETA to profit), beginner-friendly UI labels, narratives, scan history, backtest realism, auto-refresh scan (default 5 min), collapsible scan criteria, Amazon SES email alerts, and Groww-style detail tabs with grounded Gemini Flash insights.  
+**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan for LONG breakout and SHORT breakdown setups, ranked opportunities, forming watchlist, interactive charts, live prices, quality scoring, position sizing, **optional practice trading**, beginner-friendly labels, scan history, backtest, auto-refresh scan, SES email alerts, **clean stock-detail drawer** (Overview / Setup / Technical / F&O / News & Events — open from any stock name including Practice), and **in-app weekday watermark candle refresh** (IST). Gemini research insights remain available via API with template fallback; the detail UI focuses on facts and trade plan (no per-tab AI cards).  
 **Data:** 497 Nifty symbols ingested via Upstox 1d candles. Demo mode still available via `MARKET_DATA_SOURCE=demo`.
 
 ---
@@ -191,12 +191,13 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 5. SES configured: `python scripts/send_test_alert_email.py` delivers HTML alert.
 
 ### Checkpoint H — Detail research tabs (P7)
-1. Overview: performance grid + chart + grounded insight.
-2. Technical: RSI / MACD / MAs / pivots + insight (no invented levels).
-3. F&O: expiry select + ATM option chain (or clear unavailable state).
-4. News & Events: NSE announcements / events (fail-soft) + insight.
-5. With `NARRATIVE_PROVIDER=llm` and `GOOGLE_API_KEY`, insight `provider` is `gemini`; otherwise template fallback.
-6. Leave drawer open across a 15s quote tick — panel must **not** flicker or refetch.
+1. Click any **stock name** (scan, forming, Practice book/strip, research) → detail drawer opens; closes **only via Close** (not outside click / Escape).
+2. Overview: performance windows + 52W stats + chart (no per-tab AI cards in UI).
+3. Setup: Trade plan + Evidence when a confirmed setup exists (from scan **or** on-demand `POST /api/v1/strategy/evaluate` when opened outside scan); forming state when applicable.
+4. Technical: indicators (incl. ATR) with **Customize** prefs in `localStorage`; pivots.
+5. F&O: expiry select + call/put option chain with ATM highlight (or clear unavailable state).
+6. News & Events: announcements + events in a two-column card layout (fail-soft).
+7. Leave drawer open across a 15s quote tick — panel must **not** flicker or refetch tab data.
 
 ### Checkpoint I — Practice trades (P9)
 1. Practice mode is **off by default**; enable via checkbox on Find setups / Practice trades.
@@ -210,6 +211,7 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 9. Capital strip: starting / invested / remaining / account value (remaining updates when trades close).
 10. Open trades show **running timer** and **estimated profit-by date** from candle drift + ATR outlook (`GET /api/v1/paper/outlook`).
 
+Operator walkthrough: [RELEASE_SMOKE.md](RELEASE_SMOKE.md).
 ---
 
 ## 3. Guiding principles
@@ -279,7 +281,7 @@ Detail overlay, NOW cue, loading copy, CSV, top-10 + See more, menu, multi-unive
 | P5.3 | Amazon SES email delivery (HTML + text template) | ✅ Verified |
 | P5.4 | Pre-market daily email alert script | ✅ |
 | P5.5 | Confirmation-watch alert (forming → confirmed email) | ✅ |
-| P5.6 | Live watermark refresh | Ready (incremental ingest) |
+| P5.6 | Live watermark refresh | ✅ In-app IST schedule + CLI |
 | P5.7 | Client-side Qty recompute on risk % / equity change | ✅ |
 
 ### Phase 6 — Explicitly deferred
@@ -292,12 +294,15 @@ Auth, billing, **real** broker execution / OMS, WebSocket ticks, multi-timeframe
 |----|------|--------|
 | P7.1 | Detail tabs: Overview / Setup / Technical / F&O / News & Events | ✅ |
 | P7.2 | Preserve existing Trade plan + Evidence + Forming in **Setup** tab | ✅ |
-| P7.3 | Technical snapshot (RSI, MACD, MA, pivots) from candles | ✅ |
+| P7.3 | Technical snapshot (RSI, MACD, ATR, MAs, pivots) from candles | ✅ |
 | P7.4 | Upstox option chain F&O tab | ✅ |
 | P7.5 | NSE announcements + corporate events | ✅ |
-| P7.6 | Grounded Gemini Flash insights (`GOOGLE_API_KEY`) with numeric guardrails | ✅ |
-| P7.7 | Stable live detail UI (no tab refetch on quote ticks; tab/insight cache) | ✅ |
-| P7.8 | Animated live LTP + production motion / teal theme polish | ✅ |
+| P7.6 | Grounded Gemini Flash insights API (`GOOGLE_API_KEY`) + template fallback | ✅ (API; not shown as per-tab UI cards) |
+| P7.7 | Stable live detail UI (no tab refetch on quote ticks; drawer cache) | ✅ |
+| P7.8 | Animated live LTP + theme polish | ✅ |
+| P7.9 | Open details from any stock name (incl. Practice); Close-only dismiss | ✅ |
+| P7.10 | On-demand evaluate for Setup when opened outside scan | ✅ |
+| P7.11 | Clean detail UX: F&O chain + News & Events two-column layout | ✅ |
 
 ### Phase 8 — SHORT selling opportunities — **Done**
 
@@ -400,13 +405,17 @@ P9  Practice trades (opt-in, entry→exit)   ✅
 | Upstox provider | `backend/app/infrastructure/market_data/upstox_provider.py` |
 | Demo provider | `backend/app/infrastructure/market_data/demo_provider.py` |
 | Data source switch | `backend/app/infrastructure/market_data/source.py` |
-| Market data refresh | `backend/scripts/refresh_market_data.py` |
+| Market data refresh | `backend/scripts/refresh_market_data.py` (`--mode watermark\|full`) |
+| In-app refresh schedule | `backend/app/application/market_data/refresh_scheduler.py` (lifespan) |
+| Release smoke (Checkpoint I) | `docs/RELEASE_SMOKE.md` |
 | Scheduled scan | `backend/scripts/run_scheduled_scan.py` |
 | Scan API | `backend/app/api/routes/scan.py` |
 | Quote API | `backend/app/api/routes/market_data.py` |
 | Product API | `backend/app/api/routes/product.py` |
 | UI | `frontend/src/main.tsx` |
 | Chart component | `frontend/src/components/SetupChart.tsx` |
+| Watermark ingest | `backend/app/application/market_data/watermark_ingestion_service.py` |
+| Insight cache (API) | `backend/app/application/narrative/insight_cache.py` |
 | Stock detail tabs | `frontend/src/components/StockDetailDrawer.tsx` |
 | Live LTP animation | `frontend/src/components/LiveValue.tsx` |
 | Paper domain / exits | `backend/app/domain/paper/` |
@@ -427,6 +436,6 @@ P9  Practice trades (opt-in, entry→exit)   ✅
 
 ## 9. One-line summary
 
-**Now:** Full-featured product — live Upstox data, ranked LONG + SHORT scan, charts, Groww-style detail tabs, grounded Gemini insights, optional practice trading (entry watch → Stop/Target, live strip, capital, start-trade alerts, duration + profit ETA), beginner-friendly labels, stable animated live prices, 5‑min auto-refresh, SES email alerts.  
-**Next:** Watermark refresh scheduling; deferred features (auth, real broker OMS, WebSocket).  
+**Now:** Full-featured product — live Upstox data, ranked LONG + SHORT scan, charts, clean stock-detail drawer (open anywhere; Setup evaluates on demand), optional practice trading, beginner labels, 5‑min auto-refresh, SES alerts, in-app IST watermark candle refresh.  
+**Next:** Deferred features (auth, real broker OMS, WebSocket); run [RELEASE_SMOKE.md](RELEASE_SMOKE.md) Checkpoint I before claiming a release.  
 **Verify:** Checkpoints A–I in §2c before claiming a release.

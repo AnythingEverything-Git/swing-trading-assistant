@@ -13,6 +13,12 @@ Upstox market-data configuration (no OAuth flow in-app):
 Plug-and-play live: set MARKET_DATA_SOURCE=upstox and UPSTOX_ACCESS_TOKEN, restart,
 then `python scripts/refresh_market_data.py`. Do not silently fall back to demo.
 
+In-app watermark candle refresh (uvicorn lifespan, live Upstox only):
+  MARKET_DATA_REFRESH_ENABLED       — default true; no-ops when source is demo
+  MARKET_DATA_REFRESH_TIME          — IST HH:MM weekdays (default 16:15)
+  MARKET_DATA_REFRESH_UNIVERSE      — default NIFTY_500
+  MARKET_DATA_REFRESH_RUN_ON_STARTUP — default false (avoid slow API boot)
+
 Do not use UPSTOX_API_KEY / UPSTOX_API_SECRET for this provider; they are not read.
 
 Email alerts (Amazon SES SMTP by default):
@@ -81,6 +87,11 @@ class Settings(BaseSettings):
     alert_to_emails: str | None = None  # comma-separated list
     # Pre-market alert schedule (IST 24h format, e.g. "08:45")
     premarket_alert_time: str = "08:45"
+    # In-app weekday watermark refresh (IST); only runs when source=upstox
+    market_data_refresh_enabled: bool = True
+    market_data_refresh_time: str = "16:15"
+    market_data_refresh_universe: str = "NIFTY_500"
+    market_data_refresh_run_on_startup: bool = False
 
     model_config = SettingsConfigDict(
         env_file=default_env_file(),

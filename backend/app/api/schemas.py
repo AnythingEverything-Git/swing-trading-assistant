@@ -323,12 +323,20 @@ class ResearchInsightRequest(BaseModel):
     context: Dict[str, Any] = Field(default_factory=dict)
 
 
+class InsightSectionResponse(BaseModel):
+    label: str
+    text: str
+
+
 class ResearchInsightResponse(BaseModel):
     title: str
     bullets: list[str]
     provider: str
     grounded: bool
     detail: str | None = None
+    headline: str | None = None
+    sections: list[InsightSectionResponse] = Field(default_factory=list)
+    cached: bool = False
 
 
 class BacktestRequest(BaseModel):

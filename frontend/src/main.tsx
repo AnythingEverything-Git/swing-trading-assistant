@@ -530,7 +530,7 @@ function App() {
     }
   })
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
-  const [selectedKind, setSelectedKind] = useState<'eligible' | 'forming'>('eligible')
+  const [selectedKind, setSelectedKind] = useState<'eligible' | 'forming' | 'lookup'>('eligible')
   const [showAllOpportunities, setShowAllOpportunities] = useState(false)
   const [scanCriteriaCollapsed, setScanCriteriaCollapsed] = useState(false)
   const [refreshInterval, setRefreshInterval] = useState('300')
@@ -598,21 +598,44 @@ function App() {
 
   useEffect(() => {
     if (!selectedSymbol) return
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelectedSymbol(null)
-    }
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    window.addEventListener('keydown', onKeyDown)
     return () => {
       document.body.style.overflow = previousOverflow
-      window.removeEventListener('keydown', onKeyDown)
     }
   }, [selectedSymbol])
 
+  const openStockDetail = useCallback(
+    (rawSymbol: string, preferred?: 'eligible' | 'forming') => {
+      const next = rawSymbol.trim().toUpperCase()
+      if (!next) return
+      if (preferred === 'forming') {
+        setSelectedKind('forming')
+        setSelectedSymbol(next)
+        return
+      }
+      if (preferred === 'eligible') {
+        setSelectedKind('eligible')
+        setSelectedSymbol(next)
+        return
+      }
+      const scan = scanResult
+      const inEligible = Boolean(
+        scan?.opportunities.some((item) => item.symbol === next) ||
+          scan?.top?.some((item) => item.symbol === next),
+      )
+      const inForming = Boolean(scan?.forming?.some((item) => item.symbol === next))
+      if (inEligible) setSelectedKind('eligible')
+      else if (inForming) setSelectedKind('forming')
+      else setSelectedKind('lookup')
+      setSelectedSymbol(next)
+    },
+    [scanResult],
+  )
+
   const selectedOpportunity = useMemo(() => {
-    if (!scanResult || !selectedSymbol || selectedKind !== 'eligible') return null
+    if (!scanResult || !selectedSymbol) return null
+    if (selectedKind === 'forming') return null
     return (
       scanResult.opportunities.find((item) => item.symbol === selectedSymbol) ??
       scanResult.top?.find((item) => item.symbol === selectedSymbol) ??
@@ -621,7 +644,16 @@ function App() {
   }, [scanResult, selectedSymbol, selectedKind])
 
   const selectedForming = useMemo(() => {
-    if (!scanResult || !selectedSymbol || selectedKind !== 'forming') return null
+    if (!scanResult || !selectedSymbol) return null
+    if (selectedKind === 'eligible') return null
+    if (selectedKind === 'forming') {
+      return scanResult.forming?.find((item) => item.symbol === selectedSymbol) ?? null
+    }
+    // lookup: prefer opportunity path; only attach forming when no opportunity
+    const hasOpp =
+      scanResult.opportunities.some((item) => item.symbol === selectedSymbol) ||
+      Boolean(scanResult.top?.some((item) => item.symbol === selectedSymbol))
+    if (hasOpp) return null
     return scanResult.forming?.find((item) => item.symbol === selectedSymbol) ?? null
   }, [scanResult, selectedSymbol, selectedKind])
 
@@ -1205,7 +1237,13 @@ function App() {
             {entryAlerts.map((trade) => (
               <div key={`alert-${trade.id}`} className="start-trade-alert-card">
                 <div className="start-trade-alert-main">
-                  <strong>{trade.symbol}</strong>
+                  <button
+                    type="button"
+                    className="symbol-link"
+                    onClick={() => openStockDetail(trade.symbol)}
+                  >
+                    {trade.symbol}
+                  </button>
                   <span className={`direction-pill ${trade.direction === 'SHORT' ? 'short' : 'long'}`}>
                     {directionLabel(trade.direction)}
                   </span>
@@ -1268,7 +1306,13 @@ function App() {
                 const outlook = paperOutlookById[trade.id]
                 return (
                   <div key={`live-${trade.id}`} className="live-practice-chip">
-                    <strong>{trade.symbol}</strong>
+                    <button
+                      type="button"
+                      className="symbol-link"
+                      onClick={() => openStockDetail(trade.symbol)}
+                    >
+                      {trade.symbol}
+                    </button>
                     <span className={`direction-pill ${trade.direction === 'SHORT' ? 'short' : 'long'}`}>
                       {directionLabel(trade.direction)}
                     </span>
@@ -1310,7 +1354,7 @@ function App() {
             <div className="live-practice-strip-trades">
               {pendingPaperTrades.slice(0, 4).map((trade) => (
                 <div key={`wait-${trade.id}`} className="live-practice-chip pending">
-                  <strong>{trade.symbol}</strong>
+                  <button type="button" className="symbol-link" onClick={() => openStockDetail(trade.symbol)}>{trade.symbol}</button>
                   <span>Waiting for {formatPrice(trade.entry_price)}</span>
                   <span>
                     Live{' '}
@@ -1604,10 +1648,7 @@ function App() {
                         type="button"
                         className={`top-card ${isShort ? 'top-card-short' : 'top-card-long'}`}
                         key={`top-${item.symbol}`}
-                        onClick={() => {
-                          setSelectedKind('eligible')
-                          setSelectedSymbol(item.symbol)
-                        }}
+                        onClick={() => openStockDetail(item.symbol, 'eligible')}
                       >
                         <div className="top-card-head">
                           <span className="top-rank">#{item.rank}</span>
@@ -1720,14 +1761,11 @@ function App() {
                             <tr
                               key={opportunity.symbol}
                               className={selectedSymbol === opportunity.symbol ? 'row-selected' : undefined}
-                              onClick={() => {
-                                setSelectedKind('eligible')
-                                setSelectedSymbol(opportunity.symbol)
-                              }}
+                              onClick={() => openStockDetail(opportunity.symbol, 'eligible')}
                               onKeyDown={(event) => {
                                 if (event.key === 'Enter' || event.key === ' ') {
                                   event.preventDefault()
-                                  setSelectedSymbol(opportunity.symbol)
+                                  openStockDetail(opportunity.symbol, 'eligible')
                                 }
                               }}
                               tabIndex={0}
@@ -1735,7 +1773,18 @@ function App() {
                               aria-pressed={selectedSymbol === opportunity.symbol}
                             >
                               <td className="num-cell">{opportunity.rank ?? '—'}</td>
-                              <td className="symbol-cell">{opportunity.symbol}</td>
+                              <td className="symbol-cell">
+                                <button
+                                  type="button"
+                                  className="symbol-link"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    openStockDetail(opportunity.symbol)
+                                  }}
+                                >
+                                  {opportunity.symbol}
+                                </button>
+                              </td>
                               <td>
                                 <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
                                   {directionLabel(isShort ? 'SHORT' : 'LONG')}
@@ -1824,14 +1873,22 @@ function App() {
                         return (
                           <tr
                             key={`forming-${item.symbol}`}
-                            onClick={() => {
-                              setSelectedKind('forming')
-                              setSelectedSymbol(item.symbol)
-                            }}
+                            onClick={() => openStockDetail(item.symbol, 'forming')}
                             tabIndex={0}
                             role="button"
                           >
-                            <td className="symbol-cell">{item.symbol}</td>
+                            <td className="symbol-cell">
+                              <button
+                                type="button"
+                                className="symbol-link"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  openStockDetail(item.symbol, 'forming')
+                                }}
+                              >
+                                {item.symbol}
+                              </button>
+                            </td>
                             <td>
                               <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
                                 {directionLabel(item.direction)}
@@ -1959,7 +2016,18 @@ function App() {
                           const isShort = trade.direction === 'SHORT'
                           return (
                             <tr key={`pending-scan-${trade.id}`}>
-                              <td className="symbol-cell">{trade.symbol}</td>
+                              <td className="symbol-cell">
+                                <button
+                                  type="button"
+                                  className="symbol-link"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    openStockDetail(trade.symbol)
+                                  }}
+                                >
+                                  {trade.symbol}
+                                </button>
+                              </td>
                               <td>
                                 <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
                                   {directionLabel(isShort ? 'SHORT' : 'LONG')}
@@ -2033,7 +2101,18 @@ function App() {
                           return (
                             <React.Fragment key={trade.id}>
                             <tr>
-                              <td className="symbol-cell">{trade.symbol}</td>
+                              <td className="symbol-cell">
+                                <button
+                                  type="button"
+                                  className="symbol-link"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    openStockDetail(trade.symbol)
+                                  }}
+                                >
+                                  {trade.symbol}
+                                </button>
+                              </td>
                               <td>
                                 <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
                                   {directionLabel(isShort ? 'SHORT' : 'LONG')}
@@ -2248,7 +2327,18 @@ function App() {
                   const isShort = trade.direction === 'SHORT'
                   return (
                     <tr key={`paper-pending-${trade.id}`}>
-                      <td className="symbol-cell">{trade.symbol}</td>
+                      <td className="symbol-cell">
+                        <button
+                          type="button"
+                          className="symbol-link"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            openStockDetail(trade.symbol)
+                          }}
+                        >
+                          {trade.symbol}
+                        </button>
+                      </td>
                       <td>
                         <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
                           {directionLabel(isShort ? 'SHORT' : 'LONG')}
@@ -2308,7 +2398,18 @@ function App() {
                   return (
                     <React.Fragment key={`paper-open-${trade.id}`}>
                     <tr>
-                      <td className="symbol-cell">{trade.symbol}</td>
+                      <td className="symbol-cell">
+                        <button
+                          type="button"
+                          className="symbol-link"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            openStockDetail(trade.symbol)
+                          }}
+                        >
+                          {trade.symbol}
+                        </button>
+                      </td>
                       <td>
                         <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
                           {directionLabel(isShort ? 'SHORT' : 'LONG')}
@@ -2389,7 +2490,18 @@ function App() {
                   const isShort = trade.direction === 'SHORT'
                   return (
                     <tr key={`paper-closed-${trade.id}`}>
-                      <td className="symbol-cell">{trade.symbol}</td>
+                      <td className="symbol-cell">
+                        <button
+                          type="button"
+                          className="symbol-link"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            openStockDetail(trade.symbol)
+                          }}
+                        >
+                          {trade.symbol}
+                        </button>
+                      </td>
                       <td>
                         <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
                           {directionLabel(isShort ? 'SHORT' : 'LONG')}
@@ -2414,9 +2526,10 @@ function App() {
         </section>
       )}
 
-      {(selectedOpportunity || selectedForming) && (
+      {selectedSymbol && (
         <StockDetailDrawer
           baseUrl={baseUrl}
+          symbol={selectedSymbol}
           scanStart={scanStart}
           scanEnd={scanEnd}
           chartCandles={chartCandles}
@@ -2548,6 +2661,15 @@ function App() {
               />{' '}
               ({formatPercent(researchQuote.current_price_change_percent)})
             </p>
+          )}
+          {symbol.trim() && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => openStockDetail(symbol)}
+            >
+              Open stock details for {symbol.trim().toUpperCase()}
+            </button>
           )}
         </form>
 

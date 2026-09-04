@@ -11,6 +11,7 @@ from app.api.deps import get_query_service, get_upstox_provider
 from app.api.schemas import (
     FnoResearchResponse,
     IndicatorReadingResponse,
+    InsightSectionResponse,
     NewsEventsResearchResponse,
     NewsItemResponse,
     OptionChainRowResponse,
@@ -23,6 +24,11 @@ from app.api.schemas import (
 )
 from app.application.market_data.query_service import MarketDataQueryService
 from app.application.narrative.gemini_narrator import GeminiNarrator
+from app.application.narrative.insight_cache import (
+    get_cached_insight,
+    insight_cache_key,
+    put_cached_insight,
+)
 from app.application.research.overview_service import build_overview_snapshot
 from app.application.research.technical_service import build_technical_snapshot
 from app.core.config import get_settings
@@ -210,12 +216,30 @@ async def research_insight(
     if tab not in {"overview", "technical", "news", "setup", "fno"}:
         raise HTTPException(status_code=400, detail="tab must be overview|technical|news|setup|fno")
 
+    cache_key = insight_cache_key(symbol, tab, context)
+    cached = get_cached_insight(cache_key)
+    if cached is not None:
+        return ResearchInsightResponse(
+            title=cached.title,
+            headline=cached.headline,
+            bullets=list(cached.bullets),
+            sections=[InsightSectionResponse(label=s.label, text=s.text) for s in cached.sections],
+            provider=cached.provider,
+            grounded=cached.grounded,
+            detail=cached.detail,
+            cached=True,
+        )
+
     async with httpx.AsyncClient() as client:
         result = await GeminiNarrator(client, get_settings()).generate_insight(tab=tab, context=context)
+    put_cached_insight(cache_key, result)
     return ResearchInsightResponse(
         title=result.title,
+        headline=result.headline,
         bullets=list(result.bullets),
+        sections=[InsightSectionResponse(label=s.label, text=s.text) for s in result.sections],
         provider=result.provider,
         grounded=result.grounded,
         detail=result.detail,
+        cached=False,
     )

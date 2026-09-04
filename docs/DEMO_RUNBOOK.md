@@ -41,9 +41,14 @@ UPSTOX_ACCESS_TOKEN=<token>
 Restart the API, then from `backend/`:
 
 ```bash
-python scripts/refresh_market_data.py --universe NIFTY_50
+# Incremental (default for upstox) — also runs automatically weekdays at MARKET_DATA_REFRESH_TIME IST while the API is up
+python scripts/refresh_market_data.py --mode watermark --universe NIFTY_50
+
+# Full historical window when needed
+python scripts/refresh_market_data.py --mode full --universe NIFTY_50 --start 2025-12-07 --end 2026-09-04
 ```
 
+Disable in-app refresh with `MARKET_DATA_REFRESH_ENABLED=false`. Demo mode never watermark-appends (use full re-seed below).
 ## 2. Migrate schema
 
 From the **repo root**:
