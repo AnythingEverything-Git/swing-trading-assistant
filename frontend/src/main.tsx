@@ -2,9 +2,11 @@
 import ReactDOM from 'react-dom/client'
 import './styles.css'
 import { LiveValue } from './components/LiveValue'
+import { PlanDeductionPanel } from './components/PlanDeductionPanel'
 import { SetupChart, type ChartCandle } from './components/SetupChart'
 import { StockDetailDrawer } from './components/StockDetailDrawer'
 import { TradeDurationTimer } from './components/TradeDurationTimer'
+import { buildPlanDeductionSteps } from './planDeduction'
 import {
   PAPER_CLAIM,
   computePaperCapital,
@@ -482,6 +484,57 @@ function withPositionSizing(
   }
 }
 
+function humanStructureLabel(direction: string, _raw?: string | null): string {
+  return direction === 'SHORT' ? 'Floor (support)' : 'Ceiling (resistance)'
+}
+
+function humanRetestLabel(direction: string, _raw?: string | null): string {
+  return direction === 'SHORT' ? 'Retest high' : 'Retest low'
+}
+
+function deductionStepsForOpportunity(
+  opportunity: Opportunity,
+  accountEquity: string,
+  riskPercent: string,
+) {
+  return buildPlanDeductionSteps({
+    symbol: opportunity.symbol,
+    direction: opportunity.candidate.direction,
+    entry: opportunity.candidate.entry_price,
+    stop: opportunity.candidate.stop_loss,
+    target: opportunity.candidate.target,
+    riskPerShare: opportunity.candidate.risk_per_share,
+    reward: opportunity.candidate.reward,
+    riskRewardRatio: opportunity.candidate.risk_reward_ratio,
+    setupName: opportunity.candidate.setup_name,
+    resistance: opportunity.evidence.resistance,
+    retestExtreme: opportunity.evidence.retest_low,
+    atr: opportunity.evidence.atr_value,
+    breakoutVolume: opportunity.evidence.breakout_volume,
+    confirmationVolume: opportunity.evidence.confirmation_volume,
+    volumeSma: opportunity.evidence.volume_sma_value,
+    decision: opportunity.evidence.decision,
+    structureLabel: humanStructureLabel(
+      opportunity.candidate.direction,
+      opportunity.evidence.structure_label,
+    ),
+    retestLabel: humanRetestLabel(
+      opportunity.candidate.direction,
+      opportunity.evidence.retest_label,
+    ),
+    qualityScore: opportunity.quality_score,
+    qualityReason: opportunity.quality_reason,
+    quantity: opportunity.quantity,
+    riskAmount: opportunity.risk_amount,
+    accountEquity,
+    riskPercent,
+    formatPrice,
+    formatNumber,
+    formatPercent,
+    formatRatio,
+  })
+}
+
 type AppView = 'scan' | 'research' | 'paper'
 type ScanUniverse = 'NIFTY_50' | 'NIFTY_100' | 'NIFTY_200' | 'NIFTY_500'
 
@@ -531,6 +584,7 @@ function App() {
   })
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
   const [selectedKind, setSelectedKind] = useState<'eligible' | 'forming' | 'lookup'>('eligible')
+  const [deductionSymbol, setDeductionSymbol] = useState<string | null>(null)
   const [showAllOpportunities, setShowAllOpportunities] = useState(false)
   const [scanCriteriaCollapsed, setScanCriteriaCollapsed] = useState(false)
   const [refreshInterval, setRefreshInterval] = useState('300')
@@ -1093,6 +1147,7 @@ function App() {
       const payload: OpportunityScanResponse = await response.json()
       setScanResult(withPositionSizing(payload, accountEquity, riskPercent))
       setSelectedSymbol(null)
+      setDeductionSymbol(null)
       setShowAllOpportunities(false)
       if (paperTradingEnabled) {
         if ((payload.paper_opened_count ?? 0) > 0) {
@@ -1513,6 +1568,7 @@ function App() {
                   const payload = (await response.json()) as OpportunityScanResponse
                   setScanResult(withPositionSizing(payload, accountEquity, riskPercent))
                   setSelectedSymbol(null)
+                  setDeductionSymbol(null)
                   setShowAllOpportunities(false)
                 }}
               >
@@ -1726,7 +1782,7 @@ function App() {
                   <div className="table-toolbar">
                     <p className="field-hint">
                       Showing {visibleOpportunities.length} of {scanResult.opportunities.length} ready stocks.
-                      Click a row to see the plan in plain language.
+                      Use <strong>How decided</strong> for a beginner walkthrough of every plan number.
                     </p>
                     <button
                       type="button"
@@ -1752,77 +1808,110 @@ function App() {
                           <th>Quality</th>
                           <th>Shares</th>
                           <th>Why this idea</th>
+                          <th>How decided</th>
                         </tr>
                       </thead>
                       <tbody>
                         {visibleOpportunities.map((opportunity) => {
                           const isShort = opportunity.candidate.direction === 'SHORT'
+                          const deductionOpen = deductionSymbol === opportunity.symbol
                           return (
-                            <tr
-                              key={opportunity.symbol}
-                              className={selectedSymbol === opportunity.symbol ? 'row-selected' : undefined}
-                              onClick={() => openStockDetail(opportunity.symbol, 'eligible')}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter' || event.key === ' ') {
-                                  event.preventDefault()
-                                  openStockDetail(opportunity.symbol, 'eligible')
-                                }
-                              }}
-                              tabIndex={0}
-                              role="button"
-                              aria-pressed={selectedSymbol === opportunity.symbol}
-                            >
-                              <td className="num-cell">{opportunity.rank ?? '—'}</td>
-                              <td className="symbol-cell">
-                                <button
-                                  type="button"
-                                  className="symbol-link"
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    openStockDetail(opportunity.symbol)
-                                  }}
-                                >
-                                  {opportunity.symbol}
-                                </button>
-                              </td>
-                              <td>
-                                <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                                  {directionLabel(isShort ? 'SHORT' : 'LONG')}
-                                </span>
-                              </td>
-                              <td className="num-cell">
-                                {formatPrice(opportunity.candidate.entry_price)}
-                              </td>
-                              <td className="num-cell">
-                                <LiveValue
-                                  value={opportunity.current_price}
-                                  formatted={formatPrice(opportunity.current_price)}
-                                />
-                              </td>
-                              <td
-                                className={`num-cell ${valueClass(
-                                  opportunity.current_price_change_percent ?? 0,
-                                )}`}
+                            <React.Fragment key={opportunity.symbol}>
+                              <tr
+                                className={selectedSymbol === opportunity.symbol ? 'row-selected' : undefined}
+                                onClick={() => openStockDetail(opportunity.symbol, 'eligible')}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault()
+                                    openStockDetail(opportunity.symbol, 'eligible')
+                                  }
+                                }}
+                                tabIndex={0}
+                                role="button"
+                                aria-pressed={selectedSymbol === opportunity.symbol}
                               >
-                                {formatPercent(opportunity.current_price_change_percent)}
-                              </td>
-                              <td className="num-cell">
-                                {formatPrice(opportunity.candidate.stop_loss)}
-                              </td>
-                              <td className="num-cell">
-                                {formatPrice(opportunity.candidate.target)}
-                              </td>
-                              <td className="num-cell">
-                                {formatRatio(opportunity.candidate.risk_reward_ratio)}
-                              </td>
-                              <td className="num-cell">
-                                {formatNumber(opportunity.quality_score, 1)}
-                              </td>
-                              <td className="num-cell">{opportunity.quantity ?? '—'}</td>
-                              <td className="why-eligible">
-                                {opportunity.narrative ?? opportunity.evidence.decision}
-                              </td>
-                            </tr>
+                                <td className="num-cell">{opportunity.rank ?? '—'}</td>
+                                <td className="symbol-cell">
+                                  <button
+                                    type="button"
+                                    className="symbol-link"
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      openStockDetail(opportunity.symbol)
+                                    }}
+                                  >
+                                    {opportunity.symbol}
+                                  </button>
+                                </td>
+                                <td>
+                                  <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
+                                    {directionLabel(isShort ? 'SHORT' : 'LONG')}
+                                  </span>
+                                </td>
+                                <td className="num-cell">
+                                  {formatPrice(opportunity.candidate.entry_price)}
+                                </td>
+                                <td className="num-cell">
+                                  <LiveValue
+                                    value={opportunity.current_price}
+                                    formatted={formatPrice(opportunity.current_price)}
+                                  />
+                                </td>
+                                <td
+                                  className={`num-cell ${valueClass(
+                                    opportunity.current_price_change_percent ?? 0,
+                                  )}`}
+                                >
+                                  {formatPercent(opportunity.current_price_change_percent)}
+                                </td>
+                                <td className="num-cell">
+                                  {formatPrice(opportunity.candidate.stop_loss)}
+                                </td>
+                                <td className="num-cell">
+                                  {formatPrice(opportunity.candidate.target)}
+                                </td>
+                                <td className="num-cell">
+                                  {formatRatio(opportunity.candidate.risk_reward_ratio)}
+                                </td>
+                                <td className="num-cell">
+                                  {formatNumber(opportunity.quality_score, 1)}
+                                </td>
+                                <td className="num-cell">{opportunity.quantity ?? '—'}</td>
+                                <td className="why-eligible">
+                                  {opportunity.narrative ?? opportunity.evidence.decision}
+                                </td>
+                                <td className="deduction-cell">
+                                  <button
+                                    type="button"
+                                    className={`ghost-btn deduction-toggle${deductionOpen ? ' is-open' : ''}`}
+                                    aria-expanded={deductionOpen}
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      setDeductionSymbol((current) =>
+                                        current === opportunity.symbol ? null : opportunity.symbol,
+                                      )
+                                    }}
+                                  >
+                                    {deductionOpen ? 'Hide steps' : 'How decided'}
+                                  </button>
+                                </td>
+                              </tr>
+                              {deductionOpen ? (
+                                <tr className="deduction-row">
+                                  <td colSpan={13}>
+                                    <PlanDeductionPanel
+                                      symbol={opportunity.symbol}
+                                      steps={deductionStepsForOpportunity(
+                                        opportunity,
+                                        accountEquity,
+                                        riskPercent,
+                                      )}
+                                      onClose={() => setDeductionSymbol(null)}
+                                    />
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </React.Fragment>
                           )
                         })}
                       </tbody>

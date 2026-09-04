@@ -1374,6 +1374,117 @@ td.symbol-cell {
   margin: 16px 0 8px;
 }
 
+.deduction-cell {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.deduction-toggle {
+  font-size: 0.78rem;
+  padding: 4px 8px;
+}
+
+.deduction-toggle.is-open {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+}
+
+.deduction-row > td {
+  padding: 0 10px 14px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--accent-soft));
+  border-bottom: 1px solid var(--line);
+}
+
+.plan-deduction {
+  margin: 8px 0 4px;
+  padding: 14px 16px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.plan-deduction-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.plan-deduction-head h4 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.plan-deduction-head p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  max-width: 52rem;
+}
+
+.plan-deduction-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.plan-deduction-step {
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: color-mix(in srgb, var(--surface) 70%, var(--accent-soft));
+}
+
+.plan-deduction-step-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 4px;
+}
+
+.plan-deduction-step-top strong {
+  font-size: 0.9rem;
+}
+
+.plan-deduction-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--accent-deep);
+}
+
+.plan-deduction-summary {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.plan-deduction-step ul {
+  margin: 0;
+  padding-left: 1.15rem;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.plan-deduction-step li + li {
+  margin-top: 2px;
+}
+
+@media (max-width: 720px) {
+  .plan-deduction-head {
+    flex-direction: column;
+  }
+}
+
 .paper-banner {
   display: grid;
   gap: 4px;
