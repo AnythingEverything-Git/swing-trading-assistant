@@ -15,7 +15,7 @@ from ..core.config import get_settings
 from ..infrastructure.market_data.factory import UpstoxProviderFactory
 from ..infrastructure.market_data.demo_provider import DemoMarketDataProvider
 from ..infrastructure.market_data.source import live_ready, normalize_market_data_source
-from .routes import backtest, market_data, product, scan, strategy
+from .routes import backtest, market_data, product, research, scan, strategy
 
 
 def create_app() -> FastAPI:
@@ -95,6 +95,7 @@ def create_app() -> FastAPI:
     app.include_router(backtest.router)
     app.include_router(scan.router)
     app.include_router(product.router)
+    app.include_router(research.router)
 
     @app.get("/health", response_model=HealthCheck)
     def health():

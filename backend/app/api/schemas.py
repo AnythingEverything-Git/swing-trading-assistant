@@ -221,6 +221,101 @@ class MarketQuoteResponse(BaseModel):
     current_price_change_percent: Decimal | None = None
 
 
+class PerformancePointResponse(BaseModel):
+    label: str
+    change_percent: Decimal | None = None
+
+
+class OverviewResearchResponse(BaseModel):
+    symbol: str
+    timeframe: str
+    last_close: Decimal | None = None
+    last_volume: int | None = None
+    performance: list[PerformancePointResponse] = []
+    high_52w: Decimal | None = None
+    low_52w: Decimal | None = None
+    candle_count: int = 0
+    current_price: Decimal | None = None
+    current_price_change_percent: Decimal | None = None
+
+
+class IndicatorReadingResponse(BaseModel):
+    name: str
+    value: Decimal | None = None
+    signal: str
+    detail: str
+
+
+class PivotLevelsResponse(BaseModel):
+    pivot: Decimal
+    resistance_1: Decimal
+    resistance_2: Decimal
+    resistance_3: Decimal
+    support_1: Decimal
+    support_2: Decimal
+    support_3: Decimal
+
+
+class TechnicalResearchResponse(BaseModel):
+    symbol: str
+    timeframe: str
+    last_close: Decimal | None = None
+    indicators: list[IndicatorReadingResponse] = []
+    pivots: PivotLevelsResponse | None = None
+    volume_vs_sma: Decimal | None = None
+
+
+class OptionChainRowResponse(BaseModel):
+    strike: Decimal | None = None
+    expiry: str | None = None
+    call_ltp: Decimal | None = None
+    call_oi: Decimal | None = None
+    call_iv: Decimal | None = None
+    put_ltp: Decimal | None = None
+    put_oi: Decimal | None = None
+    put_iv: Decimal | None = None
+
+
+class FnoResearchResponse(BaseModel):
+    symbol: str
+    expiry_date: str
+    expiry: str | None = None
+    spot: Decimal | None = None
+    pcr: Decimal | None = None
+    rows: list[OptionChainRowResponse] = []
+    status: str = "ok"
+    detail: str | None = None
+
+
+class NewsItemResponse(BaseModel):
+    title: str
+    published_at: str | None = None
+    source: str
+    category: str
+    url: str | None = None
+
+
+class NewsEventsResearchResponse(BaseModel):
+    symbol: str
+    announcements: list[NewsItemResponse] = []
+    events: list[NewsItemResponse] = []
+    status: str = "ok"
+    detail: str | None = None
+
+
+class ResearchInsightRequest(BaseModel):
+    tab: str
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ResearchInsightResponse(BaseModel):
+    title: str
+    bullets: list[str]
+    provider: str
+    grounded: bool
+    detail: str | None = None
+
+
 class BacktestRequest(BaseModel):
     symbol: str
     timeframe: str

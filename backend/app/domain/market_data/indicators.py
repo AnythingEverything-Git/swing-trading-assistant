@@ -141,4 +141,50 @@ def volume_sma(candles: Sequence[Candle], period: int) -> list[Decimal | None]:
     return sma(candles, period, field="volume")
 
 
-__all__ = ["sma", "ema", "rsi", "atr", "volume_sma"]
+def macd(
+    candles: Sequence[Candle],
+    *,
+    fast_period: int = 12,
+    slow_period: int = 26,
+    signal_period: int = 9,
+    field: str = "close",
+) -> tuple[list[Decimal | None], list[Decimal | None], list[Decimal | None]]:
+    """MACD line, signal line, and histogram aligned to candles."""
+    fast_period = _ensure_positive_period(fast_period, "MACD fast")
+    slow_period = _ensure_positive_period(slow_period, "MACD slow")
+    signal_period = _ensure_positive_period(signal_period, "MACD signal")
+    if fast_period >= slow_period:
+        raise ValueError("MACD fast_period must be < slow_period")
+
+    fast = ema(candles, fast_period, field=field)
+    slow = ema(candles, slow_period, field=field)
+    macd_line: list[Decimal | None] = [None] * len(candles)
+    for idx in range(len(candles)):
+        if fast[idx] is None or slow[idx] is None:
+            continue
+        macd_line[idx] = fast[idx] - slow[idx]
+
+    # Signal as EMA over the MACD line values (skip leading Nones).
+    signal_line: list[Decimal | None] = [None] * len(candles)
+    histogram: list[Decimal | None] = [None] * len(candles)
+    valid_pairs = [(idx, value) for idx, value in enumerate(macd_line) if value is not None]
+    if len(valid_pairs) < signal_period:
+        return macd_line, signal_line, histogram
+
+    first_signal = sum((value for _, value in valid_pairs[:signal_period]), Decimal("0")) / Decimal(
+        signal_period
+    )
+    first_idx = valid_pairs[signal_period - 1][0]
+    signal_line[first_idx] = first_signal
+    histogram[first_idx] = macd_line[first_idx] - first_signal
+
+    multiplier = Decimal("2") / Decimal(signal_period + 1)
+    ema_value = first_signal
+    for idx, value in valid_pairs[signal_period:]:
+        ema_value = (value - ema_value) * multiplier + ema_value
+        signal_line[idx] = ema_value
+        histogram[idx] = value - ema_value
+    return macd_line, signal_line, histogram
+
+
+__all__ = ["sma", "ema", "rsi", "atr", "volume_sma", "macd"]

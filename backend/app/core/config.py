@@ -23,6 +23,11 @@ Email alerts (Amazon SES SMTP by default):
   ALERT_FROM_EMAIL            — must be a SES-verified identity
   ALERT_TO_EMAILS             — comma-separated; must be verified while SES is in sandbox
 
+Research insights (optional Gemini Flash):
+  NARRATIVE_PROVIDER          — template (default) or llm
+  GOOGLE_API_KEY              — Google AI Studio key when NARRATIVE_PROVIDER=llm
+  GEMINI_MODEL                — default gemini-2.0-flash
+
 The repository-root `.env` is resolved from this file's location so scripts work
 whether launched from the repo root, `backend/`, or another working directory.
 Process environment variables still take precedence over the `.env` file.
@@ -60,6 +65,8 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     narrative_provider: str = "template"
+    google_api_key: str | None = None
+    gemini_model: str = "gemini-flash-latest"
     # Email alerts: "ses" (Amazon SES SMTP) or "smtp" (generic SMTP).
     email_provider: str = "ses"
     aws_ses_region: str = "ap-south-1"

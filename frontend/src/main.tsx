@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import './styles.css'
+import { LiveValue } from './components/LiveValue'
 import { SetupChart, type ChartCandle } from './components/SetupChart'
+import { StockDetailDrawer } from './components/StockDetailDrawer'
 
 type ThemeMode = 'light' | 'dark'
 
@@ -559,20 +561,33 @@ function App() {
         const quoteBySymbol = new Map(payload.map((item) => [item.symbol, item]))
         setScanResult((current) => {
           if (!current) return current
+          let changed = false
           const withQuote = <T extends { symbol: string; current_price?: string | number | null; current_price_change_percent?: string | number | null }>(item: T): T => {
             const quote = quoteBySymbol.get(item.symbol)
             if (!quote) return item
+            if (
+              String(item.current_price ?? '') === String(quote.current_price ?? '') &&
+              String(item.current_price_change_percent ?? '') ===
+                String(quote.current_price_change_percent ?? '')
+            ) {
+              return item
+            }
+            changed = true
             return {
               ...item,
               current_price: quote.current_price,
               current_price_change_percent: quote.current_price_change_percent,
             }
           }
+          const opportunities = current.opportunities.map((item) => withQuote(item))
+          const top = current.top?.map((item) => withQuote(item))
+          const forming = current.forming?.map((item) => withQuote(item))
+          if (!changed) return current
           return {
             ...current,
-            opportunities: current.opportunities.map((item) => withQuote(item)),
-            top: current.top?.map((item) => withQuote(item)),
-            forming: current.forming?.map((item) => withQuote(item)),
+            opportunities,
+            top,
+            forming,
           }
         })
       } catch {
@@ -600,7 +615,19 @@ function App() {
         )
         if (!response.ok) return
         const payload = (await response.json()) as MarketQuote[]
-        setResearchQuote(payload[0] ?? null)
+        setResearchQuote((current) => {
+          const next = payload[0] ?? null
+          if (
+            current &&
+            next &&
+            String(current.current_price ?? '') === String(next.current_price ?? '') &&
+            String(current.current_price_change_percent ?? '') ===
+              String(next.current_price_change_percent ?? '')
+          ) {
+            return current
+          }
+          return next
+        })
       } catch {
         // ignore quote failures
       }
@@ -1155,7 +1182,10 @@ function App() {
                     >
                       <span className="top-rank">#{item.rank}</span>
                       <strong>{item.symbol}</strong>
-                      <span>Now {formatPrice(item.current_price)}</span>
+                      <span>
+                        Now{' '}
+                        <LiveValue value={item.current_price} formatted={formatPrice(item.current_price)} />
+                      </span>
                       <span className={valueClass(item.current_price_change_percent ?? 0)}>
                         {formatPercent(item.current_price_change_percent)}
                       </span>
@@ -1198,7 +1228,9 @@ function App() {
                         >
                           <td className="symbol-cell">{item.symbol}</td>
                           <td>{item.stage.replace(/_/g, ' ')}</td>
-                          <td className="num-cell">{formatPrice(item.current_price)}</td>
+                          <td className="num-cell">
+                            <LiveValue value={item.current_price} formatted={formatPrice(item.current_price)} />
+                          </td>
                           <td className={`num-cell ${valueClass(item.current_price_change_percent ?? 0)}`}>
                             {formatPercent(item.current_price_change_percent)}
                           </td>
@@ -1289,7 +1321,12 @@ function App() {
                             </span>
                           </td>
                           <td className="num-cell">{formatPrice(opportunity.candidate.entry_price)}</td>
-                          <td className="num-cell">{formatPrice(opportunity.current_price)}</td>
+                          <td className="num-cell">
+                            <LiveValue
+                              value={opportunity.current_price}
+                              formatted={formatPrice(opportunity.current_price)}
+                            />
+                          </td>
                           <td className={`num-cell ${valueClass(opportunity.current_price_change_percent ?? 0)}`}>
                             {formatPercent(opportunity.current_price_change_percent)}
                           </td>
@@ -1326,272 +1363,26 @@ function App() {
       )}
 
       {(selectedOpportunity || selectedForming) && (
-        <div
-          className="detail-overlay"
-          role="presentation"
-          onClick={() => setSelectedSymbol(null)}
-        >
-          <div
-            className="detail-drawer"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="opportunity-detail-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="detail-drawer-header">
-              <div className="opportunity-detail-header">
-                <h3 id="opportunity-detail-title">
-                  {selectedOpportunity?.symbol ?? selectedForming?.symbol}
-                </h3>
-                {selectedOpportunity ? (
-                  <span
-                    className={`now-badge ${
-                      confirmationMatchesScanEnd(selectedOpportunity) ? 'now-active' : 'now-neutral'
-                    }`}
-                  >
-                    {confirmationMatchesScanEnd(selectedOpportunity)
-                      ? 'Confirmation aligns with scan end (NOW window)'
-                      : 'Confirmation on last bar of evaluated series required'}
-                  </span>
-                ) : (
-                  <span className="now-badge now-neutral">Forming — no trade plan yet</span>
-                )}
-              </div>
-              <button
-                type="button"
-                className="detail-close"
-                aria-label="Close opportunity detail"
-                onClick={() => setSelectedSymbol(null)}
-              >
-                Close
-              </button>
-            </div>
-            <p className="field-hint">
-              {selectedOpportunity?.narrative ??
-                selectedForming?.narrative ??
-                'Eligibility requires breakout → retest → confirmation, with confirmation on the final candle.'}
-            </p>
-
-            <div className="section-box">
-              <h3>Chart</h3>
-              <SetupChart
-                candles={chartCandles}
-                levels={{
-                  resistance: selectedOpportunity?.evidence.resistance ?? selectedForming?.resistance,
-                  support: selectedOpportunity?.evidence.retest_low ?? selectedForming?.retest_low,
-                  entry: selectedOpportunity?.candidate.entry_price,
-                  stop: selectedOpportunity?.candidate.stop_loss,
-                  target: selectedOpportunity?.candidate.target,
-                  breakoutIndex:
-                    selectedOpportunity?.evidence.breakout_candle_index ??
-                    selectedForming?.breakout_candle_index,
-                  retestIndex:
-                    selectedOpportunity?.evidence.retest_candle_index ??
-                    selectedForming?.retest_candle_index,
-                  confirmationIndex: selectedOpportunity?.evidence.confirmation_candle_index,
-                }}
-              />
-            </div>
-
-            {selectedOpportunity && (
-            <div className="section-box">
-              <h3>Trade plan</h3>
-              <dl>
-                <div>
-                  <dt>Direction</dt>
-                  <dd>
-                    <span
-                      className={`direction-pill ${
-                        selectedOpportunity.candidate.direction === 'LONG' ? 'long' : 'short'
-                      }`}
-                    >
-                      {selectedOpportunity.candidate.direction}
-                    </span>
-                  </dd>
-                </div>
-                <div>
-                  <dt>Entry</dt>
-                  <dd>{formatPrice(selectedOpportunity.candidate.entry_price)}</dd>
-                </div>
-                <div>
-                  <dt>Current price</dt>
-                  <dd>{formatPrice(selectedOpportunity.current_price)}</dd>
-                </div>
-                <div>
-                  <dt>Change</dt>
-                  <dd className={valueClass(selectedOpportunity.current_price_change_percent ?? 0)}>
-                    {formatPercent(selectedOpportunity.current_price_change_percent)}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Stop loss</dt>
-                  <dd>{formatPrice(selectedOpportunity.candidate.stop_loss)}</dd>
-                </div>
-                <div>
-                  <dt>Target</dt>
-                  <dd>{formatPrice(selectedOpportunity.candidate.target)}</dd>
-                </div>
-                <div>
-                  <dt>Risk / reward</dt>
-                  <dd>{formatRatio(selectedOpportunity.candidate.risk_reward_ratio)}</dd>
-                </div>
-                <div>
-                  <dt>Setup</dt>
-                  <dd className="plain-value">{selectedOpportunity.candidate.setup_name}</dd>
-                </div>
-                <div>
-                  <dt>Quality</dt>
-                  <dd>{formatNumber(selectedOpportunity.quality_score, 1)}</dd>
-                </div>
-                <div>
-                  <dt>Shares</dt>
-                  <dd>{selectedOpportunity.quantity ?? '—'}</dd>
-                </div>
-                <div>
-                  <dt>₹ at risk</dt>
-                  <dd>{formatPrice(selectedOpportunity.risk_amount)}</dd>
-                </div>
-              </dl>
-              {selectedOpportunity.invalidation && (
-                <p className="invalidation-copy">{selectedOpportunity.invalidation}</p>
-              )}
-            </div>
-            )}
-
-            {selectedOpportunity && (
-            <div className="section-box">
-              <h3>Evidence</h3>
-              <dl>
-                <div>
-                  <dt>Decision</dt>
-                  <dd className="evidence-decision">{selectedOpportunity.evidence.decision}</dd>
-                </div>
-                <div>
-                  <dt>Resistance</dt>
-                  <dd>{formatPrice(selectedOpportunity.evidence.resistance)}</dd>
-                </div>
-                <div>
-                  <dt>Breakout</dt>
-                  <dd className="bar-ref">
-                    <span>
-                      {
-                        formatBarRef(
-                          selectedOpportunity.evidence.breakout_candle_index,
-                          selectedOpportunity.evidence.breakout_candle_time,
-                        ).bar
-                      }
-                    </span>
-                    <small>
-                      {
-                        formatBarRef(
-                          selectedOpportunity.evidence.breakout_candle_index,
-                          selectedOpportunity.evidence.breakout_candle_time,
-                        ).when
-                      }
-                    </small>
-                  </dd>
-                </div>
-                <div>
-                  <dt>Retest</dt>
-                  <dd className="bar-ref">
-                    <span>
-                      {
-                        formatBarRef(
-                          selectedOpportunity.evidence.retest_candle_index,
-                          selectedOpportunity.evidence.retest_candle_time,
-                        ).bar
-                      }
-                    </span>
-                    <small>
-                      {
-                        formatBarRef(
-                          selectedOpportunity.evidence.retest_candle_index,
-                          selectedOpportunity.evidence.retest_candle_time,
-                        ).when
-                      }
-                    </small>
-                  </dd>
-                </div>
-                <div>
-                  <dt>Confirmation</dt>
-                  <dd className="bar-ref">
-                    <span>
-                      {
-                        formatBarRef(
-                          selectedOpportunity.evidence.confirmation_candle_index,
-                          selectedOpportunity.evidence.confirmation_candle_time,
-                        ).bar
-                      }
-                    </span>
-                    <small>
-                      {
-                        formatBarRef(
-                          selectedOpportunity.evidence.confirmation_candle_index,
-                          selectedOpportunity.evidence.confirmation_candle_time,
-                        ).when
-                      }
-                    </small>
-                  </dd>
-                </div>
-                <div>
-                  <dt>ATR</dt>
-                  <dd>{formatNumber(selectedOpportunity.evidence.atr_value, 2)}</dd>
-                </div>
-                <div>
-                  <dt>Volume SMA</dt>
-                  <dd>{formatVolume(selectedOpportunity.evidence.volume_sma_value)}</dd>
-                </div>
-                <div>
-                  <dt>Breakout volume</dt>
-                  <dd>{formatVolume(selectedOpportunity.evidence.breakout_volume)}</dd>
-                </div>
-                <div>
-                  <dt>Retest low</dt>
-                  <dd>{formatPrice(selectedOpportunity.evidence.retest_low)}</dd>
-                </div>
-                <div>
-                  <dt>Confirmation volume</dt>
-                  <dd>{formatVolume(selectedOpportunity.evidence.confirmation_volume)}</dd>
-                </div>
-              </dl>
-            </div>
-            )}
-
-            {selectedForming && (
-              <div className="section-box">
-                <h3>Forming setup</h3>
-                <dl>
-                  <div>
-                    <dt>Stage</dt>
-                    <dd>{selectedForming.stage.replace(/_/g, ' ')}</dd>
-                  </div>
-                  <div>
-                    <dt>Resistance</dt>
-                    <dd>{formatPrice(selectedForming.resistance)}</dd>
-                  </div>
-                  <div>
-                    <dt>Current price</dt>
-                    <dd>{formatPrice(selectedForming.current_price)}</dd>
-                  </div>
-                  <div>
-                    <dt>Change</dt>
-                    <dd className={valueClass(selectedForming.current_price_change_percent ?? 0)}>
-                      {formatPercent(selectedForming.current_price_change_percent)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Bars remaining</dt>
-                    <dd>{selectedForming.bars_remaining}</dd>
-                  </div>
-                  <div>
-                    <dt>Why</dt>
-                    <dd className="evidence-decision">{selectedForming.reason}</dd>
-                  </div>
-                </dl>
-              </div>
-            )}
-          </div>
-        </div>
+        <StockDetailDrawer
+          baseUrl={baseUrl}
+          scanStart={scanStart}
+          scanEnd={scanEnd}
+          chartCandles={chartCandles}
+          opportunity={selectedOpportunity}
+          forming={selectedForming}
+          confirmationMatchesScanEnd={confirmationMatchesScanEnd}
+          onClose={() => setSelectedSymbol(null)}
+          formatters={{
+            formatPrice,
+            formatNumber,
+            formatPercent,
+            formatRatio,
+            formatVolume,
+            formatDateTime,
+            formatBarRef,
+            valueClass,
+          }}
+        />
       )}
 
       {activeView === 'research' && (
@@ -1696,7 +1487,12 @@ function App() {
           </div>
           {researchQuote && (
             <p className="field-hint">
-              Current price: {formatPrice(researchQuote.current_price)} ({formatPercent(researchQuote.current_price_change_percent)})
+              Current price:{' '}
+              <LiveValue
+                value={researchQuote.current_price}
+                formatted={formatPrice(researchQuote.current_price)}
+              />{' '}
+              ({formatPercent(researchQuote.current_price_change_percent)})
             </p>
           )}
         </form>

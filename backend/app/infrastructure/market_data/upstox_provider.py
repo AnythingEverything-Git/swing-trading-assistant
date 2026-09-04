@@ -261,3 +261,105 @@ class UpstoxMarketDataProvider(MarketDataProvider):
                 "raw": item,
             }
         return result
+
+    async def get_option_chain(self, symbol: str, expiry_date: str = "current_month") -> dict[str, Any]:
+        """Fetch put/call option chain for an underlying NSE equity symbol."""
+        if not self._base_url:
+            raise UpstoxAPIError("Upstox base URL not configured")
+        if not self._token:
+            raise UpstoxAPIError("Upstox access token required for option chain")
+
+        instrument_key = self._resolve_instrument_key(symbol)
+        url = f"{self._base_url.rstrip('/')}/v2/option/chain"
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Accept": "application/json",
+        }
+        resp = await self._client.get(
+            url,
+            params={"instrument_key": instrument_key, "expiry_date": expiry_date},
+            headers=headers,
+            timeout=self._timeout,
+        )
+        status = getattr(resp, "status_code", None) or getattr(resp, "status", None)
+        if status is None or int(status) >= 400:
+            raise UpstoxAPIError(f"Upstox option chain API error: status={status}")
+
+        try:
+            payload = resp.json()
+            if isawaitable(payload):
+                payload = await payload
+        except Exception as exc:
+            raise UpstoxAPIError("Invalid JSON from Upstox option chain API") from exc
+
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            raise UpstoxAPIError("Malformed Upstox option chain response")
+
+        data = payload.get("data")
+        if not isinstance(data, list):
+            return {
+                "symbol": symbol.upper(),
+                "instrument_key": instrument_key,
+                "expiry_date": expiry_date,
+                "rows": [],
+                "pcr": None,
+                "spot": None,
+            }
+
+        rows: list[dict[str, Any]] = []
+        spot: Decimal | None = None
+        pcr: Decimal | None = None
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            if spot is None and item.get("underlying_spot_price") is not None:
+                try:
+                    spot = Decimal(str(item["underlying_spot_price"]))
+                except Exception:
+                    spot = None
+            if pcr is None and item.get("pcr") is not None:
+                try:
+                    pcr = Decimal(str(item["pcr"]))
+                except Exception:
+                    pcr = None
+
+            call = item.get("call_options") if isinstance(item.get("call_options"), dict) else {}
+            put = item.get("put_options") if isinstance(item.get("put_options"), dict) else {}
+            call_md = call.get("market_data") if isinstance(call.get("market_data"), dict) else {}
+            put_md = put.get("market_data") if isinstance(put.get("market_data"), dict) else {}
+            call_g = call.get("option_greeks") if isinstance(call.get("option_greeks"), dict) else {}
+            put_g = put.get("option_greeks") if isinstance(put.get("option_greeks"), dict) else {}
+
+            def _num(payload: dict[str, Any], key: str) -> Decimal | None:
+                raw = payload.get(key)
+                if raw is None:
+                    return None
+                try:
+                    return Decimal(str(raw))
+                except Exception:
+                    return None
+
+            rows.append(
+                {
+                    "strike": _num(item, "strike_price"),
+                    "expiry": item.get("expiry"),
+                    "call_ltp": _num(call_md, "ltp"),
+                    "call_oi": _num(call_md, "oi"),
+                    "call_iv": _num(call_g, "iv"),
+                    "put_ltp": _num(put_md, "ltp"),
+                    "put_oi": _num(put_md, "oi"),
+                    "put_iv": _num(put_g, "iv"),
+                }
+            )
+
+        rows = [row for row in rows if row.get("strike") is not None]
+        rows.sort(key=lambda row: row["strike"])
+        return {
+            "symbol": symbol.upper(),
+            "instrument_key": instrument_key,
+            "expiry_date": expiry_date,
+            "expiry": rows[0]["expiry"] if rows else None,
+            "spot": spot,
+            "pcr": pcr,
+            "rows": rows,
+        }

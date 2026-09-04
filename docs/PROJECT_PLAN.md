@@ -1,7 +1,7 @@
 # TradePilot AI — Project Plan (from now onwards)
 
-**Last updated:** 2026-09-03  
-**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan, ranked opportunities, forming watchlist, interactive TradingView-style charts, live current prices, quality scoring, position sizing, narratives, scan history, backtest realism, auto-refresh scan (default 5 min), collapsible scan criteria, and Amazon SES email alerts (HTML template; pre-market + confirmation watch).  
+**Last updated:** 2026-09-04  
+**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan, ranked opportunities, forming watchlist, interactive TradingView-style charts, live current prices (smooth tick animation), quality scoring, position sizing, narratives, scan history, backtest realism, auto-refresh scan (default 5 min), collapsible scan criteria, Amazon SES email alerts, and Groww-style detail tabs with grounded Gemini Flash insights.  
 **Data:** 497 Nifty symbols ingested via Upstox 1d candles. Demo mode still available via `MARKET_DATA_SOURCE=demo`.
 
 ---
@@ -22,7 +22,7 @@ For every eligible stock, provide:
 | Stop loss | `TradeCandidate.stop_loss` |
 | Target | `TradeCandidate.target` |
 | Risk / reward | `TradeCandidate.risk_reward_ratio` |
-| Current price | Live Upstox quote (auto-refreshes every 15s) |
+| Current price | Live Upstox quote (auto-refreshes every 15s; animated LTP) |
 | Quality score | `QualityScore` (rules-based ranking) |
 | Position size | Based on account equity + risk % |
 | Why eligible | `StrategyEvidence` (decision + structure) + template narrative |
@@ -55,6 +55,8 @@ present_scan (rank + size + narrative)
 POST /api/v1/scan/opportunities (+ ScanRun + live quote enrichment)
         ↓
 Frontend: ranked table + forming watchlist + interactive chart + live prices
+        ↓
+Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 ```
 
 ### Completed building blocks
@@ -97,12 +99,19 @@ Frontend: ranked table + forming watchlist + interactive chart + live prices
 | Pre-market daily email alert | Yes |
 | Confirmation-watch email alert | Yes |
 | SES test send script | Yes |
+| Groww-style detail tabs (Overview / Setup / Technical / F&O / News) | Yes |
+| Research APIs (overview, technical, F&O, news-events, insight) | Yes |
+| MACD + technical snapshot from candles | Yes |
+| Upstox option-chain F&O tab | Yes |
+| NSE announcements / corporate events (fail-soft) | Yes |
+| Grounded Gemini Flash insights (`NARRATIVE_PROVIDER=llm`) | Yes |
+| Stable detail drawer (no refetch flicker on quote ticks) | Yes |
+| Animated live LTP (`LiveValue`) + production UI motion polish | Yes |
 
 ### Explicitly not done
 
 - Auth, billing, portfolio, broker execution
 - SHORT setups
-- LLM provider (template narratives ship now; `NARRATIVE_PROVIDER=template`)
 - WebSocket live ticks (polling quotes every 15s instead)
 - Multi-timeframe beyond `1d`
 
@@ -113,7 +122,7 @@ Frontend: ranked table + forming watchlist + interactive chart + live prices
 | ID | Actor | Use case | Status |
 |----|-------|----------|--------|
 | UC1 | Trader | Scan a Nifty index for setups **RIGHT NOW** | ✅ Live |
-| UC2 | Trader | See **current trading price** on every symbol | ✅ Live (auto-refreshes 15s) |
+| UC2 | Trader | See **current trading price** on every symbol | ✅ Live (auto-refreshes 15s; animated tick) |
 | UC3 | Trader | Understand **why** a name is eligible | ✅ Detail overlay + narrative |
 | UC4 | Trader | View **interactive chart** with S/R + volume | ✅ lightweight-charts |
 | UC5 | Trader | See **forming setups** (not yet confirmed) | ✅ Forming watchlist |
@@ -130,6 +139,8 @@ Frontend: ranked table + forming watchlist + interactive chart + live prices
 | UC16 | Operator | Audit a scan | ✅ `scan_run_id` + full JSON payload |
 | UC17 | Trader | Auto-refresh scan results | ✅ Default 5 min; Off / other rates; pauses when criteria open |
 | UC18 | Operator | Email alerts via Amazon SES | ✅ Pre-market summary + confirmation watch; HTML template |
+| UC19 | Trader | Research a symbol via **detail tabs** | ✅ Overview / Setup / Technical / F&O / News |
+| UC20 | Trader | Read **grounded AI insight** on research tabs | ✅ Gemini Flash (facts-only; template fallback) |
 
 **Out of scope:** broker orders, portfolio tracking, WebSocket live ticks, auth/billing.
 
@@ -148,14 +159,15 @@ Frontend: ranked table + forming watchlist + interactive chart + live prices
 ### Checkpoint B — Ranked results + current price
 1. **Top-N cards** show rank, symbol, current price, change %, entry, score, qty.
 2. Table has **Rank, Current, Change** columns alongside Entry / SL / Target / R:R / Score / Qty.
-3. Prices auto-refresh every 15 seconds.
+3. Prices auto-refresh every 15 seconds with **smooth up/down flash** (no full-table flicker).
 
 ### Checkpoint C — Detail overlay + interactive chart
 1. Click any symbol → detail drawer opens.
-2. **Interactive chart** (TradingView-style): candlesticks + volume bars + Resistance/Support/Entry/SL/Target lines + B/R/C markers.
-3. Chart supports **pan, zoom, crosshair**.
-4. Trade plan shows current price + change %.
-5. NOW badge active when confirmation date matches scan end.
+2. Tabs: **Overview | Setup | Technical | F&O | News & Events**.
+3. **Setup** tab keeps Trade plan / Evidence / Forming + chart.
+4. **Interactive chart** (TradingView-style): candlesticks + volume + levels + B/R/C markers; pan / zoom / crosshair.
+5. Header LTP updates live **without** reloading tab data or blanking the panel.
+6. NOW badge active when confirmation date matches scan end.
 
 ### Checkpoint D — Forming watchlist
 1. Forming table shows stage, current price, change, resistance, bars remaining.
@@ -167,7 +179,7 @@ Frontend: ranked table + forming watchlist + interactive chart + live prices
 3. Alert preview in collapsible section.
 
 ### Checkpoint F — Research desk
-1. Menu → Research desk; live quote shown below form.
+1. Menu → Research desk; live quote shown below form (animated LTP).
 2. Evaluate / backtest use same INR formatting.
 
 ### Checkpoint G — Ops cadence (P5)
@@ -176,6 +188,14 @@ Frontend: ranked table + forming watchlist + interactive chart + live prices
 3. Auto-refresh **pauses** while criteria is open; resumes when collapsed.
 4. Changing Risk % / equity updates **Qty** immediately (does not change eligible set).
 5. SES configured: `python scripts/send_test_alert_email.py` delivers HTML alert.
+
+### Checkpoint H — Detail research tabs (P7)
+1. Overview: performance grid + chart + grounded insight.
+2. Technical: RSI / MACD / MAs / pivots + insight (no invented levels).
+3. F&O: expiry select + ATM option chain (or clear unavailable state).
+4. News & Events: NSE announcements / events (fail-soft) + insight.
+5. With `NARRATIVE_PROVIDER=llm` and `GOOGLE_API_KEY`, insight `provider` is `gemini`; otherwise template fallback.
+6. Leave drawer open across a 15s quote tick — panel must **not** flicker or refetch.
 
 ---
 
@@ -186,7 +206,8 @@ Frontend: ranked table + forming watchlist + interactive chart + live prices
 3. **Never map data failures to `NO_SETUP`.**
 4. **Demo vs live** — `MARKET_DATA_SOURCE` env var; plug-and-play switching.
 5. **Label curated universe** — versioned snapshots; nested: 50 ⊂ 100 ⊂ 200 ⊂ 500.
-6. **Grounded narratives** — template-based from strategy evidence; no LLM-invented prices.
+6. **Grounded narratives** — strategy Entry/SL/Target never invented by LLM; research insights facts-only with numeric guardrails.
+7. **Stable live UI** — quote ticks soft-update LTP only; do not remount research panels.
 
 ---
 
@@ -249,7 +270,20 @@ Detail overlay, NOW cue, loading copy, CSV, top-10 + See more, menu, multi-unive
 
 ### Phase 6 — Explicitly deferred
 
-Auth, billing, portfolio, broker execution, WebSocket ticks, SHORT setups, LLM narratives, multi-timeframe.
+Auth, billing, portfolio, broker execution, WebSocket ticks, SHORT setups, multi-timeframe.
+
+### Phase 7 — Groww-style stock detail tabs — **Done**
+
+| ID | Task | Status |
+|----|------|--------|
+| P7.1 | Detail tabs: Overview / Setup / Technical / F&O / News & Events | ✅ |
+| P7.2 | Preserve existing Trade plan + Evidence + Forming in **Setup** tab | ✅ |
+| P7.3 | Technical snapshot (RSI, MACD, MA, pivots) from candles | ✅ |
+| P7.4 | Upstox option chain F&O tab | ✅ |
+| P7.5 | NSE announcements + corporate events | ✅ |
+| P7.6 | Grounded Gemini Flash insights (`GOOGLE_API_KEY`) with numeric guardrails | ✅ |
+| P7.7 | Stable live detail UI (no tab refetch on quote ticks; tab/insight cache) | ✅ |
+| P7.8 | Animated live LTP + production motion / teal theme polish | ✅ |
 
 ---
 
@@ -263,6 +297,7 @@ P3  Opportunity UX + menu + universes     ✅
 P4  Product features (rank/chart/price)   ✅
 P5  Ops cadence (auto-refresh+email)       ✅
 P6  Deferred                              —
+P7  Groww detail tabs + Gemini + UX polish ✅
 ```
 
 | Phase | Status |
@@ -274,6 +309,7 @@ P6  Deferred                              —
 | P4 | Done |
 | P5 | Done |
 | P6 | Deferred |
+| P7 | Done |
 
 ---
 
@@ -287,13 +323,14 @@ P6  Deferred                              —
 | P3 | Evidence in overlay; CSV; menu; universe select |
 | P4 | Ranked results + chart + live prices + forming + narratives |
 | P5 | Auto-refresh (5m default) + SES HTML email alerts (pre-market + confirmation) |
+| P7 | Detail tabs + research APIs + Gemini insights; drawer stable under 15s quote poll |
 
 ---
 
 ## 7. Open decisions
 
 1. **WebSocket ticks:** Currently polling quotes every 15s; upgrade to Upstox WebSocket for real-time.
-2. **LLM narratives:** Template narratives ship now; `NARRATIVE_PROVIDER=llm` deferred.
+2. **LLM narratives:** Research tab insights support `NARRATIVE_PROVIDER=llm` via Gemini Flash (`GEMINI_MODEL`, default `gemini-flash-latest`) with grounding guardrails; setup Entry/SL/Target remain strategy-derived only. Template fallback when LLM off or unavailable.
 3. **SHORT setups:** Strategy supports LONG only; SHORT detection deferred.
 4. **Universe files:** Curated static JSON nested under Nifty 500; replace when official NSE membership updates.
 
@@ -326,12 +363,20 @@ P6  Deferred                              —
 | Product API | `backend/app/api/routes/product.py` |
 | UI | `frontend/src/main.tsx` |
 | Chart component | `frontend/src/components/SetupChart.tsx` |
+| Stock detail tabs | `frontend/src/components/StockDetailDrawer.tsx` |
+| Live LTP animation | `frontend/src/components/LiveValue.tsx` |
+| Research API | `backend/app/api/routes/research.py` |
+| Overview / technical services | `backend/app/application/research/` |
+| NSE news provider | `backend/app/infrastructure/news/nse_news_provider.py` |
+| Gemini insights | `backend/app/application/narrative/gemini_narrator.py` |
+| Gemini probe | `backend/scripts/probe_gemini.py` |
+| Research tab tests | `backend/tests/unit/test_research_tabs.py` |
 | Demo runbook | `docs/DEMO_RUNBOOK.md` |
 
 ---
 
 ## 9. One-line summary
 
-**Now:** Full-featured product — live Upstox data, ranked scan, charts, live prices, forming watchlist, position sizing, narratives, scan history, backtest, 5‑min auto-refresh, Amazon SES HTML email alerts.  
-**Next:** Watermark refresh scheduling; deferred features (auth, SHORT, LLM, WebSocket).  
-**Verify:** Checkpoints A–G in §2c before claiming a release.
+**Now:** Full-featured product — live Upstox data, ranked scan, charts, Groww-style detail tabs (Overview/Setup/Technical/F&O/News), grounded Gemini insights, stable animated live prices, 5‑min auto-refresh, SES email alerts.  
+**Next:** Watermark refresh scheduling; deferred features (auth, SHORT, WebSocket).  
+**Verify:** Checkpoints A–H in §2c before claiming a release.
