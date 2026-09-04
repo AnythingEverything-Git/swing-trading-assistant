@@ -132,6 +132,10 @@ class OpportunityScanRequest(BaseModel):
     risk_percent: Decimal = Field(default=Decimal("1"), gt=Decimal("0"))
     top_n: int = Field(default=5, ge=1, le=50)
     min_score: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("100"))
+    enable_paper_trading: bool = Field(
+        default=False,
+        description="When true, create practice watches for eligible setups after the scan.",
+    )
 
 
 class EligibleOpportunityResponse(BaseModel):
@@ -194,6 +198,9 @@ class OpportunityScanResponse(BaseModel):
     data_claim: str = "Demo candles — not live market data"
     last_candle_time: datetime | None = None
     alert_preview: str | None = None
+    paper_opened_count: int = 0
+    paper_skipped_count: int = 0
+    paper_claim: str | None = "PRACTICE TRADES ONLY — fake money, no real broker orders"
 
 
 class ScanIssueResponse(BaseModel):
@@ -379,3 +386,62 @@ class BacktestResponse(BaseModel):
     completed_trades: int
     trades: list[BacktestTradeResponse]
     metrics: PerformanceMetricsResponse
+
+
+class PaperTradeResponse(BaseModel):
+    id: int
+    scan_run_id: int | None = None
+    symbol: str
+    direction: str
+    entry_price: Decimal
+    stop_loss: Decimal
+    target: Decimal
+    quantity: int
+    risk_amount: Decimal | None = None
+    status: str
+    opened_at: datetime
+    closed_at: datetime | None = None
+    exit_price: Decimal | None = None
+    exit_reason: str | None = None
+    last_mark_price: Decimal | None = None
+    unrealized_pnl: Decimal | None = None
+    realized_pnl: Decimal | None = None
+    setup_name: str | None = None
+    quality_score: Decimal | None = None
+    updated_at: datetime | None = None
+    claim: str = "PRACTICE — fake money, no real broker orders"
+
+
+class PaperTradeListResponse(BaseModel):
+    claim: str = "PRACTICE TRADES ONLY — fake money, no real broker orders"
+    trades: list[PaperTradeResponse]
+    pending_count: int = 0
+    open_count: int = 0
+    closed_count: int = 0
+    total_unrealized: Decimal = Decimal("0")
+    total_realized: Decimal = Decimal("0")
+
+
+class PaperTickResponse(BaseModel):
+    claim: str = "PRACTICE TRADES ONLY — fake money, no real broker orders"
+    marks_applied: int
+    filled_this_tick: list[PaperTradeResponse] = []
+    closed_this_tick: list[PaperTradeResponse]
+    pending_trades: list[PaperTradeResponse] = []
+    open_trades: list[PaperTradeResponse]
+    total_unrealized: Decimal = Decimal("0")
+
+
+class PaperSummaryResponse(BaseModel):
+    claim: str = "PRACTICE TRADES ONLY — fake money, no real broker orders"
+    pending_count: int = 0
+    open_count: int
+    closed_count: int
+    total_unrealized: Decimal
+    total_realized: Decimal
+    winning_closed: int
+    losing_closed: int
+
+
+class PaperCloseRequest(BaseModel):
+    price: Decimal | None = Field(default=None, gt=Decimal("0"))

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { SetupChart, type ChartCandle } from './SetupChart'
+import { directionLabel, formingStageLabel } from '../terminology'
 
 export type DetailTab = 'overview' | 'setup' | 'technical' | 'fno' | 'news'
 
@@ -218,7 +219,7 @@ export function StockDetailDrawer({
   const priceFlash = useLiveFlash(headerPrice)
   const isShort =
     opportunity?.candidate.direction === 'SHORT' || forming?.direction === 'SHORT'
-  const structureLabel = isShort ? 'Support' : 'Resistance'
+  const structureLabel = isShort ? 'Floor (support)' : 'Ceiling (resistance)'
   const retestLabel = isShort ? 'Retest high' : 'Retest low'
   const chartLevels = {
     resistance: isShort
@@ -430,11 +431,11 @@ export function StockDetailDrawer({
                 }`}
               >
                 {confirmationMatchesScanEnd(opportunity)
-                  ? 'Confirmation aligns with scan end (NOW window)'
-                  : 'Confirmation on last bar of evaluated series required'}
+                  ? 'Ready now — last price bar confirmed the idea'
+                  : 'Needs confirmation on the latest price bar'}
               </span>
             ) : (
-              <span className="now-badge now-neutral">Forming — no trade plan yet</span>
+              <span className="now-badge now-neutral">Almost ready — no full trade plan yet</span>
             )}
           </div>
           <button type="button" className="detail-close" aria-label="Close opportunity detail" onClick={onClose}>
@@ -529,8 +530,8 @@ export function StockDetailDrawer({
                 {opportunity?.narrative ??
                   forming?.narrative ??
                   (isShort
-                    ? 'Eligibility requires breakdown → retest → confirmation, with confirmation on the final candle.'
-                    : 'Eligibility requires breakout → retest → confirmation, with confirmation on the final candle.')}
+                    ? 'A sell-short idea needs three steps: price breaks down, comes back to retest, then confirms on the last candle.'
+                    : 'A buy idea needs three steps: price breaks out, comes back to retest, then confirms on the last candle.')}
               </p>
               <div className="section-box elevate-card">
                 <h3>Chart</h3>
@@ -542,45 +543,43 @@ export function StockDetailDrawer({
                   <h3>Trade plan</h3>
                   <dl>
                     <div>
-                      <dt>Direction</dt>
+                      <dt>Trade type</dt>
                       <dd>
                         <span
                           className={`direction-pill ${
                             opportunity.candidate.direction === 'LONG' ? 'long' : 'short'
                           }`}
                         >
-                          {opportunity.candidate.direction === 'SHORT'
-                            ? 'SHORT selling'
-                            : 'LONG position'}
+                          {directionLabel(opportunity.candidate.direction)}
                         </span>
                       </dd>
                     </div>
                     <div>
-                      <dt>Entry</dt>
+                      <dt>Buy/sell at</dt>
                       <dd>{formatPrice(opportunity.candidate.entry_price)}</dd>
                     </div>
                     <div>
-                      <dt>Current price</dt>
+                      <dt>Live price</dt>
                       <dd className={`live-tick ${priceFlash ? `flash-${priceFlash}` : ''}`}>
                         {formatPrice(opportunity.current_price)}
                       </dd>
                     </div>
                     <div>
-                      <dt>Change</dt>
+                      <dt>Today</dt>
                       <dd className={valueClass(opportunity.current_price_change_percent ?? 0)}>
                         {formatPercent(opportunity.current_price_change_percent)}
                       </dd>
                     </div>
                     <div>
-                      <dt>Stop loss</dt>
+                      <dt>Safety exit</dt>
                       <dd>{formatPrice(opportunity.candidate.stop_loss)}</dd>
                     </div>
                     <div>
-                      <dt>Target</dt>
+                      <dt>Profit goal</dt>
                       <dd>{formatPrice(opportunity.candidate.target)}</dd>
                     </div>
                     <div>
-                      <dt>Risk / reward</dt>
+                      <dt>Reward vs risk</dt>
                       <dd>{formatRatio(opportunity.candidate.risk_reward_ratio)}</dd>
                     </div>
                     <div>
@@ -596,7 +595,7 @@ export function StockDetailDrawer({
                       <dd>{opportunity.quantity ?? '—'}</dd>
                     </div>
                     <div>
-                      <dt>₹ at risk</dt>
+                      <dt>₹ you could lose</dt>
                       <dd>{formatPrice(opportunity.risk_amount)}</dd>
                     </div>
                   </dl>
@@ -707,11 +706,11 @@ export function StockDetailDrawer({
 
               {forming && (
                 <div className="section-box elevate-card">
-                  <h3>Forming setup</h3>
+                  <h3>Almost ready</h3>
                   <dl>
                     <div>
                       <dt>Stage</dt>
-                      <dd>{forming.stage.replace(/_/g, ' ')}</dd>
+                      <dd>{formingStageLabel(forming.stage)}</dd>
                     </div>
                     <div>
                       <dt>{structureLabel}</dt>
@@ -844,13 +843,13 @@ export function StockDetailDrawer({
                     <table>
                       <thead>
                         <tr>
-                          <th>Call LTP</th>
+                          <th>Call live price</th>
                           <th>Call OI</th>
                           <th>Call IV</th>
                           <th>Strike</th>
                           <th>Put IV</th>
                           <th>Put OI</th>
-                          <th>Put LTP</th>
+                          <th>Put live price</th>
                         </tr>
                       </thead>
                       <tbody>

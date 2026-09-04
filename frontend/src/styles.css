@@ -1210,10 +1210,85 @@ td.symbol-cell {
   color: var(--muted);
 }
 
-.top-book,
+.paper-box,
 .forming-box,
 .confirmed-box {
   margin: 16px 0 8px;
+}
+
+.paper-banner {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+}
+
+.paper-banner strong {
+  font-size: 0.9rem;
+}
+
+.paper-banner span {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.paper-summary-grid {
+  margin-bottom: 12px;
+}
+
+.paper-opt-in {
+  margin: 4px 0 8px;
+  max-width: 100%;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.checkbox-label input[type='checkbox'] {
+  width: 1.05rem;
+  height: 1.05rem;
+  min-width: 1.05rem;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  flex-shrink: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface-muted);
+  box-shadow: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.checkbox-label input[type='checkbox']:focus {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.checkbox-label span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.status.ok {
+  color: var(--buy);
+  background: var(--buy-soft);
+  border: 1px solid color-mix(in srgb, var(--buy) 30%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  font-size: 0.86rem;
 }
 
 .top-grid {

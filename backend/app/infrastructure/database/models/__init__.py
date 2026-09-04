@@ -6,5 +6,6 @@ can import from `app.infrastructure.database.models`.
 from .instrument import InstrumentORM
 from .candle import CandleORM
 from .scan_run import ScanRunORM
+from .paper_trade import PaperTradeORM
 
-__all__ = ["InstrumentORM", "CandleORM", "ScanRunORM"]
+__all__ = ["InstrumentORM", "CandleORM", "ScanRunORM", "PaperTradeORM"]

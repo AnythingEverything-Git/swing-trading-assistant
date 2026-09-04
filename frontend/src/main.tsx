@@ -1,14 +1,22 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import './styles.css'
 import { LiveValue } from './components/LiveValue'
 import { SetupChart, type ChartCandle } from './components/SetupChart'
 import { StockDetailDrawer } from './components/StockDetailDrawer'
+import {
+  PAPER_CLAIM,
+  directionLabel,
+  exitReasonLabel,
+  formingStageLabel,
+  paperStatusLabel,
+} from './terminology'
 
 type ThemeMode = 'light' | 'dark'
 
 const THEME_STORAGE_KEY = 'tradepilot-theme'
 const RISK_STORAGE_KEY = 'tradepilot-risk-profile'
+const PAPER_ENABLED_KEY = 'tradepilot-paper-enabled'
 
 function readStoredRisk(): { equity: string; riskPercent: string } {
   try {
@@ -220,6 +228,41 @@ type OpportunityScanResponse = {
   data_claim?: string
   last_candle_time?: string | null
   alert_preview?: string | null
+  paper_opened_count?: number
+  paper_skipped_count?: number
+  paper_claim?: string | null
+}
+
+type PaperTrade = {
+  id: number
+  scan_run_id?: number | null
+  symbol: string
+  direction: string
+  entry_price: string | number
+  stop_loss: string | number
+  target: string | number
+  quantity: number
+  risk_amount?: string | number | null
+  status: string
+  opened_at: string
+  closed_at?: string | null
+  exit_price?: string | number | null
+  exit_reason?: string | null
+  last_mark_price?: string | number | null
+  unrealized_pnl?: string | number | null
+  realized_pnl?: string | number | null
+  setup_name?: string | null
+  quality_score?: string | number | null
+}
+
+type PaperBook = {
+  claim: string
+  trades: PaperTrade[]
+  pending_count?: number
+  open_count: number
+  closed_count: number
+  total_unrealized: string | number
+  total_realized: string | number
 }
 
 type ProductStatus = {
@@ -415,7 +458,7 @@ function withPositionSizing(
   }
 }
 
-type AppView = 'scan' | 'research'
+type AppView = 'scan' | 'research' | 'paper'
 type ScanUniverse = 'NIFTY_50' | 'NIFTY_100' | 'NIFTY_200' | 'NIFTY_500'
 
 const SCAN_UNIVERSES: { value: ScanUniverse; label: string }[] = [
@@ -449,6 +492,17 @@ function App() {
   const [scanLoading, setScanLoading] = useState(false)
   const [scanError, setScanError] = useState('')
   const [scanResult, setScanResult] = useState<OpportunityScanResponse | null>(null)
+  const [paperBook, setPaperBook] = useState<PaperBook | null>(null)
+  const [paperError, setPaperError] = useState('')
+  const [paperNotice, setPaperNotice] = useState('')
+  const [paperClosingId, setPaperClosingId] = useState<number | null>(null)
+  const [paperTradingEnabled, setPaperTradingEnabled] = useState(() => {
+    try {
+      return localStorage.getItem(PAPER_ENABLED_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
   const [selectedKind, setSelectedKind] = useState<'eligible' | 'forming'>('eligible')
   const [showAllOpportunities, setShowAllOpportunities] = useState(false)
@@ -781,6 +835,81 @@ function App() {
     }
   }
 
+  const refreshPaperBook = useCallback(async () => {
+    if (!paperTradingEnabled) return
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/paper/trades?status=ALL`)
+      if (!response.ok) throw new Error('Failed to load practice trades')
+      setPaperBook((await response.json()) as PaperBook)
+      setPaperError('')
+    } catch (caught) {
+      setPaperError(caught instanceof Error ? caught.message : 'Practice book unavailable')
+    }
+  }, [baseUrl, paperTradingEnabled])
+
+  const tickPaperBook = useCallback(async () => {
+    if (!paperTradingEnabled) return
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/paper/tick`, { method: 'POST' })
+      if (!response.ok) return
+      const payload = (await response.json()) as {
+        open_trades: PaperTrade[]
+        pending_trades?: PaperTrade[]
+        filled_this_tick?: PaperTrade[]
+        closed_this_tick: PaperTrade[]
+        total_unrealized: string | number
+      }
+      const notes: string[] = []
+      if (payload.filled_this_tick?.length) {
+        notes.push(
+          `Started: ${payload.filled_this_tick.map((t) => t.symbol).join(', ')} (buy/sell price reached)`,
+        )
+      }
+      if (payload.closed_this_tick?.length) {
+        notes.push(
+          `Finished: ${payload.closed_this_tick
+            .map((t) => `${t.symbol} (${exitReasonLabel(t.exit_reason)})`)
+            .join(', ')}`,
+        )
+      }
+      if (notes.length) setPaperNotice(notes.join(' · '))
+      await refreshPaperBook()
+    } catch {
+      /* ignore transient tick failures */
+    }
+  }, [baseUrl, paperTradingEnabled, refreshPaperBook])
+
+  const closePaperTrade = async (tradeId: number) => {
+    setPaperClosingId(tradeId)
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/paper/trades/${tradeId}/close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}))
+        throw new Error(detail.detail || 'Close failed')
+      }
+      setPaperNotice('Practice trade updated')
+      await refreshPaperBook()
+    } catch (caught) {
+      setPaperError(caught instanceof Error ? caught.message : 'Close failed')
+    } finally {
+      setPaperClosingId(null)
+    }
+  }
+
+  const setPaperEnabled = (enabled: boolean) => {
+    setPaperTradingEnabled(enabled)
+    try {
+      localStorage.setItem(PAPER_ENABLED_KEY, enabled ? '1' : '0')
+    } catch {
+      /* ignore */
+    }
+  }
+
+
   const handleScan = async () => {
     if (!scanStart || !scanEnd) {
       setScanError('Please complete the scan date range before scanning.')
@@ -819,6 +948,7 @@ function App() {
           risk_percent: riskPercent || '1',
           top_n: 5,
           min_score: minScore || undefined,
+          enable_paper_trading: paperTradingEnabled,
         }),
       })
 
@@ -837,6 +967,21 @@ function App() {
       setScanResult(withPositionSizing(payload, accountEquity, riskPercent))
       setSelectedSymbol(null)
       setShowAllOpportunities(false)
+      if (paperTradingEnabled) {
+        if ((payload.paper_opened_count ?? 0) > 0) {
+          setPaperNotice(
+            `Watching ${payload.paper_opened_count} setup(s) for buy/sell price` +
+              ((payload.paper_skipped_count ?? 0) > 0
+                ? ` · skipped ${payload.paper_skipped_count} (no shares sized, or already watching/open)`
+                : ''),
+          )
+        } else {
+          setPaperNotice(
+            'No new practice watches. Enter capital + max-loss % so shares can be sized, and avoid symbols already watching/open.',
+          )
+        }
+        void refreshPaperBook()
+      }
       try {
         const historyResp = await fetch(`${baseUrl}/api/v1/scan/runs?limit=8`)
         if (historyResp.ok) setScanHistory((await historyResp.json()) as ScanRunSummary[])
@@ -854,6 +999,23 @@ function App() {
 
   const handleScanRef = useRef(handleScan)
   handleScanRef.current = handleScan
+
+  useEffect(() => {
+    if (!paperTradingEnabled) return
+    void refreshPaperBook()
+  }, [paperTradingEnabled, refreshPaperBook])
+
+  useEffect(() => {
+    if (!paperTradingEnabled) return
+    const pending = paperBook?.pending_count ?? 0
+    const openCount = paperBook?.open_count ?? 0
+    if (activeView !== 'paper' && pending === 0 && openCount === 0) return
+    void tickPaperBook()
+    const timer = window.setInterval(() => {
+      void tickPaperBook()
+    }, 15000)
+    return () => window.clearInterval(timer)
+  }, [activeView, paperTradingEnabled, paperBook?.pending_count, paperBook?.open_count, tickPaperBook])
 
   // Auto-refresh scan at user-chosen interval
   useEffect(() => {
@@ -886,7 +1048,7 @@ function App() {
               setSelectedSymbol(null)
             }}
           >
-            Watchlist scan
+            Find setups
           </button>
           <button
             type="button"
@@ -896,7 +1058,19 @@ function App() {
               setSelectedSymbol(null)
             }}
           >
-            Research desk
+            Stock research
+          </button>
+          <button
+            type="button"
+            className={`menu-link ${activeView === 'paper' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveView('paper')
+              setSelectedSymbol(null)
+              void refreshPaperBook()
+              void tickPaperBook()
+            }}
+          >
+            Practice trades
           </button>
         </nav>
         <button
@@ -927,10 +1101,11 @@ function App() {
       {activeView === 'scan' && (
       <section className="panel scan-panel">
         <header className="header-block">
-          <p className="eyebrow">Watchlist scan</p>
-          <h1>Index Swing Opportunities</h1>
+          <p className="eyebrow">Find setups</p>
+          <h1>Swing trade ideas</h1>
           <p className="header-copy">
-            Scan Nifty 50 / 100 / 200 / 500 for valid LONG breakout or SHORT breakdown → retest → confirmation setups right now.
+            Scan Nifty 50 / 100 / 200 / 500 for stocks that look ready to trade now — either buy (expect price up) or
+            sell short (expect price down), after a clear break, retest, and confirmation.
           </p>
         </header>
 
@@ -952,7 +1127,7 @@ function App() {
           )}
           <div className={`scan-criteria-fields ${scanCriteriaCollapsed ? 'collapsed' : ''}`}>
           <div className="field-group">
-            <label htmlFor="scan-universe">Universe</label>
+            <label htmlFor="scan-universe">Stock list</label>
             <select
               id="scan-universe"
               value={scanUniverse}
@@ -989,7 +1164,7 @@ function App() {
 
           <div className="field-row two-col">
             <div className="field-group">
-              <label htmlFor="scan-equity">Account equity (₹)</label>
+              <label htmlFor="scan-equity">Your capital (₹)</label>
               <input
                 id="scan-equity"
                 type="number"
@@ -1000,7 +1175,7 @@ function App() {
               />
             </div>
             <div className="field-group">
-              <label htmlFor="scan-risk">Risk %</label>
+              <label htmlFor="scan-risk">Max loss per trade (%)</label>
               <input
                 id="scan-risk"
                 type="number"
@@ -1010,9 +1185,26 @@ function App() {
                 onChange={(event) => setRiskPercent(event.target.value)}
               />
               <p className="field-hint">
-                Sizes Qty / ₹ at risk only (now {formatPrice((Number(accountEquity) * Number(riskPercent)) / 100)} max). Eligible names stay the same.
+                Used only to choose how many shares to size (max risk now{' '}
+                {formatPrice((Number(accountEquity) * Number(riskPercent)) / 100)}). The list of setups stays the same.
               </p>
             </div>
+          </div>
+
+
+          <div className="field-group paper-opt-in">
+            <label className="checkbox-label" htmlFor="scan-paper-enabled">
+              <input
+                id="scan-paper-enabled"
+                type="checkbox"
+                checked={paperTradingEnabled}
+                onChange={(event) => setPaperEnabled(event.target.checked)}
+              />
+              <span>
+                Practice trades (optional) — watch buy/sell price, then auto-exit at safety
+                exit or profit goal. Fake money only.
+              </span>
+            </label>
           </div>
 
           <div className="field-row two-col">
@@ -1095,7 +1287,7 @@ function App() {
               </div>
               {autoRefreshActive && (
                 <span className="refresh-indicator">
-                  {scanCriteriaCollapsed ? '⟳ Auto-refreshing' : '⏸ Paused while criteria is open'}
+                  {scanCriteriaCollapsed ? '↻ Auto-refreshing' : '⏸ Paused while criteria is open'}
                 </span>
               )}
             </div>
@@ -1134,19 +1326,19 @@ function App() {
                 <strong>{scanResult.symbols_scanned}</strong>
               </div>
               <div className="metric-card metric-accent">
-                <span>Eligible</span>
+                <span>Ready now</span>
                 <strong>{scanResult.eligible_count}</strong>
               </div>
               <div className="metric-card">
-                <span>Forming</span>
+                <span>Almost ready</span>
                 <strong>{scanResult.forming_count ?? 0}</strong>
               </div>
               <div className="metric-card">
-                <span>No setup</span>
+                <span>No idea</span>
                 <strong>{scanResult.no_setup_count}</strong>
               </div>
               <div className="metric-card">
-                <span>Unavailable</span>
+                <span>No data</span>
                 <strong>{scanResult.unavailable_count ?? 0}</strong>
               </div>
               <div className="metric-card">
@@ -1171,9 +1363,10 @@ function App() {
 
             {(scanResult.top?.length ?? 0) > 0 && (
               <div className="top-book">
-                <h3>Top {scanResult.top!.length} confirmed setups</h3>
+                <h3>Top {scanResult.top!.length} ready ideas</h3>
                 <p className="field-hint">
-                  Ranked by setup quality. Each tile is a NOW-confirmed LONG or SHORT plan for this account.
+                  Sorted by setup quality. Each card is a ready plan: buy if you expect the price to rise, or sell
+                  short if you expect it to fall.
                 </p>
                 <div className="top-grid">
                   {scanResult.top!.map((item) => {
@@ -1191,12 +1384,12 @@ function App() {
                         <div className="top-card-head">
                           <span className="top-rank">#{item.rank}</span>
                           <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                            {isShort ? 'SHORT selling' : 'LONG position'}
+                            {directionLabel(item.candidate.direction)}
                           </span>
                         </div>
                         <strong className="top-symbol">{item.symbol}</strong>
                         <div className="top-metric">
-                          <span className="top-label">LTP</span>
+                          <span className="top-label">Live price</span>
                           <span className="top-value">
                             <LiveValue
                               value={item.current_price}
@@ -1205,36 +1398,36 @@ function App() {
                           </span>
                         </div>
                         <div className="top-metric">
-                          <span className="top-label">Change</span>
+                          <span className="top-label">Today</span>
                           <span className={`top-value ${valueClass(item.current_price_change_percent ?? 0)}`}>
                             {formatPercent(item.current_price_change_percent)}
                           </span>
                         </div>
                         <div className="top-metric">
-                          <span className="top-label">Entry</span>
+                          <span className="top-label">Buy/sell at</span>
                           <span className="top-value">{formatPrice(item.candidate.entry_price)}</span>
                         </div>
                         <div className="top-metric">
-                          <span className="top-label">Stop</span>
+                          <span className="top-label">Safety exit</span>
                           <span className="top-value top-value-stop">
                             {formatPrice(item.candidate.stop_loss)}
                           </span>
                         </div>
                         <div className="top-metric">
-                          <span className="top-label">Target</span>
+                          <span className="top-label">Profit goal</span>
                           <span className="top-value top-value-target">
                             {formatPrice(item.candidate.target)}
                           </span>
                         </div>
                         <div className="top-metric">
-                          <span className="top-label">Score</span>
+                          <span className="top-label">Quality</span>
                           <span className="top-value top-value-score">
                             {formatNumber(item.quality_score, 1)}
                           </span>
                         </div>
                         {item.quantity != null && (
                           <div className="top-metric">
-                            <span className="top-label">Qty</span>
+                            <span className="top-label">Shares</span>
                             <span className="top-value">{item.quantity}</span>
                           </div>
                         )}
@@ -1253,18 +1446,18 @@ function App() {
             )}
 
             <div className="confirmed-box">
-              <h3>Confirmed opportunities</h3>
+              <h3>Ready to trade now</h3>
               {scanResult.eligible_count === 0 ? (
                 <div className="empty-state">
-                  <strong>No confirmed setups</strong>
-                  <span>No eligible LONG or SHORT opportunities were found for this range.</span>
+                  <strong>No ready ideas</strong>
+                  <span>No buy or sell-short setups matched the rules for this date range.</span>
                 </div>
               ) : (
                 <>
                   <div className="table-toolbar">
                     <p className="field-hint">
-                      Showing {visibleOpportunities.length} of {scanResult.opportunities.length} confirmed
-                      names. Click a row for trade plan and evidence.
+                      Showing {visibleOpportunities.length} of {scanResult.opportunities.length} ready stocks.
+                      Click a row to see the plan in plain language.
                     </p>
                     <button
                       type="button"
@@ -1279,17 +1472,17 @@ function App() {
                       <thead>
                         <tr>
                           <th>Rank</th>
-                          <th>Symbol</th>
-                          <th>Eligibility</th>
-                          <th>Entry</th>
-                          <th>Current</th>
-                          <th>Change</th>
-                          <th>Stop Loss</th>
-                          <th>Target</th>
-                          <th>R:R</th>
-                          <th>Score</th>
-                          <th>Qty</th>
-                          <th>Why Eligible</th>
+                          <th>Stock</th>
+                          <th>Trade type</th>
+                          <th>Buy/sell at</th>
+                          <th>Live price</th>
+                          <th>Today</th>
+                          <th>Safety exit</th>
+                          <th>Profit goal</th>
+                          <th>Reward vs risk</th>
+                          <th>Quality</th>
+                          <th>Shares</th>
+                          <th>Why this idea</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1317,7 +1510,7 @@ function App() {
                               <td className="symbol-cell">{opportunity.symbol}</td>
                               <td>
                                 <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                                  {isShort ? 'SHORT selling' : 'LONG position'}
+                                  {directionLabel(isShort ? 'SHORT' : 'LONG')}
                                 </span>
                               </td>
                               <td className="num-cell">
@@ -1378,21 +1571,22 @@ function App() {
 
             {(scanResult.forming?.length ?? 0) > 0 && (
               <div className="forming-box">
-                <h3>Forming watchlist</h3>
+                <h3>Almost ready (watching)</h3>
                 <p className="field-hint">
-                  In retest or confirmation window. No Entry / SL / Target until NOW confirmation.
+                  These stocks are close, but not confirmed yet — no buy/sell price, safety exit, or profit goal
+                  until the last step completes.
                 </p>
                 <div className="table-wrap">
                   <table>
                     <thead>
                       <tr>
-                        <th>Symbol</th>
-                        <th>Setup side</th>
+                        <th>Stock</th>
+                        <th>Trade type</th>
                         <th>Stage</th>
-                        <th>Current</th>
-                        <th>Change</th>
-                        <th>Level</th>
-                        <th>Bars left</th>
+                        <th>Live price</th>
+                        <th>Today</th>
+                        <th>Key level</th>
+                        <th>Days left</th>
                         <th>Why</th>
                       </tr>
                     </thead>
@@ -1412,10 +1606,10 @@ function App() {
                             <td className="symbol-cell">{item.symbol}</td>
                             <td>
                               <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                                {isShort ? 'SHORT selling' : 'LONG position'}
+                                {directionLabel(item.direction)}
                               </span>
                             </td>
-                            <td>{item.stage.replace(/_/g, ' ')}</td>
+                            <td>{formingStageLabel(item.stage)}</td>
                             <td className="num-cell">
                               <LiveValue
                                 value={item.current_price}
@@ -1438,9 +1632,434 @@ function App() {
                 </div>
               </div>
             )}
+
+            {paperTradingEnabled && (
+            <div className="paper-box">
+              <div className="paper-banner">
+                <strong>{PAPER_CLAIM}</strong>
+                <span>
+                  Waits for live price to reach buy/sell price, then auto-closes at safety exit or profit goal · no
+                  fees modeled
+                </span>
+              </div>
+              {paperNotice && <div className="status ok">{paperNotice}</div>}
+              {paperError && <div className="status error">{paperError}</div>}
+              <div className="result-grid paper-summary-grid">
+                <div>
+                  <strong>Waiting:</strong> {paperBook?.pending_count ?? 0}
+                </div>
+                <div>
+                  <strong>In trade:</strong> {paperBook?.open_count ?? 0}
+                </div>
+                <div>
+                  <strong>Open P/L:</strong>{' '}
+                  <span className={valueClass(paperBook?.total_unrealized ?? 0)}>
+                    {formatPrice(paperBook?.total_unrealized)}
+                  </span>
+                </div>
+                <div>
+                  <strong>Finished:</strong> {paperBook?.closed_count ?? 0}
+                </div>
+                <div>
+                  <strong>Locked-in P/L:</strong>{' '}
+                  <span className={valueClass(paperBook?.total_realized ?? 0)}>
+                    {formatPrice(paperBook?.total_realized)}
+                  </span>
+                </div>
+              </div>
+              <div className="table-toolbar">
+                <h3>Waiting for buy/sell price</h3>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    void tickPaperBook()
+                  }}
+                >
+                  Update prices
+                </button>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Stock</th>
+                      <th>Trade type</th>
+                      <th>Shares</th>
+                      <th>Buy/sell at</th>
+                      <th>Safety exit</th>
+                      <th>Profit goal</th>
+                      <th>Live price</th>
+                      <th>Status</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(paperBook?.trades.filter((t) => t.status === 'PENDING') ?? []).length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="field-hint">
+                          No watches yet. With practice mode on, a scan adds setups here until live price hits
+                          buy/sell.
+                        </td>
+                      </tr>
+                    ) : (
+                      paperBook!.trades
+                        .filter((t) => t.status === 'PENDING')
+                        .map((trade) => {
+                          const isShort = trade.direction === 'SHORT'
+                          return (
+                            <tr key={`pending-scan-${trade.id}`}>
+                              <td className="symbol-cell">{trade.symbol}</td>
+                              <td>
+                                <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
+                                  {directionLabel(isShort ? 'SHORT' : 'LONG')}
+                                </span>
+                              </td>
+                              <td className="num-cell">{trade.quantity}</td>
+                              <td className="num-cell">{formatPrice(trade.entry_price)}</td>
+                              <td className="num-cell top-value-stop">{formatPrice(trade.stop_loss)}</td>
+                              <td className="num-cell top-value-target">{formatPrice(trade.target)}</td>
+                              <td className="num-cell">
+                                <LiveValue
+                                  value={trade.last_mark_price}
+                                  formatted={formatPrice(trade.last_mark_price)}
+                                />
+                              </td>
+                              <td>{paperStatusLabel(trade.status)}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="secondary-button"
+                                  disabled={paperClosingId === trade.id}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    void closePaperTrade(trade.id)
+                                  }}
+                                >
+                                  {paperClosingId === trade.id ? 'Working…' : 'Cancel watch'}
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="table-toolbar">
+                <h3>In trade now</h3>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Stock</th>
+                      <th>Trade type</th>
+                      <th>Shares</th>
+                      <th>Buy/sell at</th>
+                      <th>Safety exit</th>
+                      <th>Profit goal</th>
+                      <th>Live price</th>
+                      <th>Open P/L</th>
+                      <th>Money at risk</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(paperBook?.trades.filter((t) => t.status === 'OPEN') ?? []).length === 0 ? (
+                      <tr>
+                        <td colSpan={10} className="field-hint">
+                          No open practice trades yet. When practice mode is on, run a scan — trades start only after live price hits buy/sell.
+                        </td>
+                      </tr>
+                    ) : (
+                      paperBook!.trades
+                        .filter((t) => t.status === 'OPEN')
+                        .map((trade) => {
+                          const isShort = trade.direction === 'SHORT'
+                          return (
+                            <tr key={trade.id}>
+                              <td className="symbol-cell">{trade.symbol}</td>
+                              <td>
+                                <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
+                                  {directionLabel(isShort ? 'SHORT' : 'LONG')}
+                                </span>
+                              </td>
+                              <td className="num-cell">{trade.quantity}</td>
+                              <td className="num-cell">{formatPrice(trade.entry_price)}</td>
+                              <td className="num-cell top-value-stop">{formatPrice(trade.stop_loss)}</td>
+                              <td className="num-cell top-value-target">{formatPrice(trade.target)}</td>
+                              <td className="num-cell">
+                                <LiveValue
+                                  value={trade.last_mark_price}
+                                  formatted={formatPrice(trade.last_mark_price)}
+                                />
+                              </td>
+                              <td className={`num-cell ${valueClass(trade.unrealized_pnl ?? 0)}`}>
+                                {formatPrice(trade.unrealized_pnl)}
+                              </td>
+                              <td className="num-cell">{formatPrice(trade.risk_amount)}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="secondary-button"
+                                  disabled={paperClosingId === trade.id}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    void closePaperTrade(trade.id)
+                                  }}
+                                >
+                                  {paperClosingId === trade.id ? 'Working…' : trade.status === 'PENDING' ? 'Cancel watch' : 'Close trade'}
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            )}
           </section>
         )}
       </section>
+      )}
+
+      {activeView === 'paper' && (
+        <section className="panel">
+          <header className="header-block">
+            <p className="eyebrow">Practice trades</p>
+            <h1>Your practice book</h1>
+            <p className="header-copy">
+              Optional practice mode: after a scan, we watch for the buy/sell price, then exit at the safety exit
+              or profit goal. Live prices refresh about every 15 seconds. Nothing is sent to a real broker.
+            </p>
+          </header>
+
+          <div className="field-group paper-opt-in">
+            <label className="checkbox-label" htmlFor="paper-view-enabled">
+              <input
+                id="paper-view-enabled"
+                type="checkbox"
+                checked={paperTradingEnabled}
+                onChange={(event) => {
+                  setPaperEnabled(event.target.checked)
+                  if (event.target.checked) {
+                    void refreshPaperBook()
+                    void tickPaperBook()
+                  }
+                }}
+              />
+              <span>Turn on practice trades (optional)</span>
+            </label>
+            <p className="field-hint">
+              When on, each scan can watch ready setups. A trade starts only when live price reaches the buy/sell
+              price, and finishes at the safety exit or profit goal.
+            </p>
+          </div>
+          {!paperTradingEnabled ? (
+            <div className="empty-state">
+              <strong>Practice trading is off</strong>
+              <span>Enable the switch above if you want fake trades after a scan. No real money is used.</span>
+            </div>
+          ) : (
+          <>
+          <div className="paper-banner">
+            <strong>{PAPER_CLAIM}</strong>
+            <span>
+              Starts only when live price reaches buy/sell price · closes automatically at safety exit or profit
+              goal
+            </span>
+          </div>
+          {paperNotice && <div className="status ok">{paperNotice}</div>}
+          {paperError && <div className="status error">{paperError}</div>}
+          <div className="metric-grid metric-grid-five">
+            <div className="metric-card">
+              <span>Waiting for price</span>
+              <strong>{paperBook?.pending_count ?? 0}</strong>
+            </div>
+            <div className="metric-card metric-accent">
+              <span>In trade</span>
+              <strong>{paperBook?.open_count ?? 0}</strong>
+            </div>
+            <div className="metric-card">
+              <span>Open P/L</span>
+              <strong className={valueClass(paperBook?.total_unrealized ?? 0)}>
+                {formatPrice(paperBook?.total_unrealized)}
+              </strong>
+            </div>
+            <div className="metric-card">
+              <span>Finished</span>
+              <strong>{paperBook?.closed_count ?? 0}</strong>
+            </div>
+            <div className="metric-card">
+              <span>Locked-in P/L</span>
+              <strong className={valueClass(paperBook?.total_realized ?? 0)}>
+                {formatPrice(paperBook?.total_realized)}
+              </strong>
+            </div>
+          </div>
+          <div className="table-toolbar">
+            <h3>Waiting for buy/sell price</h3>
+            <button type="button" className="secondary-button" onClick={() => void tickPaperBook()}>
+              Update prices
+            </button>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Stock</th>
+                  <th>Trade type</th>
+                  <th>Shares</th>
+                  <th>Buy/sell at</th>
+                  <th>Safety exit</th>
+                  <th>Profit goal</th>
+                  <th>Live price</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {(paperBook?.trades.filter((t) => t.status === 'PENDING') ?? []).map((trade) => {
+                  const isShort = trade.direction === 'SHORT'
+                  return (
+                    <tr key={`paper-pending-${trade.id}`}>
+                      <td className="symbol-cell">{trade.symbol}</td>
+                      <td>
+                        <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
+                          {directionLabel(isShort ? 'SHORT' : 'LONG')}
+                        </span>
+                      </td>
+                      <td className="num-cell">{trade.quantity}</td>
+                      <td className="num-cell">{formatPrice(trade.entry_price)}</td>
+                      <td className="num-cell">{formatPrice(trade.stop_loss)}</td>
+                      <td className="num-cell">{formatPrice(trade.target)}</td>
+                      <td className="num-cell">
+                        <LiveValue
+                          value={trade.last_mark_price}
+                          formatted={formatPrice(trade.last_mark_price)}
+                        />
+                      </td>
+                      <td>{paperStatusLabel(trade.status)}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={paperClosingId === trade.id}
+                          onClick={() => void closePaperTrade(trade.id)}
+                        >
+                          Cancel watch
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="table-toolbar">
+            <h3>In trade now</h3>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Stock</th>
+                  <th>Trade type</th>
+                  <th>Shares</th>
+                  <th>Buy/sell at</th>
+                  <th>Safety exit</th>
+                  <th>Profit goal</th>
+                  <th>Live price</th>
+                  <th>Open P/L</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {(paperBook?.trades.filter((t) => t.status === 'OPEN') ?? []).map((trade) => {
+                  const isShort = trade.direction === 'SHORT'
+                  return (
+                    <tr key={`paper-open-${trade.id}`}>
+                      <td className="symbol-cell">{trade.symbol}</td>
+                      <td>
+                        <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
+                          {directionLabel(isShort ? 'SHORT' : 'LONG')}
+                        </span>
+                      </td>
+                      <td className="num-cell">{trade.quantity}</td>
+                      <td className="num-cell">{formatPrice(trade.entry_price)}</td>
+                      <td className="num-cell">{formatPrice(trade.stop_loss)}</td>
+                      <td className="num-cell">{formatPrice(trade.target)}</td>
+                      <td className="num-cell">
+                        <LiveValue
+                          value={trade.last_mark_price}
+                          formatted={formatPrice(trade.last_mark_price)}
+                        />
+                      </td>
+                      <td className={`num-cell ${valueClass(trade.unrealized_pnl ?? 0)}`}>
+                        {formatPrice(trade.unrealized_pnl)}
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={paperClosingId === trade.id}
+                          onClick={() => void closePaperTrade(trade.id)}
+                        >
+                          Close trade
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <h3>Finished practice trades</h3>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Stock</th>
+                  <th>Trade type</th>
+                  <th>Shares</th>
+                  <th>Buy/sell at</th>
+                  <th>Exit price</th>
+                  <th>Why closed</th>
+                  <th>Locked-in P/L</th>
+                  <th>Closed on</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(paperBook?.trades.filter((t) => t.status === 'CLOSED') ?? []).map((trade) => {
+                  const isShort = trade.direction === 'SHORT'
+                  return (
+                    <tr key={`paper-closed-${trade.id}`}>
+                      <td className="symbol-cell">{trade.symbol}</td>
+                      <td>
+                        <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
+                          {directionLabel(isShort ? 'SHORT' : 'LONG')}
+                        </span>
+                      </td>
+                      <td className="num-cell">{trade.quantity}</td>
+                      <td className="num-cell">{formatPrice(trade.entry_price)}</td>
+                      <td className="num-cell">{formatPrice(trade.exit_price)}</td>
+                      <td>{exitReasonLabel(trade.exit_reason)}</td>
+                      <td className={`num-cell ${valueClass(trade.realized_pnl ?? 0)}`}>
+                        {formatPrice(trade.realized_pnl)}
+                      </td>
+                      <td>{trade.closed_at ? formatDateTime(trade.closed_at) : '—'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          </>
+          )}
+        </section>
       )}
 
       {(selectedOpportunity || selectedForming) && (
@@ -1451,7 +2070,9 @@ function App() {
           chartCandles={chartCandles}
           opportunity={selectedOpportunity}
           forming={selectedForming}
-          confirmationMatchesScanEnd={confirmationMatchesScanEnd}
+          confirmationMatchesScanEnd={(opportunity) =>
+            confirmationMatchesScanEnd(opportunity as Opportunity)
+          }
           onClose={() => setSelectedSymbol(null)}
           formatters={{
             formatPrice,
@@ -1469,14 +2090,14 @@ function App() {
       {activeView === 'research' && (
       <section className="panel">
         <header className="header-block">
-          <p className="eyebrow">Research desk</p>
-          <h1>Single-symbol workspace</h1>
-          <p className="header-copy">Evaluate one symbol now, or run a historical backtest with your risk settings.</p>
+          <p className="eyebrow">Stock research</p>
+          <h1>Look up one stock</h1>
+          <p className="header-copy">Check one stock’s plan now, or test how the rules would have worked in the past with your capital settings.</p>
         </header>
 
         <form className="strategy-form" onSubmit={handleSubmit}>
           <div className="field-group">
-            <label htmlFor="symbol">Symbol</label>
+            <label htmlFor="symbol">Stock symbol</label>
             <input
               id="symbol"
               type="text"
@@ -1510,7 +2131,7 @@ function App() {
 
           <div className="field-row two-col">
             <div className="field-group">
-              <label htmlFor="account-equity">Account equity</label>
+              <label htmlFor="account-equity">Your capital (₹)</label>
               <input
                 id="account-equity"
                 type="number"
@@ -1521,7 +2142,7 @@ function App() {
               />
             </div>
             <div className="field-group">
-              <label htmlFor="risk-percent">Risk %</label>
+              <label htmlFor="risk-percent">Max loss per trade (%)</label>
               <input
                 id="risk-percent"
                 type="number"
@@ -1560,10 +2181,10 @@ function App() {
 
           <div className="actions">
             <button type="submit" className="primary-button" disabled={loading}>
-              {loading ? 'Evaluating...' : 'Evaluate'}
+              {loading ? 'Checking…' : 'Check this stock'}
             </button>
             <button type="button" className="secondary-button" onClick={handleBacktest} disabled={backtestLoading}>
-              {backtestLoading ? 'Running backtest...' : 'Run backtest'}
+              {backtestLoading ? 'Testing history…' : 'Test on past data'}
             </button>
           </div>
           {researchQuote && (
@@ -1603,7 +2224,7 @@ function App() {
                 <h3>Candidate</h3>
                 <dl>
                   <div>
-                    <dt>Symbol</dt>
+                    <dt>Stock</dt>
                     <dd className="plain-value">{result.candidate.symbol}</dd>
                   </div>
                   <div>
@@ -1611,29 +2232,27 @@ function App() {
                     <dd>{result.candidate.timeframe}</dd>
                   </div>
                   <div>
-                    <dt>Eligibility</dt>
+                    <dt>Trade type</dt>
                     <dd>
                       <span
                         className={`direction-pill ${
-                          result.candidate.direction === 'LONG' ? 'long' : 'short'
+                          result.candidate?.direction === 'LONG' ? 'long' : 'short'
                         }`}
                       >
-                        {result.candidate.direction === 'SHORT'
-                          ? 'SHORT selling'
-                          : 'LONG position'}
+                        {directionLabel(result.candidate?.direction)}
                       </span>
                     </dd>
                   </div>
                   <div>
-                    <dt>Entry</dt>
+                    <dt>Buy/sell at</dt>
                     <dd>{formatPrice(result.candidate.entry_price)}</dd>
                   </div>
                   <div>
-                    <dt>Stop loss</dt>
+                    <dt>Safety exit</dt>
                     <dd>{formatPrice(result.candidate.stop_loss)}</dd>
                   </div>
                   <div>
-                    <dt>Target</dt>
+                    <dt>Profit goal</dt>
                     <dd>{formatPrice(result.candidate.target)}</dd>
                   </div>
                   <div>
@@ -1662,10 +2281,10 @@ function App() {
                 <dl>
                   <div>
                     <dt>
-                      {result.candidate.direction === 'SHORT' ||
+                      {result.candidate?.direction === 'SHORT' ||
                       result.evidence.structure_label === 'support'
-                        ? 'Support'
-                        : 'Resistance'}
+                        ? 'Floor (support)'
+                        : 'Ceiling (resistance)'}
                     </dt>
                     <dd>{formatPrice(result.evidence.resistance)}</dd>
                   </div>
@@ -1704,7 +2323,7 @@ function App() {
                   </div>
                   <div>
                     <dt>
-                      {result.candidate.direction === 'SHORT' ? 'Retest high' : 'Retest low'}
+                      {result.candidate?.direction === 'SHORT' ? 'Retest high' : 'Retest low'}
                     </dt>
                     <dd>{formatPrice(result.evidence.retest_low)}</dd>
                   </div>
@@ -1724,7 +2343,7 @@ function App() {
 
         {backtestResult && (
           <section className="result-card">
-            <h2>Backtest results</h2>
+            <h2>Past-data test results</h2>
             <div className="metric-grid">
               <div className="metric-card">
                 <span>Total Trades</span>
@@ -1769,23 +2388,23 @@ function App() {
             </div>
             {backtestResult.trades.length === 0 ? (
               <div className="empty-state">
-                <strong>Backtest complete</strong>
-                <span>No trades were generated for this history and risk configuration.</span>
+                <strong>Test complete</strong>
+                <span>No practice trades were generated for this history and capital settings.</span>
               </div>
             ) : (
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>Entry</th>
-                      <th>Exit</th>
-                      <th>Qty</th>
-                      <th>Entry Price</th>
-                      <th>Exit Price</th>
-                      <th>Risk</th>
-                      <th>P&amp;L</th>
-                      <th>R</th>
-                      <th>Exit Reason</th>
+                      <th>Opened</th>
+                      <th>Closed</th>
+                      <th>Shares</th>
+                      <th>Buy/sell price</th>
+                      <th>Exit price</th>
+                      <th>Money at risk</th>
+                      <th>P/L</th>
+                      <th>R multiples</th>
+                      <th>Why closed</th>
                     </tr>
                   </thead>
                   <tbody>

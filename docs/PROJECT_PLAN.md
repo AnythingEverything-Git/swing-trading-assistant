@@ -1,7 +1,7 @@
 # TradePilot AI — Project Plan (from now onwards)
 
 **Last updated:** 2026-09-04  
-**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan for LONG breakout and SHORT breakdown setups, ranked opportunities, forming watchlist, interactive TradingView-style charts, live current prices (smooth tick animation), quality scoring, position sizing, narratives, scan history, backtest realism, auto-refresh scan (default 5 min), collapsible scan criteria, Amazon SES email alerts, and Groww-style detail tabs with grounded Gemini Flash insights.  
+**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan for LONG breakout and SHORT breakdown setups, ranked opportunities, forming watchlist, interactive TradingView-style charts, live current prices (smooth tick animation), quality scoring, position sizing, **optional practice (paper) trading** (watch entry → fill → Stop/Target exits), beginner-friendly UI labels, narratives, scan history, backtest realism, auto-refresh scan (default 5 min), collapsible scan criteria, Amazon SES email alerts, and Groww-style detail tabs with grounded Gemini Flash insights.  
 **Data:** 497 Nifty symbols ingested via Upstox 1d candles. Demo mode still available via `MARKET_DATA_SOURCE=demo`.
 
 ---
@@ -88,7 +88,7 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 | ScanRun persistence (+ `result_payload` JSON) | Yes |
 | Volume BigInteger migration | Yes |
 | Scan API + universe request field | Yes |
-| Scan UI + Research desk menu | Yes |
+| Scan UI + Research desk menu | Yes — Find setups / Stock research / Practice trades |
 | Detail overlay, top-ranked cards, See more, CSV | Yes |
 | INR rounding + dark/light theme | Yes |
 | Demo runbook | Yes |
@@ -107,10 +107,11 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 | Grounded Gemini Flash insights (`NARRATIVE_PROVIDER=llm`) | Yes |
 | Stable detail drawer (no refetch flicker on quote ticks) | Yes |
 | Animated live LTP (`LiveValue`) + production UI motion polish | Yes |
+| Paper trading agent (all eligible + live LTP MTM/exits) | Yes — **optional**; PENDING until entry, then OPEN; Stop/Target exits |
 
 ### Explicitly not done
 
-- Auth, billing, portfolio, broker execution
+- Auth, billing, real broker execution / OMS
 - WebSocket live ticks (polling quotes every 15s instead)
 - Multi-timeframe beyond `1d`
 
@@ -130,8 +131,8 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 | UC8 | Trader | Browse long result lists | ✅ Top-10 + See more/less |
 | UC9 | Trader | Export eligibles | ✅ CSV |
 | UC10 | Trader | Trust partial data | ✅ Unavailable/Error cards + issues |
-| UC11 | Trader | Switch product areas | ✅ Watchlist scan ↔ Research desk |
-| UC12 | Trader | Evaluate / backtest one symbol | ✅ Research desk + live quote |
+| UC11 | Trader | Switch product areas | ✅ Find setups ↔ Stock research ↔ Practice trades |
+| UC12 | Trader | Evaluate / backtest one symbol | ✅ Stock research + live quote |
 | UC13 | Trader | Reload past scan results | ✅ Scan history dropdown |
 | UC14 | Operator | Reproduce from checkout | ✅ Demo runbook |
 | UC15 | Operator | Refresh market data | ✅ `refresh_market_data.py` |
@@ -140,15 +141,16 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 | UC18 | Operator | Email alerts via Amazon SES | ✅ Pre-market summary + confirmation watch; HTML template |
 | UC19 | Trader | Research a symbol via **detail tabs** | ✅ Overview / Setup / Technical / F&O / News |
 | UC20 | Trader | Read **grounded AI insight** on research tabs | ✅ Gemini Flash (facts-only; template fallback) |
+| UC21 | Trader | **Optional practice trades** after scan | ✅ Opt-in; watch entry → fill; 15s LTP; Stop/Target exits |
 
-**Out of scope:** broker orders, portfolio tracking, WebSocket live ticks, auth/billing.
+**Out of scope:** real broker orders, auth/billing, WebSocket ticks.
 
 ---
 
 ## 2c. UI / product checkpoints (run at http://127.0.0.1:5173)
 
 ### Checkpoint A — Scan North Star
-1. Top menu switches **Watchlist scan** ↔ **Research desk**.
+1. Top menu switches **Find setups** ↔ **Stock research** ↔ **Practice trades**.
 2. Theme toggle: **Dark ↔ Light**, persists after refresh.
 3. Universe select: **Nifty 50 / 100 / 200 / 500**; defaults to Nifty 500.
 4. Data banner shows source (demo or live Upstox) + last candle date + symbol count.
@@ -196,6 +198,14 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 5. With `NARRATIVE_PROVIDER=llm` and `GOOGLE_API_KEY`, insight `provider` is `gemini`; otherwise template fallback.
 6. Leave drawer open across a 15s quote tick — panel must **not** flicker or refetch.
 
+### Checkpoint I — Practice trades (P9)
+1. Practice mode is **off by default**; enable via checkbox on Find setups / Practice trades.
+2. With practice on + capital + risk % (shares &gt; 0), scan reports `paper_opened_count` as **watches created** (`PENDING`).
+3. Banner: `PRACTICE TRADES ONLY — fake money, no real broker orders`.
+4. Waiting book lists Buy/sell at / Safety exit / Profit goal / Shares / Live price; tick ~15s.
+5. Trade becomes **In trade** only when live price reaches entry; then auto-closes at Stop or Target (LONG and SHORT).
+6. Cancel watch (before fill) and manual Close (after fill) work; skip symbols already PENDING/OPEN on the next scan.
+
 ---
 
 ## 3. Guiding principles
@@ -207,6 +217,7 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 5. **Label curated universe** — versioned snapshots; nested: 50 ⊂ 100 ⊂ 200 ⊂ 500.
 6. **Grounded narratives** — strategy Entry/SL/Target never invented by LLM; research insights facts-only with numeric guardrails.
 7. **Stable live UI** — quote ticks soft-update LTP only; do not remount research panels.
+8. **Beginner-friendly copy** — prefer plain labels (buy/sell at, safety exit, profit goal) in the UI; keep API field names technical.
 
 ---
 
@@ -269,7 +280,7 @@ Detail overlay, NOW cue, loading copy, CSV, top-10 + See more, menu, multi-unive
 
 ### Phase 6 — Explicitly deferred
 
-Auth, billing, portfolio, broker execution, WebSocket ticks, multi-timeframe.
+Auth, billing, **real** broker execution / OMS, WebSocket ticks, multi-timeframe.
 
 ### Phase 7 — Groww-style stock detail tabs — **Done**
 
@@ -295,6 +306,17 @@ Auth, billing, portfolio, broker execution, WebSocket ticks, multi-timeframe.
 | P8.5 | Exhaustive unit tests (mirror suite + rejection paths) | ✅ |
 | P8.6 | UI labels / chart levels for Support + Retest high | ✅ |
 
+### Phase 9 — Practice (paper) trading agent — **Done**
+
+| ID | Task | Status |
+|----|------|--------|
+| P9.1 | Domain MTM / exit rules (LONG+SHORT; both-hit → STOP) | ✅ |
+| P9.2 | `paper_trades` table + Alembic `0005` + repository | ✅ |
+| P9.3 | Opt-in scan seed → `PENDING` watches for eligible Qty&gt;0 | ✅ |
+| P9.4 | Tick: fill when live price hits entry; MTM; Stop/Target exit; cancel/close | ✅ |
+| P9.5 | REST `/api/v1/paper/*` + `enable_paper_trading` on scan | ✅ |
+| P9.6 | Practice trades UI + 15s tick + PRACTICE banner + beginner labels | ✅ |
+
 ---
 
 ## 5. Status snapshot
@@ -309,6 +331,7 @@ P5  Ops cadence (auto-refresh+email)       ✅
 P6  Deferred                              —
 P7  Groww detail tabs + Gemini + UX polish ✅
 P8  SHORT breakdown setups + tests        ✅
+P9  Practice trades (opt-in, entry→exit)   ✅
 ```
 
 | Phase | Status |
@@ -322,6 +345,7 @@ P8  SHORT breakdown setups + tests        ✅
 | P6 | Deferred |
 | P7 | Done |
 | P8 | Done |
+| P9 | Done |
 
 ---
 
@@ -337,6 +361,7 @@ P8  SHORT breakdown setups + tests        ✅
 | P5 | Auto-refresh (5m default) + SES HTML email alerts (pre-market + confirmation) |
 | P7 | Detail tabs + research APIs + Gemini insights; drawer stable under 15s quote poll |
 | P8 | SHORT mirror of LONG strategy with forming + backtest + exhaustive unit tests |
+| P9 | Opt-in practice trades: PENDING until entry, then MTM; Stop/Target auto-exit; beginner UI labels |
 
 ---
 
@@ -377,6 +402,10 @@ P8  SHORT breakdown setups + tests        ✅
 | Chart component | `frontend/src/components/SetupChart.tsx` |
 | Stock detail tabs | `frontend/src/components/StockDetailDrawer.tsx` |
 | Live LTP animation | `frontend/src/components/LiveValue.tsx` |
+| Paper domain / exits | `backend/app/domain/paper/` |
+| Paper service | `backend/app/application/paper/service.py` |
+| Paper API | `backend/app/api/routes/paper.py` |
+| Beginner UI labels | `frontend/src/terminology.ts` |
 | Research API | `backend/app/api/routes/research.py` |
 | Overview / technical services | `backend/app/application/research/` |
 | NSE news provider | `backend/app/infrastructure/news/nse_news_provider.py` |
@@ -389,6 +418,6 @@ P8  SHORT breakdown setups + tests        ✅
 
 ## 9. One-line summary
 
-**Now:** Full-featured product — live Upstox data, ranked LONG + SHORT scan, charts, Groww-style detail tabs, grounded Gemini insights, stable animated live prices, 5‑min auto-refresh, SES email alerts.  
-**Next:** Watermark refresh scheduling; deferred features (auth, WebSocket).  
-**Verify:** Checkpoints A–H in §2c before claiming a release.
+**Now:** Full-featured product — live Upstox data, ranked LONG + SHORT scan, charts, Groww-style detail tabs, grounded Gemini insights, optional practice trading (entry watch → Stop/Target), beginner-friendly labels, stable animated live prices, 5‑min auto-refresh, SES email alerts.  
+**Next:** Watermark refresh scheduling; deferred features (auth, real broker OMS, WebSocket).  
+**Verify:** Checkpoints A–I in §2c before claiming a release.

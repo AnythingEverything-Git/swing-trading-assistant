@@ -24,6 +24,8 @@ from app.application.scan.scan_presentation import PresentedOpportunity, Present
 from app.application.scan.universe_scan_report_service import UniverseScanReportService
 from app.core.config import get_settings
 from app.infrastructure.database.repositories.scan_run_repository import ScanRunRepository
+from app.infrastructure.database.repositories.paper_trade_repository import PaperTradeRepository
+from app.application.paper import PaperTradeService
 from app.infrastructure.market_data.source import data_claim, normalize_market_data_source
 from app.infrastructure.universe import get_universe
 from app.infrastructure.universe.static_file_universe import SUPPORTED_UNIVERSE_NAMES
@@ -31,6 +33,7 @@ from app.infrastructure.universe.static_file_universe import SUPPORTED_UNIVERSE_
 router = APIRouter(prefix="/api/v1/scan", tags=["scan"])
 
 _SUPPORTED_TIMEFRAMES = frozenset({"1d"})
+_PAPER_CLAIM = "PRACTICE TRADES ONLY — fake money, no real broker orders"
 
 
 def _candidate_response(candidate) -> StrategyCandidateResponse:
@@ -286,6 +289,25 @@ async def scan_opportunities(
         result_payload=response.model_dump(mode="json"),
     )
     response.scan_run_id = scan_run.id
+
+    # Best-effort paper seed — only when the client opts in; scan still succeeds if paper fails.
+    if payload.enable_paper_trading:
+        try:
+            provider = getattr(request.app.state, "ingest_provider", None)
+            paper_svc = PaperTradeService(PaperTradeRepository(session), quote_provider=provider)
+            paper_result = await paper_svc.open_from_scan(response)
+            response.paper_opened_count = paper_result.opened
+            response.paper_skipped_count = paper_result.skipped_qty + paper_result.skipped_open
+            response.paper_claim = _PAPER_CLAIM
+        except Exception:
+            response.paper_opened_count = 0
+            response.paper_skipped_count = 0
+            response.paper_claim = _PAPER_CLAIM
+    else:
+        response.paper_opened_count = 0
+        response.paper_skipped_count = 0
+        response.paper_claim = None
+
     return response
 
 
