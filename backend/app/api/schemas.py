@@ -445,3 +445,30 @@ class PaperSummaryResponse(BaseModel):
 
 class PaperCloseRequest(BaseModel):
     price: Decimal | None = Field(default=None, gt=Decimal("0"))
+
+
+class PaperOutlookItem(BaseModel):
+    trade_id: int
+    symbol: str
+    direction: str
+    mark: Decimal
+    entry: Decimal
+    target: Decimal
+    stop: Decimal
+    distance_to_target: Decimal
+    distance_to_stop: Decimal
+    progress_pct: Decimal
+    atr14: Decimal | None = None
+    avg_daily_range: Decimal | None = None
+    drift_per_day: Decimal | None = None
+    pace_per_day: Decimal | None = None
+    estimated_trading_days: Decimal | None = None
+    estimated_reach_at: datetime | None = None
+    confidence: str
+    method: str
+    summary: str
+
+
+class PaperOutlookResponse(BaseModel):
+    claim: str = "PRACTICE TRADES ONLY — fake money, no real broker orders"
+    items: list[PaperOutlookItem] = []

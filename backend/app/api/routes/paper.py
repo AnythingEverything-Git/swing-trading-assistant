@@ -6,14 +6,17 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_ingest_provider
+from app.api.deps import get_db, get_ingest_provider, get_query_service
 from app.api.schemas import (
     PaperCloseRequest,
+    PaperOutlookItem,
+    PaperOutlookResponse,
     PaperSummaryResponse,
     PaperTickResponse,
     PaperTradeListResponse,
     PaperTradeResponse,
 )
+from app.application.market_data.query_service import MarketDataQueryService
 from app.application.paper import PaperTradeService
 from app.domain.paper import PaperTrade
 from app.infrastructure.database.repositories.paper_trade_repository import PaperTradeRepository
@@ -53,8 +56,13 @@ def _trade_response(trade: PaperTrade) -> PaperTradeResponse:
 def get_paper_service(
     session: AsyncSession = Depends(get_db),
     provider=Depends(get_ingest_provider),
+    query_svc: MarketDataQueryService = Depends(get_query_service),
 ) -> PaperTradeService:
-    return PaperTradeService(PaperTradeRepository(session), quote_provider=provider)
+    return PaperTradeService(
+        PaperTradeRepository(session),
+        quote_provider=provider,
+        candle_loader=query_svc,
+    )
 
 
 @router.get("/trades", response_model=PaperTradeListResponse)
@@ -123,4 +131,38 @@ async def paper_summary(
         total_realized=summary.total_realized,
         winning_closed=summary.winning_closed,
         losing_closed=summary.losing_closed,
+    )
+
+
+@router.get("/outlook", response_model=PaperOutlookResponse)
+async def paper_outlook(
+    svc: PaperTradeService = Depends(get_paper_service),
+) -> PaperOutlookResponse:
+    items = await svc.outlook_for_open_trades()
+    return PaperOutlookResponse(
+        claim=_CLAIM,
+        items=[
+            PaperOutlookItem(
+                trade_id=item.trade_id,
+                symbol=item.symbol,
+                direction=item.direction,
+                mark=item.mark,
+                entry=item.entry,
+                target=item.target,
+                stop=item.stop,
+                distance_to_target=item.distance_to_target,
+                distance_to_stop=item.distance_to_stop,
+                progress_pct=item.progress_pct,
+                atr14=item.atr14,
+                avg_daily_range=item.avg_daily_range,
+                drift_per_day=item.drift_per_day,
+                pace_per_day=item.pace_per_day,
+                estimated_trading_days=item.estimated_trading_days,
+                estimated_reach_at=item.estimated_reach_at,
+                confidence=item.confidence,
+                method=item.method,
+                summary=item.summary,
+            )
+            for item in items
+        ],
     )

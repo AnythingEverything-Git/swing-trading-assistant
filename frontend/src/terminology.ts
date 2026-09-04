@@ -47,3 +47,45 @@ export function formingStageLabel(stage: string | null | undefined): string {
       return (stage || '—').replace(/_/g, ' ').toLowerCase()
   }
 }
+
+/** Practice-account snapshot from open/closed trades + starting capital. */
+export function computePaperCapital(
+  trades: Array<{
+    status: string
+    entry_price: string | number
+    quantity: number
+    unrealized_pnl?: string | number | null
+    realized_pnl?: string | number | null
+  }>,
+  startingCapital: number,
+): {
+  starting: number
+  invested: number
+  remaining: number
+  realized: number
+  unrealized: number
+  accountValue: number
+} {
+  const start = Number.isFinite(startingCapital) && startingCapital > 0 ? startingCapital : 0
+  let invested = 0
+  let unrealized = 0
+  let realized = 0
+  for (const trade of trades) {
+    if (trade.status === 'OPEN') {
+      invested += Number(trade.entry_price) * trade.quantity
+      unrealized += Number(trade.unrealized_pnl ?? 0)
+    } else if (trade.status === 'CLOSED') {
+      realized += Number(trade.realized_pnl ?? 0)
+    }
+  }
+  const remaining = start + realized - invested
+  return {
+    starting: start,
+    invested,
+    remaining,
+    realized,
+    unrealized,
+    accountValue: remaining + invested + unrealized,
+  }
+}
+

@@ -1,7 +1,7 @@
 # TradePilot AI — Project Plan (from now onwards)
 
 **Last updated:** 2026-09-04  
-**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan for LONG breakout and SHORT breakdown setups, ranked opportunities, forming watchlist, interactive TradingView-style charts, live current prices (smooth tick animation), quality scoring, position sizing, **optional practice (paper) trading** (watch entry → fill → Stop/Target exits), beginner-friendly UI labels, narratives, scan history, backtest realism, auto-refresh scan (default 5 min), collapsible scan criteria, Amazon SES email alerts, and Groww-style detail tabs with grounded Gemini Flash insights.  
+**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan for LONG breakout and SHORT breakdown setups, ranked opportunities, forming watchlist, interactive TradingView-style charts, live current prices (smooth tick animation), quality scoring, position sizing, **optional practice (paper) trading** (watch entry → fill → Stop/Target exits; live strip; capital P/L; start-trade alerts; duration timer + market ETA to profit), beginner-friendly UI labels, narratives, scan history, backtest realism, auto-refresh scan (default 5 min), collapsible scan criteria, Amazon SES email alerts, and Groww-style detail tabs with grounded Gemini Flash insights.  
 **Data:** 497 Nifty symbols ingested via Upstox 1d candles. Demo mode still available via `MARKET_DATA_SOURCE=demo`.
 
 ---
@@ -107,7 +107,7 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 | Grounded Gemini Flash insights (`NARRATIVE_PROVIDER=llm`) | Yes |
 | Stable detail drawer (no refetch flicker on quote ticks) | Yes |
 | Animated live LTP (`LiveValue`) + production UI motion polish | Yes |
-| Paper trading agent (all eligible + live LTP MTM/exits) | Yes — **optional**; PENDING until entry, then OPEN; Stop/Target exits |
+| Paper trading agent (all eligible + live LTP MTM/exits) | Yes — **optional**; PENDING until entry; live strip; capital; alerts; timer + ETA |
 
 ### Explicitly not done
 
@@ -141,7 +141,7 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 | UC18 | Operator | Email alerts via Amazon SES | ✅ Pre-market summary + confirmation watch; HTML template |
 | UC19 | Trader | Research a symbol via **detail tabs** | ✅ Overview / Setup / Technical / F&O / News |
 | UC20 | Trader | Read **grounded AI insight** on research tabs | ✅ Gemini Flash (facts-only; template fallback) |
-| UC21 | Trader | **Optional practice trades** after scan | ✅ Opt-in; watch entry → fill; 15s LTP; Stop/Target exits |
+| UC21 | Trader | **Optional practice trades** after scan | ✅ Opt-in; entry watch → fill; live strip; capital; start-trade alert; timer + ETA |
 
 **Out of scope:** real broker orders, auth/billing, WebSocket ticks.
 
@@ -205,6 +205,10 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 4. Waiting book lists Buy/sell at / Safety exit / Profit goal / Shares / Live price; tick ~15s.
 5. Trade becomes **In trade** only when live price reaches entry; then auto-closes at Stop or Target (LONG and SHORT).
 6. Cancel watch (before fill) and manual Close (after fill) work; skip symbols already PENDING/OPEN on the next scan.
+7. **Start real trade** alert appears when entry is hit (in-app + optional browser notification).
+8. Persistent **Live practice** strip under the data banner shows open P/L, remaining capital, and live trades.
+9. Capital strip: starting / invested / remaining / account value (remaining updates when trades close).
+10. Open trades show **running timer** and **estimated profit-by date** from candle drift + ATR outlook (`GET /api/v1/paper/outlook`).
 
 ---
 
@@ -316,6 +320,9 @@ Auth, billing, **real** broker execution / OMS, WebSocket ticks, multi-timeframe
 | P9.4 | Tick: fill when live price hits entry; MTM; Stop/Target exit; cancel/close | ✅ |
 | P9.5 | REST `/api/v1/paper/*` + `enable_paper_trading` on scan | ✅ |
 | P9.6 | Practice trades UI + 15s tick + PRACTICE banner + beginner labels | ✅ |
+| P9.7 | Capital strip (invested / remaining) updates on close | ✅ |
+| P9.8 | Start-trade alert + persistent live practice strip | ✅ |
+| P9.9 | Live duration timer + candle/ATR profit ETA outlook | ✅ |
 
 ---
 
@@ -361,7 +368,7 @@ P9  Practice trades (opt-in, entry→exit)   ✅
 | P5 | Auto-refresh (5m default) + SES HTML email alerts (pre-market + confirmation) |
 | P7 | Detail tabs + research APIs + Gemini insights; drawer stable under 15s quote poll |
 | P8 | SHORT mirror of LONG strategy with forming + backtest + exhaustive unit tests |
-| P9 | Opt-in practice trades: PENDING until entry, then MTM; Stop/Target auto-exit; beginner UI labels |
+| P9 | Opt-in practice: entry watch → fill → Stop/Target; live strip; capital; alerts; timer + ATR/drift ETA |
 
 ---
 
@@ -404,8 +411,10 @@ P9  Practice trades (opt-in, entry→exit)   ✅
 | Live LTP animation | `frontend/src/components/LiveValue.tsx` |
 | Paper domain / exits | `backend/app/domain/paper/` |
 | Paper service | `backend/app/application/paper/service.py` |
+| Paper outlook (ETA) | `backend/app/application/paper/outlook.py` |
 | Paper API | `backend/app/api/routes/paper.py` |
 | Beginner UI labels | `frontend/src/terminology.ts` |
+| Trade duration timer | `frontend/src/components/TradeDurationTimer.tsx` |
 | Research API | `backend/app/api/routes/research.py` |
 | Overview / technical services | `backend/app/application/research/` |
 | NSE news provider | `backend/app/infrastructure/news/nse_news_provider.py` |
@@ -418,6 +427,6 @@ P9  Practice trades (opt-in, entry→exit)   ✅
 
 ## 9. One-line summary
 
-**Now:** Full-featured product — live Upstox data, ranked LONG + SHORT scan, charts, Groww-style detail tabs, grounded Gemini insights, optional practice trading (entry watch → Stop/Target), beginner-friendly labels, stable animated live prices, 5‑min auto-refresh, SES email alerts.  
+**Now:** Full-featured product — live Upstox data, ranked LONG + SHORT scan, charts, Groww-style detail tabs, grounded Gemini insights, optional practice trading (entry watch → Stop/Target, live strip, capital, start-trade alerts, duration + profit ETA), beginner-friendly labels, stable animated live prices, 5‑min auto-refresh, SES email alerts.  
 **Next:** Watermark refresh scheduling; deferred features (auth, real broker OMS, WebSocket).  
 **Verify:** Checkpoints A–I in §2c before claiming a release.

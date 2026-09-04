@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Protocol
 
+from app.application.paper.outlook import TradeOutlook, build_trade_outlook
 from app.domain.paper import PaperTrade, entry_reached
 from app.infrastructure.database.repositories.paper_trade_repository import PaperTradeRepository
+
+
+class CandleLoader(Protocol):
+    async def get_candles(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> list: ...
 
 
 class QuoteProvider(Protocol):
@@ -43,9 +48,15 @@ class PaperSummary:
 
 
 class PaperTradeService:
-    def __init__(self, repository: PaperTradeRepository, quote_provider: QuoteProvider | None = None) -> None:
+    def __init__(
+        self,
+        repository: PaperTradeRepository,
+        quote_provider: QuoteProvider | None = None,
+        candle_loader: CandleLoader | None = None,
+    ) -> None:
         self.repository = repository
         self.quote_provider = quote_provider
+        self.candle_loader = candle_loader
 
     async def open_from_scan(self, scan_payload: Any) -> OpenFromScanResult:
         """Create PENDING watches for every eligible with quantity > 0.
@@ -205,6 +216,38 @@ class PaperTradeService:
 
     async def list_trades(self, status: str = "ALL") -> list[PaperTrade]:
         return await self.repository.list_by_status(status if status else "ALL")
+
+    async def outlook_for_open_trades(self) -> list[TradeOutlook]:
+        """Estimate time-to-profit for each OPEN trade using recent daily candles."""
+        open_trades = await self.repository.list_open()
+        if not open_trades or self.candle_loader is None:
+            return []
+
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=120)
+        out: list[TradeOutlook] = []
+        for trade in open_trades:
+            if trade.id is None:
+                continue
+            mark = trade.last_mark_price or trade.entry_price
+            try:
+                candles = await self.candle_loader.get_candles(trade.symbol, "1d", start, end)
+            except Exception:
+                candles = []
+            out.append(
+                build_trade_outlook(
+                    trade_id=trade.id,
+                    symbol=trade.symbol,
+                    direction=trade.direction,
+                    entry=trade.entry_price,
+                    stop=trade.stop_loss,
+                    target=trade.target,
+                    mark=mark,
+                    candles=candles or [],
+                    now=end,
+                )
+            )
+        return out
 
     async def summary(self) -> PaperSummary:
         pending_trades = await self.repository.list_by_status("PENDING")

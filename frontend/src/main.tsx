@@ -4,8 +4,10 @@ import './styles.css'
 import { LiveValue } from './components/LiveValue'
 import { SetupChart, type ChartCandle } from './components/SetupChart'
 import { StockDetailDrawer } from './components/StockDetailDrawer'
+import { TradeDurationTimer } from './components/TradeDurationTimer'
 import {
   PAPER_CLAIM,
+  computePaperCapital,
   directionLabel,
   exitReasonLabel,
   formingStageLabel,
@@ -265,6 +267,28 @@ type PaperBook = {
   total_realized: string | number
 }
 
+type PaperOutlookItem = {
+  trade_id: number
+  symbol: string
+  direction: string
+  mark: string | number
+  entry: string | number
+  target: string | number
+  stop: string | number
+  distance_to_target: string | number
+  distance_to_stop: string | number
+  progress_pct: string | number
+  atr14?: string | number | null
+  avg_daily_range?: string | number | null
+  drift_per_day?: string | number | null
+  pace_per_day?: string | number | null
+  estimated_trading_days?: string | number | null
+  estimated_reach_at?: string | null
+  confidence: string
+  method: string
+  summary: string
+}
+
 type ProductStatus = {
   data_source: string
   live_ready: boolean
@@ -496,6 +520,8 @@ function App() {
   const [paperError, setPaperError] = useState('')
   const [paperNotice, setPaperNotice] = useState('')
   const [paperClosingId, setPaperClosingId] = useState<number | null>(null)
+  const [entryAlerts, setEntryAlerts] = useState<PaperTrade[]>([])
+  const [paperOutlookById, setPaperOutlookById] = useState<Record<number, PaperOutlookItem>>({})
   const [paperTradingEnabled, setPaperTradingEnabled] = useState(() => {
     try {
       return localStorage.getItem(PAPER_ENABLED_KEY) === '1'
@@ -518,6 +544,23 @@ function App() {
   const OPPORTUNITY_PAGE_SIZE = 10
 
   const baseUrl = useMemo(() => import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000', [])
+
+  const paperCapital = useMemo(
+    () => computePaperCapital(paperBook?.trades ?? [], Number(accountEquity) || 0),
+    [paperBook?.trades, accountEquity],
+  )
+
+  const openPaperTrades = useMemo(
+    () => (paperBook?.trades ?? []).filter((trade) => trade.status === 'OPEN'),
+    [paperBook?.trades],
+  )
+
+  const pendingPaperTrades = useMemo(
+    () => (paperBook?.trades ?? []).filter((trade) => trade.status === 'PENDING'),
+    [paperBook?.trades],
+  )
+
+  const showPracticeStrip = paperTradingEnabled || openPaperTrades.length > 0 || pendingPaperTrades.length > 0
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -847,6 +890,22 @@ function App() {
     }
   }, [baseUrl, paperTradingEnabled])
 
+  const refreshPaperOutlook = useCallback(async () => {
+    if (!paperTradingEnabled) return
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/paper/outlook`)
+      if (!response.ok) return
+      const payload = (await response.json()) as { items: PaperOutlookItem[] }
+      const next: Record<number, PaperOutlookItem> = {}
+      for (const item of payload.items ?? []) {
+        next[item.trade_id] = item
+      }
+      setPaperOutlookById(next)
+    } catch {
+      /* outlook is best-effort */
+    }
+  }, [baseUrl, paperTradingEnabled])
+
   const tickPaperBook = useCallback(async () => {
     if (!paperTradingEnabled) return
     try {
@@ -860,10 +919,30 @@ function App() {
         total_unrealized: string | number
       }
       const notes: string[] = []
-      if (payload.filled_this_tick?.length) {
+      const filled = payload.filled_this_tick ?? []
+      if (filled.length) {
+        setEntryAlerts((current) => {
+          const known = new Set(current.map((t) => t.id))
+          const fresh = filled.filter((t) => !known.has(t.id))
+          return fresh.length ? [...fresh, ...current].slice(0, 8) : current
+        })
         notes.push(
-          `Started: ${payload.filled_this_tick.map((t) => t.symbol).join(', ')} (buy/sell price reached)`,
+          `Buy/sell price reached: ${filled.map((t) => t.symbol).join(', ')} — start your real trade now`,
         )
+        try {
+          if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+            void Notification.requestPermission()
+          }
+          if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            for (const trade of filled) {
+              new Notification(`Start real trade: ${trade.symbol}`, {
+                body: `${directionLabel(trade.direction)} at ${formatPrice(trade.entry_price)} · safety ${formatPrice(trade.stop_loss)} · goal ${formatPrice(trade.target)}`,
+              })
+            }
+          }
+        } catch {
+          /* notifications optional */
+        }
       }
       if (payload.closed_this_tick?.length) {
         notes.push(
@@ -872,12 +951,28 @@ function App() {
             .join(', ')}`,
         )
       }
-      if (notes.length) setPaperNotice(notes.join(' · '))
       await refreshPaperBook()
+      await refreshPaperOutlook()
+      if (notes.length) {
+        const closedPnL = (payload.closed_this_tick ?? []).reduce(
+          (sum, t) => sum + Number(t.realized_pnl ?? 0),
+          0,
+        )
+        if ((payload.closed_this_tick?.length ?? 0) > 0) {
+          notes.push(`Locked-in P/L this update: ${formatPrice(closedPnL)}`)
+        }
+        setPaperNotice(notes.join(' · '))
+      }
     } catch {
       /* ignore transient tick failures */
     }
-  }, [baseUrl, paperTradingEnabled, refreshPaperBook])
+  }, [baseUrl, paperTradingEnabled, refreshPaperBook, refreshPaperOutlook])
+
+  const dismissEntryAlert = (tradeId: number) => {
+    setEntryAlerts((current) => current.filter((trade) => trade.id !== tradeId))
+  }
+
+  const dismissAllEntryAlerts = () => setEntryAlerts([])
 
   const closePaperTrade = async (tradeId: number) => {
     setPaperClosingId(tradeId)
@@ -891,7 +986,7 @@ function App() {
         const detail = await response.json().catch(() => ({}))
         throw new Error(detail.detail || 'Close failed')
       }
-      setPaperNotice('Practice trade updated')
+      setPaperNotice('Practice trade updated — remaining capital refreshed below')
       await refreshPaperBook()
     } catch (caught) {
       setPaperError(caught instanceof Error ? caught.message : 'Close failed')
@@ -1003,19 +1098,18 @@ function App() {
   useEffect(() => {
     if (!paperTradingEnabled) return
     void refreshPaperBook()
-  }, [paperTradingEnabled, refreshPaperBook])
+    void refreshPaperOutlook()
+  }, [paperTradingEnabled, refreshPaperBook, refreshPaperOutlook])
 
   useEffect(() => {
     if (!paperTradingEnabled) return
-    const pending = paperBook?.pending_count ?? 0
-    const openCount = paperBook?.open_count ?? 0
-    if (activeView !== 'paper' && pending === 0 && openCount === 0) return
+    // Poll on every view so entry fills raise alerts and the live strip stays current.
     void tickPaperBook()
     const timer = window.setInterval(() => {
       void tickPaperBook()
     }, 15000)
     return () => window.clearInterval(timer)
-  }, [activeView, paperTradingEnabled, paperBook?.pending_count, paperBook?.open_count, tickPaperBook])
+  }, [paperTradingEnabled, tickPaperBook])
 
   // Auto-refresh scan at user-chosen interval
   useEffect(() => {
@@ -1097,6 +1191,140 @@ function App() {
           {productStatus ? ` · ${productStatus.symbols_with_candles} symbols in DB` : ''}
         </span>
       </div>
+
+      {entryAlerts.length > 0 && (
+        <div className="start-trade-alert" role="alert" aria-live="assertive">
+          <div className="start-trade-alert-head">
+            <strong>Start real trade now</strong>
+            <span>Buy/sell price reached on practice watch — place your broker order if you choose to trade.</span>
+            <button type="button" className="secondary-button" onClick={dismissAllEntryAlerts}>
+              Dismiss all
+            </button>
+          </div>
+          <div className="start-trade-alert-list">
+            {entryAlerts.map((trade) => (
+              <div key={`alert-${trade.id}`} className="start-trade-alert-card">
+                <div className="start-trade-alert-main">
+                  <strong>{trade.symbol}</strong>
+                  <span className={`direction-pill ${trade.direction === 'SHORT' ? 'short' : 'long'}`}>
+                    {directionLabel(trade.direction)}
+                  </span>
+                  <span>
+                    Buy/sell at <b>{formatPrice(trade.entry_price)}</b>
+                  </span>
+                  <span>
+                    Safety <b>{formatPrice(trade.stop_loss)}</b>
+                  </span>
+                  <span>
+                    Goal <b>{formatPrice(trade.target)}</b>
+                  </span>
+                  <span>
+                    Shares <b>{trade.quantity}</b>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => dismissEntryAlert(trade.id)}
+                >
+                  Got it
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showPracticeStrip && (
+        <div className="live-practice-strip" aria-live="polite">
+          <div className="live-practice-strip-label">
+            <strong>Live practice</strong>
+            <span>
+              {openPaperTrades.length > 0
+                ? `${openPaperTrades.length} in trade`
+                : pendingPaperTrades.length > 0
+                  ? `${pendingPaperTrades.length} waiting for buy/sell price`
+                  : 'No live practice trade'}
+            </span>
+            <span className={valueClass(paperCapital.unrealized)}>
+              Open P/L {formatPrice(paperCapital.unrealized)}
+            </span>
+            <span>Remaining {formatPrice(paperCapital.remaining)}</span>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                setActiveView('paper')
+                void refreshPaperBook()
+                void tickPaperBook()
+              }}
+            >
+              Open book
+            </button>
+          </div>
+          {openPaperTrades.length > 0 ? (
+            <div className="live-practice-strip-trades">
+              {openPaperTrades.slice(0, 6).map((trade) => {
+                const outlook = paperOutlookById[trade.id]
+                return (
+                  <div key={`live-${trade.id}`} className="live-practice-chip">
+                    <strong>{trade.symbol}</strong>
+                    <span className={`direction-pill ${trade.direction === 'SHORT' ? 'short' : 'long'}`}>
+                      {directionLabel(trade.direction)}
+                    </span>
+                    <TradeDurationTimer startedAt={trade.opened_at} label="Running" />
+                    <span>
+                      LTP{' '}
+                      <LiveValue
+                        value={trade.last_mark_price}
+                        formatted={formatPrice(trade.last_mark_price)}
+                      />
+                    </span>
+                    <span className={valueClass(trade.unrealized_pnl ?? 0)}>
+                      P/L {formatPrice(trade.unrealized_pnl)}
+                    </span>
+                    {outlook?.estimated_reach_at ? (
+                      <span className="live-practice-eta" title={outlook.summary}>
+                        Est. profit{' '}
+                        {outlook.estimated_trading_days === 0 ||
+                        Number(outlook.estimated_trading_days) === 0
+                          ? 'now'
+                          : `~${outlook.estimated_trading_days}d · ${formatDateTime(outlook.estimated_reach_at)}`}
+                      </span>
+                    ) : (
+                      <span className="live-practice-eta">Est. profit: analyzing…</span>
+                    )}
+                    {outlook && (
+                      <span className="live-practice-progress" title={`${outlook.progress_pct}% toward goal`}>
+                        {formatNumber(outlook.progress_pct, 0)}% to goal
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+              {openPaperTrades.length > 6 && (
+                <span className="live-practice-more">+{openPaperTrades.length - 6} more</span>
+              )}
+            </div>
+          ) : pendingPaperTrades.length > 0 ? (
+            <div className="live-practice-strip-trades">
+              {pendingPaperTrades.slice(0, 4).map((trade) => (
+                <div key={`wait-${trade.id}`} className="live-practice-chip pending">
+                  <strong>{trade.symbol}</strong>
+                  <span>Waiting for {formatPrice(trade.entry_price)}</span>
+                  <span>
+                    Live{' '}
+                    <LiveValue
+                      value={trade.last_mark_price}
+                      formatted={formatPrice(trade.last_mark_price)}
+                    />
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {activeView === 'scan' && (
       <section className="panel scan-panel">
@@ -1644,6 +1872,28 @@ function App() {
               </div>
               {paperNotice && <div className="status ok">{paperNotice}</div>}
               {paperError && <div className="status error">{paperError}</div>}
+              <div className="paper-capital-strip">
+                <div>
+                  <span>Starting capital</span>
+                  <strong>{formatPrice(paperCapital.starting)}</strong>
+                </div>
+                <div>
+                  <span>Invested (in trades)</span>
+                  <strong>{formatPrice(paperCapital.invested)}</strong>
+                </div>
+                <div className="paper-capital-remaining">
+                  <span>Remaining capital</span>
+                  <strong className={valueClass(paperCapital.remaining - paperCapital.starting)}>
+                    {formatPrice(paperCapital.remaining)}
+                  </strong>
+                </div>
+                <div>
+                  <span>Account value (incl. open P/L)</span>
+                  <strong className={valueClass(paperCapital.accountValue - paperCapital.starting)}>
+                    {formatPrice(paperCapital.accountValue)}
+                  </strong>
+                </div>
+              </div>
               <div className="result-grid paper-summary-grid">
                 <div>
                   <strong>Waiting:</strong> {paperBook?.pending_count ?? 0}
@@ -1761,6 +2011,8 @@ function App() {
                       <th>Profit goal</th>
                       <th>Live price</th>
                       <th>Open P/L</th>
+                      <th>Running</th>
+                      <th>Est. profit by</th>
                       <th>Money at risk</th>
                       <th></th>
                     </tr>
@@ -1768,7 +2020,7 @@ function App() {
                   <tbody>
                     {(paperBook?.trades.filter((t) => t.status === 'OPEN') ?? []).length === 0 ? (
                       <tr>
-                        <td colSpan={10} className="field-hint">
+                        <td colSpan={12} className="field-hint">
                           No open practice trades yet. When practice mode is on, run a scan — trades start only after live price hits buy/sell.
                         </td>
                       </tr>
@@ -1777,8 +2029,10 @@ function App() {
                         .filter((t) => t.status === 'OPEN')
                         .map((trade) => {
                           const isShort = trade.direction === 'SHORT'
+                          const outlook = paperOutlookById[trade.id]
                           return (
-                            <tr key={trade.id}>
+                            <React.Fragment key={trade.id}>
+                            <tr>
                               <td className="symbol-cell">{trade.symbol}</td>
                               <td>
                                 <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
@@ -1798,6 +2052,24 @@ function App() {
                               <td className={`num-cell ${valueClass(trade.unrealized_pnl ?? 0)}`}>
                                 {formatPrice(trade.unrealized_pnl)}
                               </td>
+                              <td>
+                                <TradeDurationTimer startedAt={trade.opened_at} label="" />
+                              </td>
+                              <td className="eta-cell">
+                                {outlook?.estimated_reach_at
+                                  ? Number(outlook.estimated_trading_days) === 0
+                                    ? 'Now'
+                                    : `${formatDateTime(outlook.estimated_reach_at)} (~${outlook.estimated_trading_days}d)`
+                                  : 'Analyzing…'}
+                                {outlook && (
+                                  <div className="eta-progress-track" title={`${outlook.progress_pct}% to goal`}>
+                                    <div
+                                      className="eta-progress-fill"
+                                      style={{ width: `${Math.min(100, Math.max(0, Number(outlook.progress_pct) || 0))}%` }}
+                                    />
+                                  </div>
+                                )}
+                              </td>
                               <td className="num-cell">{formatPrice(trade.risk_amount)}</td>
                               <td>
                                 <button
@@ -1809,10 +2081,18 @@ function App() {
                                     void closePaperTrade(trade.id)
                                   }}
                                 >
-                                  {paperClosingId === trade.id ? 'Working…' : trade.status === 'PENDING' ? 'Cancel watch' : 'Close trade'}
+                                  {paperClosingId === trade.id ? 'Working…' : 'Close trade'}
                                 </button>
                               </td>
                             </tr>
+                            {outlook && (
+                              <tr className="outlook-summary-row">
+                                <td colSpan={12}>
+                                  <p className="field-hint">{outlook.summary}</p>
+                                </td>
+                              </tr>
+                            )}
+                            </React.Fragment>
                           )
                         })
                     )}
@@ -1874,6 +2154,48 @@ function App() {
           </div>
           {paperNotice && <div className="status ok">{paperNotice}</div>}
           {paperError && <div className="status error">{paperError}</div>}
+          <div className="paper-capital-strip">
+            <div>
+              <span>Starting capital</span>
+              <strong>{formatPrice(paperCapital.starting)}</strong>
+              <em className="field-hint">From “Your capital” on Find setups</em>
+            </div>
+            <div>
+              <span>Invested (in trades)</span>
+              <strong>{formatPrice(paperCapital.invested)}</strong>
+              <em className="field-hint">Buy/sell price × shares for open trades</em>
+            </div>
+            <div className="paper-capital-remaining">
+              <span>Remaining capital</span>
+              <strong className={valueClass(paperCapital.remaining - paperCapital.starting)}>
+                {formatPrice(paperCapital.remaining)}
+              </strong>
+              <em className="field-hint">Updates when a trade finishes</em>
+            </div>
+            <div>
+              <span>Account value</span>
+              <strong className={valueClass(paperCapital.accountValue - paperCapital.starting)}>
+                {formatPrice(paperCapital.accountValue)}
+              </strong>
+              <em className="field-hint">Remaining + invested + open P/L</em>
+            </div>
+          </div>
+          <div className="field-row two-col paper-capital-edit">
+            <div className="field-group">
+              <label htmlFor="paper-starting-capital">Practice starting capital (₹)</label>
+              <input
+                id="paper-starting-capital"
+                type="number"
+                min="0"
+                step="0.01"
+                value={accountEquity}
+                onChange={(event) => setAccountEquity(event.target.value)}
+              />
+              <p className="field-hint">
+                Same as Find setups capital. Remaining = starting + locked-in P/L − invested.
+              </p>
+            </div>
+          </div>
           <div className="metric-grid metric-grid-five">
             <div className="metric-card">
               <span>Waiting for price</span>
@@ -1974,14 +2296,18 @@ function App() {
                   <th>Profit goal</th>
                   <th>Live price</th>
                   <th>Open P/L</th>
+                  <th>Running</th>
+                  <th>Est. profit by</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {(paperBook?.trades.filter((t) => t.status === 'OPEN') ?? []).map((trade) => {
                   const isShort = trade.direction === 'SHORT'
+                  const outlook = paperOutlookById[trade.id]
                   return (
-                    <tr key={`paper-open-${trade.id}`}>
+                    <React.Fragment key={`paper-open-${trade.id}`}>
+                    <tr>
                       <td className="symbol-cell">{trade.symbol}</td>
                       <td>
                         <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
@@ -2002,6 +2328,24 @@ function App() {
                         {formatPrice(trade.unrealized_pnl)}
                       </td>
                       <td>
+                        <TradeDurationTimer startedAt={trade.opened_at} label="" />
+                      </td>
+                      <td className="eta-cell">
+                        {outlook?.estimated_reach_at
+                          ? Number(outlook.estimated_trading_days) === 0
+                            ? 'Now'
+                            : `${formatDateTime(outlook.estimated_reach_at)} (~${outlook.estimated_trading_days}d)`
+                          : 'Analyzing…'}
+                        {outlook && (
+                          <div className="eta-progress-track" title={`${outlook.progress_pct}% to goal`}>
+                            <div
+                              className="eta-progress-fill"
+                              style={{ width: `${Math.min(100, Math.max(0, Number(outlook.progress_pct) || 0))}%` }}
+                            />
+                          </div>
+                        )}
+                      </td>
+                      <td>
                         <button
                           type="button"
                           className="secondary-button"
@@ -2012,6 +2356,14 @@ function App() {
                         </button>
                       </td>
                     </tr>
+                    {outlook && (
+                      <tr className="outlook-summary-row">
+                        <td colSpan={11}>
+                          <p className="field-hint">{outlook.summary}</p>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   )
                 })}
               </tbody>

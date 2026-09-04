@@ -1210,6 +1210,164 @@ td.symbol-cell {
   color: var(--muted);
 }
 
+.start-trade-alert {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--buy) 45%, var(--line));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--buy-soft) 85%, var(--surface));
+  animation: start-trade-pulse 1.2s ease-in-out 2;
+}
+
+@keyframes start-trade-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--buy) 25%, transparent);
+  }
+}
+
+.start-trade-alert-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.start-trade-alert-head strong {
+  font-size: 1rem;
+  color: var(--buy);
+}
+
+.start-trade-alert-head span {
+  flex: 1 1 220px;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.start-trade-alert-list {
+  display: grid;
+  gap: 8px;
+}
+
+.start-trade-alert-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.start-trade-alert-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  font-size: 0.86rem;
+}
+
+.live-practice-strip {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.live-practice-strip-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  font-size: 0.82rem;
+}
+
+.live-practice-strip-label strong {
+  font-size: 0.84rem;
+}
+
+.live-practice-strip-label span {
+  color: var(--ink-soft);
+}
+
+.live-practice-strip-trades {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.live-practice-chip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+  font-size: 0.8rem;
+}
+
+.live-practice-chip.pending {
+  border-style: dashed;
+}
+
+.live-practice-chip .direction-pill {
+  font-size: 0.72rem;
+}
+
+.live-practice-more {
+  align-self: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.live-practice-eta,
+.live-practice-progress {
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
+.trade-duration-timer strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.eta-cell {
+  min-width: 9rem;
+  font-size: 0.82rem;
+}
+
+.eta-progress-track {
+  margin-top: 4px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.eta-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.outlook-summary-row td {
+  padding-top: 0;
+  border-top: none;
+}
+
 .paper-box,
 .forming-box,
 .confirmed-box {
@@ -1236,6 +1394,52 @@ td.symbol-cell {
 }
 
 .paper-summary-grid {
+  margin-bottom: 12px;
+}
+
+.paper-capital-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.paper-capital-strip > div {
+  display: grid;
+  gap: 4px;
+}
+
+.paper-capital-strip span {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.paper-capital-strip strong {
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.paper-capital-strip em {
+  font-style: normal;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.paper-capital-remaining {
+  padding: 6px 8px;
+  margin: -6px -8px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
+}
+
+.paper-capital-edit {
   margin-bottom: 12px;
 }
 
