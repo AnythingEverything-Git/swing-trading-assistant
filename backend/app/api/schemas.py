@@ -101,6 +101,11 @@ class StrategyEvidenceResponse(BaseModel):
     retest_low: Decimal
     confirmation_volume: int | None
     decision: str
+    direction: str = "LONG"
+    structure_level: Decimal | None = None
+    retest_extreme: Decimal | None = None
+    structure_label: str | None = None
+    retest_label: str | None = None
 
 
 class StrategyEvaluationResponse(BaseModel):
@@ -161,6 +166,9 @@ class FormingSetupResponse(BaseModel):
     retest_candle_index: int | None = None
     retest_candle_time: datetime | None = None
     retest_low: Decimal | None = None
+    direction: str = "LONG"
+    structure_label: str | None = None
+    retest_label: str | None = None
     current_price: Decimal | None = None
     current_price_change_percent: Decimal | None = None
 

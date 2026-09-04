@@ -1,7 +1,7 @@
 # TradePilot AI — Project Plan (from now onwards)
 
 **Last updated:** 2026-09-04  
-**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan, ranked opportunities, forming watchlist, interactive TradingView-style charts, live current prices (smooth tick animation), quality scoring, position sizing, narratives, scan history, backtest realism, auto-refresh scan (default 5 min), collapsible scan criteria, Amazon SES email alerts, and Groww-style detail tabs with grounded Gemini Flash insights.  
+**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan for LONG breakout and SHORT breakdown setups, ranked opportunities, forming watchlist, interactive TradingView-style charts, live current prices (smooth tick animation), quality scoring, position sizing, narratives, scan history, backtest realism, auto-refresh scan (default 5 min), collapsible scan criteria, Amazon SES email alerts, and Groww-style detail tabs with grounded Gemini Flash insights.  
 **Data:** 497 Nifty symbols ingested via Upstox 1d candles. Demo mode still available via `MARKET_DATA_SOURCE=demo`.
 
 ---
@@ -63,7 +63,7 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 
 | Area | Done |
 |------|------|
-| Strategy + last-bar NOW contract | Yes |
+| Strategy + last-bar NOW contract (LONG + SHORT) | Yes |
 | StrategyEvaluationService (+ classify) | Yes |
 | OpportunityScanService (fail-fast) | Yes |
 | UniverseScanReportService (status ledger + forming) | Yes |
@@ -111,7 +111,6 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 ### Explicitly not done
 
 - Auth, billing, portfolio, broker execution
-- SHORT setups
 - WebSocket live ticks (polling quotes every 15s instead)
 - Multi-timeframe beyond `1d`
 
@@ -121,7 +120,7 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 
 | ID | Actor | Use case | Status |
 |----|-------|----------|--------|
-| UC1 | Trader | Scan a Nifty index for setups **RIGHT NOW** | ✅ Live |
+| UC1 | Trader | Scan a Nifty index for setups **RIGHT NOW** | ✅ Live (LONG + SHORT) |
 | UC2 | Trader | See **current trading price** on every symbol | ✅ Live (auto-refreshes 15s; animated tick) |
 | UC3 | Trader | Understand **why** a name is eligible | ✅ Detail overlay + narrative |
 | UC4 | Trader | View **interactive chart** with S/R + volume | ✅ lightweight-charts |
@@ -270,7 +269,7 @@ Detail overlay, NOW cue, loading copy, CSV, top-10 + See more, menu, multi-unive
 
 ### Phase 6 — Explicitly deferred
 
-Auth, billing, portfolio, broker execution, WebSocket ticks, SHORT setups, multi-timeframe.
+Auth, billing, portfolio, broker execution, WebSocket ticks, multi-timeframe.
 
 ### Phase 7 — Groww-style stock detail tabs — **Done**
 
@@ -285,6 +284,17 @@ Auth, billing, portfolio, broker execution, WebSocket ticks, SHORT setups, multi
 | P7.7 | Stable live detail UI (no tab refetch on quote ticks; tab/insight cache) | ✅ |
 | P7.8 | Animated live LTP + production motion / teal theme polish | ✅ |
 
+### Phase 8 — SHORT selling opportunities — **Done**
+
+| ID | Task | Status |
+|----|------|--------|
+| P8.1 | SHORT breakdown → retest → confirmation (mirror of LONG thresholds) | ✅ |
+| P8.2 | Forming detection for SHORT (AWAITING_RETEST / AWAITING_CONFIRMATION) | ✅ |
+| P8.3 | Direction-aware quality score, narratives, invalidation | ✅ |
+| P8.4 | Backtest SHORT exits / slippage / PnL | ✅ |
+| P8.5 | Exhaustive unit tests (mirror suite + rejection paths) | ✅ |
+| P8.6 | UI labels / chart levels for Support + Retest high | ✅ |
+
 ---
 
 ## 5. Status snapshot
@@ -298,6 +308,7 @@ P4  Product features (rank/chart/price)   ✅
 P5  Ops cadence (auto-refresh+email)       ✅
 P6  Deferred                              —
 P7  Groww detail tabs + Gemini + UX polish ✅
+P8  SHORT breakdown setups + tests        ✅
 ```
 
 | Phase | Status |
@@ -310,6 +321,7 @@ P7  Groww detail tabs + Gemini + UX polish ✅
 | P5 | Done |
 | P6 | Deferred |
 | P7 | Done |
+| P8 | Done |
 
 ---
 
@@ -324,6 +336,7 @@ P7  Groww detail tabs + Gemini + UX polish ✅
 | P4 | Ranked results + chart + live prices + forming + narratives |
 | P5 | Auto-refresh (5m default) + SES HTML email alerts (pre-market + confirmation) |
 | P7 | Detail tabs + research APIs + Gemini insights; drawer stable under 15s quote poll |
+| P8 | SHORT mirror of LONG strategy with forming + backtest + exhaustive unit tests |
 
 ---
 
@@ -331,8 +344,7 @@ P7  Groww detail tabs + Gemini + UX polish ✅
 
 1. **WebSocket ticks:** Currently polling quotes every 15s; upgrade to Upstox WebSocket for real-time.
 2. **LLM narratives:** Research tab insights support `NARRATIVE_PROVIDER=llm` via Gemini Flash (`GEMINI_MODEL`, default `gemini-flash-latest`) with grounding guardrails; setup Entry/SL/Target remain strategy-derived only. Template fallback when LLM off or unavailable.
-3. **SHORT setups:** Strategy supports LONG only; SHORT detection deferred.
-4. **Universe files:** Curated static JSON nested under Nifty 500; replace when official NSE membership updates.
+3. **Universe files:** Curated static JSON nested under Nifty 500; replace when official NSE membership updates.
 
 ---
 
@@ -377,6 +389,6 @@ P7  Groww detail tabs + Gemini + UX polish ✅
 
 ## 9. One-line summary
 
-**Now:** Full-featured product — live Upstox data, ranked scan, charts, Groww-style detail tabs (Overview/Setup/Technical/F&O/News), grounded Gemini insights, stable animated live prices, 5‑min auto-refresh, SES email alerts.  
-**Next:** Watermark refresh scheduling; deferred features (auth, SHORT, WebSocket).  
+**Now:** Full-featured product — live Upstox data, ranked LONG + SHORT scan, charts, Groww-style detail tabs, grounded Gemini insights, stable animated live prices, 5‑min auto-refresh, SES email alerts.  
+**Next:** Watermark refresh scheduling; deferred features (auth, WebSocket).  
 **Verify:** Checkpoints A–H in §2c before claiming a release.

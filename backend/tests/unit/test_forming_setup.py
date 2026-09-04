@@ -65,6 +65,7 @@ def test_forming_awaiting_retest_when_last_bar_is_breakout():
     forming = strategy.inspect_forming(strategy_input)
     assert forming is not None
     assert forming.stage == "AWAITING_RETEST"
+    assert forming.direction == "LONG"
     assert forming.breakout_candle_index == 19
     assert forming.retest_candle_index is None
 
@@ -78,6 +79,7 @@ def test_forming_awaiting_confirmation_when_last_bar_is_retest():
     forming = strategy.inspect_forming(strategy_input)
     assert forming is not None
     assert forming.stage == "AWAITING_CONFIRMATION"
+    assert forming.direction == "LONG"
     assert forming.breakout_candle_index == 19
     assert forming.retest_candle_index == 20
 

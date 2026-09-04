@@ -39,12 +39,15 @@ class BacktestTrade:
     r_multiple: Decimal | None
     pnl_per_share: Decimal | None
     quantity: int
+    direction: str = "LONG"
 
     def __post_init__(self) -> None:
         if not self.symbol or not self.symbol.strip():
             raise ValueError("symbol must be a non-empty string")
         if not self.timeframe or not self.timeframe.strip():
             raise ValueError("timeframe must be a non-empty string")
+        if self.direction not in {"LONG", "SHORT"}:
+            raise ValueError("direction must be LONG or SHORT")
 
         entry_price = _as_decimal(self.entry_price, "entry_price")
         stop_loss = _as_decimal(self.stop_loss, "stop_loss")
@@ -64,8 +67,12 @@ class BacktestTrade:
         if self.entry_time < self.setup_time:
             raise ValueError("entry_time must be greater than or equal to setup_time")
 
-        if stop_loss >= entry_price or entry_price >= target:
-            raise ValueError("LONG trade requires stop_loss < entry_price < target")
+        if self.direction == "LONG":
+            if stop_loss >= entry_price or entry_price >= target:
+                raise ValueError("LONG trade requires stop_loss < entry_price < target")
+        else:
+            if target >= entry_price or entry_price >= stop_loss:
+                raise ValueError("SHORT trade requires target < entry_price < stop_loss")
 
         exit_time = self.exit_time
         exit_price = _as_decimal(self.exit_price, "exit_price") if self.exit_price is not None else None

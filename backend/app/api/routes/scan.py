@@ -49,6 +49,8 @@ def _candidate_response(candidate) -> StrategyCandidateResponse:
 
 
 def _evidence_response(evidence) -> StrategyEvidenceResponse:
+    direction = getattr(evidence, "direction", "LONG")
+    is_short = direction == "SHORT"
     return StrategyEvidenceResponse(
         resistance=evidence.resistance,
         breakout_candle_index=evidence.breakout_candle_index,
@@ -63,6 +65,11 @@ def _evidence_response(evidence) -> StrategyEvidenceResponse:
         retest_low=evidence.retest_low,
         confirmation_volume=evidence.confirmation_volume,
         decision=evidence.decision,
+        direction=direction,
+        structure_level=evidence.resistance,
+        retest_extreme=evidence.retest_low,
+        structure_label="support" if is_short else "resistance",
+        retest_label="retest_high" if is_short else "retest_low",
     )
 
 
@@ -84,6 +91,8 @@ def _opportunity_response(item: PresentedOpportunity) -> EligibleOpportunityResp
 
 def _forming_response(item) -> FormingSetupResponse:
     forming = item.forming
+    direction = getattr(forming, "direction", "LONG")
+    is_short = direction == "SHORT"
     return FormingSetupResponse(
         symbol=forming.symbol,
         timeframe=forming.timeframe,
@@ -101,6 +110,9 @@ def _forming_response(item) -> FormingSetupResponse:
         retest_candle_index=forming.retest_candle_index,
         retest_candle_time=forming.retest_candle_time,
         retest_low=forming.retest_low,
+        direction=direction,
+        structure_label="support" if is_short else "resistance",
+        retest_label="retest_high" if is_short else "retest_low",
     )
 
 

@@ -1111,13 +1111,13 @@ td.symbol-cell {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 3.4rem;
-  padding: 3px 8px;
+  padding: 4px 10px;
   border-radius: 999px;
   font-family: var(--font-body);
   font-size: 0.7rem;
   font-weight: 800;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
 }
 
 .direction-pill.long {
@@ -1211,21 +1211,22 @@ td.symbol-cell {
 }
 
 .top-book,
-.forming-box {
+.forming-box,
+.confirmed-box {
   margin: 16px 0 8px;
 }
 
 .top-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
 }
 
 .top-card {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   text-align: left;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface-muted);
@@ -1235,16 +1236,84 @@ td.symbol-cell {
   transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+.top-card-long {
+  border-color: color-mix(in srgb, var(--buy) 35%, var(--line));
+  background:
+    linear-gradient(180deg, var(--buy-soft), transparent 42%),
+    var(--surface-muted);
+}
+
+.top-card-short {
+  border-color: color-mix(in srgb, var(--sell) 35%, var(--line));
+  background:
+    linear-gradient(180deg, var(--sell-soft), transparent 42%),
+    var(--surface-muted);
+}
+
 .top-card:hover {
-  border-color: var(--accent);
   transform: translateY(-2px);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.top-card-long:hover {
+  border-color: var(--buy);
+}
+
+.top-card-short:hover {
+  border-color: var(--sell);
+}
+
+.top-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .top-rank {
   font-size: 0.72rem;
   font-weight: 800;
-  color: var(--accent);
+  color: var(--accent-deep);
+}
+
+.top-symbol {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+}
+
+.top-metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.top-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.top-value {
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.top-value-stop {
+  color: var(--sell);
+}
+
+.top-value-target {
+  color: var(--buy);
+}
+
+.top-value-score {
+  color: var(--accent-deep);
 }
 
 .setup-chart {

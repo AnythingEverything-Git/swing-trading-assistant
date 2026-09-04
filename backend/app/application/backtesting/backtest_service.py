@@ -89,16 +89,28 @@ class BacktestService:
                 continue
 
             exit_index, raw_exit_price, exit_reason = self._find_exit(
-                candles, confirmation_index, candidate.stop_loss, candidate.target
+                candles,
+                confirmation_index,
+                candidate.stop_loss,
+                candidate.target,
+                candidate.direction,
             )
-            entry_fill = candidate.entry_price + slippage_per_share
-            if not (candidate.stop_loss < entry_fill < candidate.target):
-                cursor += 1
-                continue
+            if candidate.direction == "LONG":
+                entry_fill = candidate.entry_price + slippage_per_share
+                if not (candidate.stop_loss < entry_fill < candidate.target):
+                    cursor += 1
+                    continue
+                exit_fill = raw_exit_price - slippage_per_share
+                gross_pnl = (exit_fill - entry_fill) * Decimal(sizing.quantity)
+            else:
+                entry_fill = candidate.entry_price - slippage_per_share
+                if not (candidate.target < entry_fill < candidate.stop_loss):
+                    cursor += 1
+                    continue
+                exit_fill = raw_exit_price + slippage_per_share
+                gross_pnl = (entry_fill - exit_fill) * Decimal(sizing.quantity)
 
-            exit_fill = raw_exit_price - slippage_per_share
             quantity = sizing.quantity
-            gross_pnl = (exit_fill - entry_fill) * Decimal(quantity)
             net_pnl = gross_pnl - cost_per_trade
             pnl_per_share = net_pnl / Decimal(quantity)
             r_multiple = pnl_per_share / candidate.risk_per_share
@@ -118,6 +130,7 @@ class BacktestService:
                     r_multiple=r_multiple,
                     pnl_per_share=pnl_per_share,
                     quantity=quantity,
+                    direction=candidate.direction,
                 )
             )
             current_equity += net_pnl
@@ -127,18 +140,32 @@ class BacktestService:
 
     @staticmethod
     def _find_exit(
-        candles: list[Candle], confirmation_index: int, stop_loss: Decimal, target: Decimal
+        candles: list[Candle],
+        confirmation_index: int,
+        stop_loss: Decimal,
+        target: Decimal,
+        direction: str = "LONG",
     ) -> tuple[int, Decimal, ExitReason]:
         for index in range(confirmation_index + 1, len(candles)):
             candle = candles[index]
-            if candle.open <= stop_loss:
-                return index, candle.open, ExitReason.GAP_THROUGH_STOP
-            if candle.open >= target:
-                return index, candle.open, ExitReason.GAP_THROUGH_TARGET
-            if candle.low <= stop_loss:
-                return index, stop_loss, ExitReason.STOP_LOSS
-            if candle.high >= target:
-                return index, target, ExitReason.TARGET
+            if direction == "SHORT":
+                if candle.open >= stop_loss:
+                    return index, candle.open, ExitReason.GAP_THROUGH_STOP
+                if candle.open <= target:
+                    return index, candle.open, ExitReason.GAP_THROUGH_TARGET
+                if candle.high >= stop_loss:
+                    return index, stop_loss, ExitReason.STOP_LOSS
+                if candle.low <= target:
+                    return index, target, ExitReason.TARGET
+            else:
+                if candle.open <= stop_loss:
+                    return index, candle.open, ExitReason.GAP_THROUGH_STOP
+                if candle.open >= target:
+                    return index, candle.open, ExitReason.GAP_THROUGH_TARGET
+                if candle.low <= stop_loss:
+                    return index, stop_loss, ExitReason.STOP_LOSS
+                if candle.high >= target:
+                    return index, target, ExitReason.TARGET
 
         final_index = len(candles) - 1
         return final_index, candles[final_index].close, ExitReason.END_OF_DATA

@@ -168,11 +168,11 @@ export function SetupChart({
         lineStyle: LineStyle.Dashed,
       })
     }
-    addLine(levels.resistance, 'Resistance', '#7c3aed')
-    addLine(levels.support, 'Support', '#f59e0b')
+    addLine(levels.resistance, 'Resistance', '#0f766e')
+    addLine(levels.support, 'Support', '#c2410c')
     addLine(levels.entry, 'Entry', '#16a34a')
     addLine(levels.stop, 'Stop', '#dc2626')
-    addLine(levels.target, 'Target', '#0ea5e9')
+    addLine(levels.target, 'Target', '#0369a1')
 
     chart.timeScale().fitContent()
     const observer = new ResizeObserver(() => {

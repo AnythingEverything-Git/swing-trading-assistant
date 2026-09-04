@@ -118,6 +118,9 @@ type Evidence = {
   retest_low: string | number
   confirmation_volume: number | null
   decision: string
+  direction?: string
+  structure_label?: string | null
+  retest_label?: string | null
 }
 
 type StrategyResponse = {
@@ -189,6 +192,9 @@ type FormingSetup = {
   retest_candle_index?: number | null
   retest_candle_time?: string | null
   retest_low?: string | number | null
+  direction?: string
+  structure_label?: string | null
+  retest_label?: string | null
   current_price?: string | number | null
   current_price_change_percent?: string | number | null
 }
@@ -924,7 +930,7 @@ function App() {
           <p className="eyebrow">Watchlist scan</p>
           <h1>Index Swing Opportunities</h1>
           <p className="header-copy">
-            Scan Nifty 50 / 100 / 200 / 500 for valid breakout → retest → confirmation setups right now.
+            Scan Nifty 50 / 100 / 200 / 500 for valid LONG breakout or SHORT breakdown → retest → confirmation setups right now.
           </p>
         </header>
 
@@ -1165,197 +1171,272 @@ function App() {
 
             {(scanResult.top?.length ?? 0) > 0 && (
               <div className="top-book">
-                <h3>Top {scanResult.top!.length} for this account</h3>
+                <h3>Top {scanResult.top!.length} confirmed setups</h3>
                 <p className="field-hint">
-                  Ranked by setup quality. Prices come from the strategy — the model only explains and ranks.
+                  Ranked by setup quality. Each tile is a NOW-confirmed LONG or SHORT plan for this account.
                 </p>
                 <div className="top-grid">
-                  {scanResult.top!.map((item) => (
-                    <button
-                      type="button"
-                      className="top-card"
-                      key={`top-${item.symbol}`}
-                      onClick={() => {
-                        setSelectedKind('eligible')
-                        setSelectedSymbol(item.symbol)
-                      }}
-                    >
-                      <span className="top-rank">#{item.rank}</span>
-                      <strong>{item.symbol}</strong>
-                      <span>
-                        Now{' '}
-                        <LiveValue value={item.current_price} formatted={formatPrice(item.current_price)} />
-                      </span>
-                      <span className={valueClass(item.current_price_change_percent ?? 0)}>
-                        {formatPercent(item.current_price_change_percent)}
-                      </span>
-                      <span>{formatPrice(item.candidate.entry_price)}</span>
-                      <span>Score {formatNumber(item.quality_score, 1)}</span>
-                      {item.quantity != null && <span>Qty {item.quantity}</span>}
-                    </button>
-                  ))}
+                  {scanResult.top!.map((item) => {
+                    const isShort = item.candidate.direction === 'SHORT'
+                    return (
+                      <button
+                        type="button"
+                        className={`top-card ${isShort ? 'top-card-short' : 'top-card-long'}`}
+                        key={`top-${item.symbol}`}
+                        onClick={() => {
+                          setSelectedKind('eligible')
+                          setSelectedSymbol(item.symbol)
+                        }}
+                      >
+                        <div className="top-card-head">
+                          <span className="top-rank">#{item.rank}</span>
+                          <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
+                            {isShort ? 'SHORT selling' : 'LONG position'}
+                          </span>
+                        </div>
+                        <strong className="top-symbol">{item.symbol}</strong>
+                        <div className="top-metric">
+                          <span className="top-label">LTP</span>
+                          <span className="top-value">
+                            <LiveValue
+                              value={item.current_price}
+                              formatted={formatPrice(item.current_price)}
+                            />
+                          </span>
+                        </div>
+                        <div className="top-metric">
+                          <span className="top-label">Change</span>
+                          <span className={`top-value ${valueClass(item.current_price_change_percent ?? 0)}`}>
+                            {formatPercent(item.current_price_change_percent)}
+                          </span>
+                        </div>
+                        <div className="top-metric">
+                          <span className="top-label">Entry</span>
+                          <span className="top-value">{formatPrice(item.candidate.entry_price)}</span>
+                        </div>
+                        <div className="top-metric">
+                          <span className="top-label">Stop</span>
+                          <span className="top-value top-value-stop">
+                            {formatPrice(item.candidate.stop_loss)}
+                          </span>
+                        </div>
+                        <div className="top-metric">
+                          <span className="top-label">Target</span>
+                          <span className="top-value top-value-target">
+                            {formatPrice(item.candidate.target)}
+                          </span>
+                        </div>
+                        <div className="top-metric">
+                          <span className="top-label">Score</span>
+                          <span className="top-value top-value-score">
+                            {formatNumber(item.quality_score, 1)}
+                          </span>
+                        </div>
+                        {item.quantity != null && (
+                          <div className="top-metric">
+                            <span className="top-label">Qty</span>
+                            <span className="top-value">{item.quantity}</span>
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
             )}
 
+            {scanResult.alert_preview && (
+              <details className="alert-preview">
+                <summary>Alert preview</summary>
+                <pre>{scanResult.alert_preview}</pre>
+              </details>
+            )}
+
+            <div className="confirmed-box">
+              <h3>Confirmed opportunities</h3>
+              {scanResult.eligible_count === 0 ? (
+                <div className="empty-state">
+                  <strong>No confirmed setups</strong>
+                  <span>No eligible LONG or SHORT opportunities were found for this range.</span>
+                </div>
+              ) : (
+                <>
+                  <div className="table-toolbar">
+                    <p className="field-hint">
+                      Showing {visibleOpportunities.length} of {scanResult.opportunities.length} confirmed
+                      names. Click a row for trade plan and evidence.
+                    </p>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => downloadEligibleCsv(scanResult)}
+                    >
+                      Export CSV
+                    </button>
+                  </div>
+                  <div className="table-wrap scan-table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Rank</th>
+                          <th>Symbol</th>
+                          <th>Eligibility</th>
+                          <th>Entry</th>
+                          <th>Current</th>
+                          <th>Change</th>
+                          <th>Stop Loss</th>
+                          <th>Target</th>
+                          <th>R:R</th>
+                          <th>Score</th>
+                          <th>Qty</th>
+                          <th>Why Eligible</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleOpportunities.map((opportunity) => {
+                          const isShort = opportunity.candidate.direction === 'SHORT'
+                          return (
+                            <tr
+                              key={opportunity.symbol}
+                              className={selectedSymbol === opportunity.symbol ? 'row-selected' : undefined}
+                              onClick={() => {
+                                setSelectedKind('eligible')
+                                setSelectedSymbol(opportunity.symbol)
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault()
+                                  setSelectedSymbol(opportunity.symbol)
+                                }
+                              }}
+                              tabIndex={0}
+                              role="button"
+                              aria-pressed={selectedSymbol === opportunity.symbol}
+                            >
+                              <td className="num-cell">{opportunity.rank ?? '—'}</td>
+                              <td className="symbol-cell">{opportunity.symbol}</td>
+                              <td>
+                                <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
+                                  {isShort ? 'SHORT selling' : 'LONG position'}
+                                </span>
+                              </td>
+                              <td className="num-cell">
+                                {formatPrice(opportunity.candidate.entry_price)}
+                              </td>
+                              <td className="num-cell">
+                                <LiveValue
+                                  value={opportunity.current_price}
+                                  formatted={formatPrice(opportunity.current_price)}
+                                />
+                              </td>
+                              <td
+                                className={`num-cell ${valueClass(
+                                  opportunity.current_price_change_percent ?? 0,
+                                )}`}
+                              >
+                                {formatPercent(opportunity.current_price_change_percent)}
+                              </td>
+                              <td className="num-cell">
+                                {formatPrice(opportunity.candidate.stop_loss)}
+                              </td>
+                              <td className="num-cell">
+                                {formatPrice(opportunity.candidate.target)}
+                              </td>
+                              <td className="num-cell">
+                                {formatRatio(opportunity.candidate.risk_reward_ratio)}
+                              </td>
+                              <td className="num-cell">
+                                {formatNumber(opportunity.quality_score, 1)}
+                              </td>
+                              <td className="num-cell">{opportunity.quantity ?? '—'}</td>
+                              <td className="why-eligible">
+                                {opportunity.narrative ?? opportunity.evidence.decision}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {hiddenOpportunityCount > 0 && (
+                    <div className="see-more-row">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => setShowAllOpportunities((current) => !current)}
+                      >
+                        {showAllOpportunities
+                          ? 'Show less'
+                          : `See more (${hiddenOpportunityCount} more)`}
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
             {(scanResult.forming?.length ?? 0) > 0 && (
               <div className="forming-box">
                 <h3>Forming watchlist</h3>
-                <p className="field-hint">In retest or confirmation window. No Entry / SL / Target until NOW confirmation.</p>
+                <p className="field-hint">
+                  In retest or confirmation window. No Entry / SL / Target until NOW confirmation.
+                </p>
                 <div className="table-wrap">
                   <table>
                     <thead>
                       <tr>
                         <th>Symbol</th>
+                        <th>Setup side</th>
                         <th>Stage</th>
                         <th>Current</th>
                         <th>Change</th>
-                        <th>Resistance</th>
+                        <th>Level</th>
                         <th>Bars left</th>
                         <th>Why</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {scanResult.forming!.map((item) => (
-                        <tr
-                          key={`forming-${item.symbol}`}
-                          onClick={() => {
-                            setSelectedKind('forming')
-                            setSelectedSymbol(item.symbol)
-                          }}
-                          tabIndex={0}
-                          role="button"
-                        >
-                          <td className="symbol-cell">{item.symbol}</td>
-                          <td>{item.stage.replace(/_/g, ' ')}</td>
-                          <td className="num-cell">
-                            <LiveValue value={item.current_price} formatted={formatPrice(item.current_price)} />
-                          </td>
-                          <td className={`num-cell ${valueClass(item.current_price_change_percent ?? 0)}`}>
-                            {formatPercent(item.current_price_change_percent)}
-                          </td>
-                          <td className="num-cell">{formatPrice(item.resistance)}</td>
-                          <td className="num-cell">{item.bars_remaining}</td>
-                          <td className="why-eligible">{item.narrative ?? item.reason}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-        {scanResult.alert_preview && (
-          <details className="alert-preview">
-            <summary>Alert preview</summary>
-            <pre>{scanResult.alert_preview}</pre>
-          </details>
-        )}
-
-            {scanResult.eligible_count === 0 ? (
-              <div className="empty-state">
-                <strong>Scan complete</strong>
-                <span>No eligible swing opportunities were found for this range.</span>
-              </div>
-            ) : (
-              <>
-                <div className="table-toolbar">
-                  <p className="field-hint">
-                    Showing {visibleOpportunities.length} of {scanResult.opportunities.length}. Click a
-                    row for trade plan and evidence.
-                  </p>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => downloadEligibleCsv(scanResult)}
-                  >
-                    Export CSV
-                  </button>
-                </div>
-                <div className="table-wrap scan-table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Rank</th>
-                        <th>Symbol</th>
-                        <th>Direction</th>
-                        <th>Entry</th>
-                        <th>Current</th>
-                        <th>Change</th>
-                        <th>Stop Loss</th>
-                        <th>Target</th>
-                        <th>R:R</th>
-                        <th>Score</th>
-                        <th>Qty</th>
-                        <th>Why Eligible</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleOpportunities.map((opportunity) => (
-                        <tr
-                          key={opportunity.symbol}
-                          className={selectedSymbol === opportunity.symbol ? 'row-selected' : undefined}
-                          onClick={() => {
-                            setSelectedKind('eligible')
-                            setSelectedSymbol(opportunity.symbol)
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault()
-                              setSelectedSymbol(opportunity.symbol)
-                            }
-                          }}
-                          tabIndex={0}
-                          role="button"
-                          aria-pressed={selectedSymbol === opportunity.symbol}
-                        >
-                          <td className="num-cell">{opportunity.rank ?? '—'}</td>
-                          <td className="symbol-cell">{opportunity.symbol}</td>
-                          <td>
-                            <span
-                              className={`direction-pill ${
-                                opportunity.candidate.direction === 'LONG' ? 'long' : 'short'
-                              }`}
+                      {scanResult.forming!.map((item) => {
+                        const isShort = (item.direction ?? 'LONG') === 'SHORT'
+                        return (
+                          <tr
+                            key={`forming-${item.symbol}`}
+                            onClick={() => {
+                              setSelectedKind('forming')
+                              setSelectedSymbol(item.symbol)
+                            }}
+                            tabIndex={0}
+                            role="button"
+                          >
+                            <td className="symbol-cell">{item.symbol}</td>
+                            <td>
+                              <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
+                                {isShort ? 'SHORT selling' : 'LONG position'}
+                              </span>
+                            </td>
+                            <td>{item.stage.replace(/_/g, ' ')}</td>
+                            <td className="num-cell">
+                              <LiveValue
+                                value={item.current_price}
+                                formatted={formatPrice(item.current_price)}
+                              />
+                            </td>
+                            <td
+                              className={`num-cell ${valueClass(item.current_price_change_percent ?? 0)}`}
                             >
-                              {opportunity.candidate.direction}
-                            </span>
-                          </td>
-                          <td className="num-cell">{formatPrice(opportunity.candidate.entry_price)}</td>
-                          <td className="num-cell">
-                            <LiveValue
-                              value={opportunity.current_price}
-                              formatted={formatPrice(opportunity.current_price)}
-                            />
-                          </td>
-                          <td className={`num-cell ${valueClass(opportunity.current_price_change_percent ?? 0)}`}>
-                            {formatPercent(opportunity.current_price_change_percent)}
-                          </td>
-                          <td className="num-cell">{formatPrice(opportunity.candidate.stop_loss)}</td>
-                          <td className="num-cell">{formatPrice(opportunity.candidate.target)}</td>
-                          <td className="num-cell">{formatRatio(opportunity.candidate.risk_reward_ratio)}</td>
-                          <td className="num-cell">{formatNumber(opportunity.quality_score, 1)}</td>
-                          <td className="num-cell">{opportunity.quantity ?? '—'}</td>
-                          <td className="why-eligible">{opportunity.narrative ?? opportunity.evidence.decision}</td>
-                        </tr>
-                      ))}
+                              {formatPercent(item.current_price_change_percent)}
+                            </td>
+                            <td className="num-cell">{formatPrice(item.resistance)}</td>
+                            <td className="num-cell">{item.bars_remaining}</td>
+                            <td className="why-eligible">{item.narrative ?? item.reason}</td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
-
-                {hiddenOpportunityCount > 0 && (
-                  <div className="see-more-row">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => setShowAllOpportunities((current) => !current)}
-                    >
-                      {showAllOpportunities
-                        ? 'Show less'
-                        : `See more (${hiddenOpportunityCount} more)`}
-                    </button>
-                  </div>
-                )}
-              </>
+              </div>
             )}
           </section>
         )}
@@ -1530,14 +1611,16 @@ function App() {
                     <dd>{result.candidate.timeframe}</dd>
                   </div>
                   <div>
-                    <dt>Direction</dt>
+                    <dt>Eligibility</dt>
                     <dd>
                       <span
                         className={`direction-pill ${
                           result.candidate.direction === 'LONG' ? 'long' : 'short'
                         }`}
                       >
-                        {result.candidate.direction}
+                        {result.candidate.direction === 'SHORT'
+                          ? 'SHORT selling'
+                          : 'LONG position'}
                       </span>
                     </dd>
                   </div>
@@ -1578,7 +1661,12 @@ function App() {
                 <h3>Evidence</h3>
                 <dl>
                   <div>
-                    <dt>Resistance</dt>
+                    <dt>
+                      {result.candidate.direction === 'SHORT' ||
+                      result.evidence.structure_label === 'support'
+                        ? 'Support'
+                        : 'Resistance'}
+                    </dt>
                     <dd>{formatPrice(result.evidence.resistance)}</dd>
                   </div>
                   <div>
@@ -1615,7 +1703,9 @@ function App() {
                     <dd>{formatVolume(result.evidence.breakout_volume)}</dd>
                   </div>
                   <div>
-                    <dt>Retest low</dt>
+                    <dt>
+                      {result.candidate.direction === 'SHORT' ? 'Retest high' : 'Retest low'}
+                    </dt>
                     <dd>{formatPrice(result.evidence.retest_low)}</dd>
                   </div>
                   <div>

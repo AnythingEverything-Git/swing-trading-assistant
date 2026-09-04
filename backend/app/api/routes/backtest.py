@@ -38,7 +38,7 @@ async def run_backtest(
         BacktestTradeResponse(
             symbol=trade.symbol,
             timeframe=trade.timeframe,
-            direction="LONG",
+            direction=trade.direction,
             setup_time=trade.setup_time,
             entry_time=trade.entry_time,
             entry_price=trade.entry_price,

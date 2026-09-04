@@ -60,6 +60,11 @@ async def evaluate_strategy(
         "retest_low": result.evidence.retest_low,
         "confirmation_volume": result.evidence.confirmation_volume,
         "decision": result.evidence.decision,
+        "direction": result.evidence.direction,
+        "structure_level": result.evidence.resistance,
+        "retest_extreme": result.evidence.retest_low,
+        "structure_label": "support" if result.evidence.direction == "SHORT" else "resistance",
+        "retest_label": "retest_high" if result.evidence.direction == "SHORT" else "retest_low",
     }
 
     return StrategyEvaluationResponse(

@@ -38,7 +38,12 @@ def score_opportunity(candidate: TradeCandidate, evidence: StrategyEvidence) -> 
 
     volume_thrust = breakout_volume / volume_sma
     confirmation_ratio = confirmation_volume / volume_sma
-    retest_distance = evidence.resistance - evidence.retest_low
+    if candidate.direction == "SHORT":
+        retest_distance = evidence.retest_extreme - evidence.structure_level
+        structure_label = "support"
+    else:
+        retest_distance = evidence.structure_level - evidence.retest_extreme
+        structure_label = "resistance"
     retest_tightness = _clamp(retest_distance / evidence.atr_value, _ZERO, Decimal("3"))
     risk_percent = (candidate.risk_per_share / candidate.entry_price) * _HUNDRED
 
@@ -50,7 +55,7 @@ def score_opportunity(candidate: TradeCandidate, evidence: StrategyEvidence) -> 
 
     reason = (
         f"volume thrust { _q(volume_thrust) }x, confirmation { _q(confirmation_ratio) }x SMA, "
-        f"retest { _q(retest_tightness) } ATR from resistance, risk { _q(risk_percent) }%"
+        f"retest { _q(retest_tightness) } ATR from {structure_label}, risk { _q(risk_percent) }%"
     )
     return QualityScore(
         score=score,

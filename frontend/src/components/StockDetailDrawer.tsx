@@ -27,6 +27,9 @@ type Opportunity = {
     retest_low: string | number
     confirmation_volume: number | null
     decision: string
+    direction?: string
+    structure_label?: string | null
+    retest_label?: string | null
   }
   quality_score?: string | number | null
   quantity?: number | null
@@ -49,6 +52,8 @@ type FormingSetup = {
   narrative?: string | null
   current_price?: string | number | null
   current_price_change_percent?: string | number | null
+  direction?: string
+  structure_label?: string | null
 }
 
 type Formatters = {
@@ -211,6 +216,24 @@ export function StockDetailDrawer({
     forming?.current_price_change_percent ??
     overview?.current_price_change_percent
   const priceFlash = useLiveFlash(headerPrice)
+  const isShort =
+    opportunity?.candidate.direction === 'SHORT' || forming?.direction === 'SHORT'
+  const structureLabel = isShort ? 'Support' : 'Resistance'
+  const retestLabel = isShort ? 'Retest high' : 'Retest low'
+  const chartLevels = {
+    resistance: isShort
+      ? opportunity?.evidence.retest_low ?? forming?.retest_low
+      : opportunity?.evidence.resistance ?? forming?.resistance,
+    support: isShort
+      ? opportunity?.evidence.resistance ?? forming?.resistance
+      : opportunity?.evidence.retest_low ?? forming?.retest_low,
+    entry: opportunity?.candidate.entry_price,
+    stop: opportunity?.candidate.stop_loss,
+    target: opportunity?.candidate.target,
+    breakoutIndex: opportunity?.evidence.breakout_candle_index ?? forming?.breakout_candle_index,
+    retestIndex: opportunity?.evidence.retest_candle_index ?? forming?.retest_candle_index,
+    confirmationIndex: opportunity?.evidence.confirmation_candle_index,
+  }
 
   const rangeQuery = useMemo(() => {
     const startDate = new Date(scanStart)
@@ -482,21 +505,7 @@ export function StockDetailDrawer({
               </div>
               <div className="section-box elevate-card">
                 <h3>Chart</h3>
-                <SetupChart
-                  candles={chartCandles}
-                  levels={{
-                    resistance: opportunity?.evidence.resistance ?? forming?.resistance,
-                    support: opportunity?.evidence.retest_low ?? forming?.retest_low,
-                    entry: opportunity?.candidate.entry_price,
-                    stop: opportunity?.candidate.stop_loss,
-                    target: opportunity?.candidate.target,
-                    breakoutIndex:
-                      opportunity?.evidence.breakout_candle_index ?? forming?.breakout_candle_index,
-                    retestIndex:
-                      opportunity?.evidence.retest_candle_index ?? forming?.retest_candle_index,
-                    confirmationIndex: opportunity?.evidence.confirmation_candle_index,
-                  }}
-                />
+                <SetupChart candles={chartCandles} levels={chartLevels} />
               </div>
               {insight && (
                 <div className="section-box insight-card elevate-card">
@@ -519,25 +528,13 @@ export function StockDetailDrawer({
               <p className="field-hint">
                 {opportunity?.narrative ??
                   forming?.narrative ??
-                  'Eligibility requires breakout → retest → confirmation, with confirmation on the final candle.'}
+                  (isShort
+                    ? 'Eligibility requires breakdown → retest → confirmation, with confirmation on the final candle.'
+                    : 'Eligibility requires breakout → retest → confirmation, with confirmation on the final candle.')}
               </p>
               <div className="section-box elevate-card">
                 <h3>Chart</h3>
-                <SetupChart
-                  candles={chartCandles}
-                  levels={{
-                    resistance: opportunity?.evidence.resistance ?? forming?.resistance,
-                    support: opportunity?.evidence.retest_low ?? forming?.retest_low,
-                    entry: opportunity?.candidate.entry_price,
-                    stop: opportunity?.candidate.stop_loss,
-                    target: opportunity?.candidate.target,
-                    breakoutIndex:
-                      opportunity?.evidence.breakout_candle_index ?? forming?.breakout_candle_index,
-                    retestIndex:
-                      opportunity?.evidence.retest_candle_index ?? forming?.retest_candle_index,
-                    confirmationIndex: opportunity?.evidence.confirmation_candle_index,
-                  }}
-                />
+                <SetupChart candles={chartCandles} levels={chartLevels} />
               </div>
 
               {opportunity && (
@@ -552,7 +549,9 @@ export function StockDetailDrawer({
                             opportunity.candidate.direction === 'LONG' ? 'long' : 'short'
                           }`}
                         >
-                          {opportunity.candidate.direction}
+                          {opportunity.candidate.direction === 'SHORT'
+                            ? 'SHORT selling'
+                            : 'LONG position'}
                         </span>
                       </dd>
                     </div>
@@ -616,7 +615,7 @@ export function StockDetailDrawer({
                       <dd className="evidence-decision">{opportunity.evidence.decision}</dd>
                     </div>
                     <div>
-                      <dt>Resistance</dt>
+                      <dt>{structureLabel}</dt>
                       <dd>{formatPrice(opportunity.evidence.resistance)}</dd>
                     </div>
                     <div>
@@ -691,11 +690,11 @@ export function StockDetailDrawer({
                       <dd>{formatVolume(opportunity.evidence.volume_sma_value)}</dd>
                     </div>
                     <div>
-                      <dt>Breakout volume</dt>
+                      <dt>{isShort ? 'Breakdown volume' : 'Breakout volume'}</dt>
                       <dd>{formatVolume(opportunity.evidence.breakout_volume)}</dd>
                     </div>
                     <div>
-                      <dt>Retest low</dt>
+                      <dt>{retestLabel}</dt>
                       <dd>{formatPrice(opportunity.evidence.retest_low)}</dd>
                     </div>
                     <div>
@@ -715,7 +714,7 @@ export function StockDetailDrawer({
                       <dd>{forming.stage.replace(/_/g, ' ')}</dd>
                     </div>
                     <div>
-                      <dt>Resistance</dt>
+                      <dt>{structureLabel}</dt>
                       <dd>{formatPrice(forming.resistance)}</dd>
                     </div>
                     <div>

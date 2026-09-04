@@ -88,6 +88,34 @@ def test_narrative_only_uses_candidate_and_evidence_numbers():
     assert "₹101.50" in invalidation_copy(evidence)
 
 
+def test_short_quality_and_narrative_use_support_geometry():
+    candidate = TradeCandidate(
+        symbol="SHORTCO",
+        timeframe="1d",
+        direction="SHORT",
+        entry_price=Decimal("100.00"),
+        stop_loss=Decimal("102.00"),
+        target=Decimal("96.00"),
+        risk_per_share=Decimal("0"),
+        reward=Decimal("0"),
+        risk_reward_ratio=Decimal("0"),
+        setup_name="BreakdownRetestConfirmation",
+    )
+    evidence = _evidence(
+        resistance=Decimal("101.00"),
+        retest_low=Decimal("101.40"),
+        decision="valid breakdown -> retest -> confirmation",
+        direction="SHORT",
+    )
+    quality = score_opportunity(candidate, evidence)
+    assert Decimal("0") <= quality.score <= Decimal("100")
+    assert "support" in quality.reason
+    text = eligible_narrative(candidate, evidence)
+    assert "breakdown" in text.lower()
+    assert "support" in text.lower()
+    assert "Short" in invalidation_copy(evidence)
+
+
 def test_alert_mentions_data_claim_and_top():
     opp = EligibleOpportunity(symbol="INFY", candidate=_candidate("INFY"), evidence=_evidence())
     report = UniverseScanReport(
