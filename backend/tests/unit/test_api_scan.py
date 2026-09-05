@@ -141,7 +141,7 @@ def test_scan_opportunities_success_maps_candidate_and_evidence():
     client = TestClient(app)
 
     resp = client.post(
-        "/api/v1/scan/opportunities",
+        "/api/v1/scan/opportunities?sync=true",
         json={
             "timeframe": "1d",
             "start": "2025-12-07T00:00:00Z",
@@ -200,7 +200,7 @@ def test_scan_opportunities_no_setup_count_is_reported_directly():
     client = TestClient(app)
 
     resp = client.post(
-        "/api/v1/scan/opportunities",
+        "/api/v1/scan/opportunities?sync=true",
         json={
             "timeframe": "1d",
             "start": "2025-12-07T00:00:00Z",
@@ -227,7 +227,7 @@ def test_scan_opportunities_invalid_range_returns_400():
     client = TestClient(app)
 
     resp = client.post(
-        "/api/v1/scan/opportunities",
+        "/api/v1/scan/opportunities?sync=true",
         json={
             "timeframe": "1d",
             "start": "2026-09-03T00:00:00Z",
@@ -247,7 +247,7 @@ def test_scan_opportunities_unsupported_timeframe_returns_400():
     client = TestClient(app)
 
     resp = client.post(
-        "/api/v1/scan/opportunities",
+        "/api/v1/scan/opportunities?sync=true",
         json={
             "timeframe": "1h",
             "start": "2025-12-07T00:00:00Z",
@@ -267,7 +267,7 @@ def test_scan_opportunities_value_error_returns_400():
     client = TestClient(app)
 
     resp = client.post(
-        "/api/v1/scan/opportunities",
+        "/api/v1/scan/opportunities?sync=true",
         json={
             "timeframe": "1d",
             "start": "2025-12-07T00:00:00Z",
@@ -286,7 +286,7 @@ def test_scan_opportunities_unexpected_error_returns_500():
     client = TestClient(app)
 
     resp = client.post(
-        "/api/v1/scan/opportunities",
+        "/api/v1/scan/opportunities?sync=true",
         json={
             "timeframe": "1d",
             "start": "2025-12-07T00:00:00Z",
@@ -305,7 +305,7 @@ def test_scan_opportunities_forwards_timeframe_start_end_and_nifty500_universe()
     client = TestClient(app)
 
     resp = client.post(
-        "/api/v1/scan/opportunities",
+        "/api/v1/scan/opportunities?sync=true",
         json={
             "timeframe": "1d",
             "start": "2025-12-07T00:00:00Z",
@@ -330,7 +330,7 @@ def test_scan_opportunities_accepts_nifty_50_universe():
     client = TestClient(app)
 
     resp = client.post(
-        "/api/v1/scan/opportunities",
+        "/api/v1/scan/opportunities?sync=true",
         json={
             "universe": "NIFTY_50",
             "timeframe": "1d",
@@ -352,7 +352,7 @@ def test_scan_opportunities_rejects_unknown_universe():
     client = TestClient(app)
 
     resp = client.post(
-        "/api/v1/scan/opportunities",
+        "/api/v1/scan/opportunities?sync=true",
         json={
             "universe": "NIFTY_999",
             "timeframe": "1d",
@@ -363,6 +363,31 @@ def test_scan_opportunities_rejects_unknown_universe():
 
     assert resp.status_code == 400
     assert "universe" in resp.json()["detail"].lower()
+    assert service.calls == []
+
+
+def test_scan_opportunities_async_returns_202_queued():
+    app = create_app()
+    service = FakeUniverseScanReportService(result=_success_result())
+    _override_scan_deps(app, service)
+
+    with TestClient(app) as client:
+        queue = getattr(app.state, "scan_job_queue", None)
+        if queue is not None:
+            queue.enqueue = lambda _scan_run_id: None
+        resp = client.post(
+            "/api/v1/scan/opportunities",
+            json={
+                "timeframe": "1d",
+                "start": "2025-12-07T00:00:00Z",
+                "end": "2026-09-03T00:00:00Z",
+            },
+        )
+
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["scan_run_id"] == 7
+    assert data["status"] == "queued"
     assert service.calls == []
 
 

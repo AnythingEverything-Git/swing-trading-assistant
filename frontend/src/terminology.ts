@@ -48,6 +48,19 @@ export function formingStageLabel(stage: string | null | undefined): string {
   }
 }
 
+/** Rules-based setup quality as a beginner-facing confidence percent (not win odds). */
+export function strategyConfidenceLabel(qualityScore: string | number | null | undefined): string {
+  if (qualityScore == null || qualityScore === '') return '—'
+  const numeric = Number(qualityScore)
+  if (!Number.isFinite(numeric)) return '—'
+  const pct = Math.max(0, Math.min(100, Math.round(numeric)))
+  return `${pct}%`
+}
+
+export function strategyConfidenceHint(): string {
+  return 'Rules-based setup quality (0–100%), not a predicted win rate'
+}
+
 /** Practice-account snapshot from open/closed trades + starting capital. */
 export function computePaperCapital(
   trades: Array<{

@@ -16,6 +16,21 @@ from app.domain.paper import Direction
 
 Confidence = Literal["low", "medium", "high"]
 
+_METHOD_LABELS = {
+    "drift_atr_blend": "recent move with ATR check",
+    "recent_drift": "recent price drift",
+    "atr_capture": "typical ATR pace",
+    "avg_range": "average daily range",
+    "target_reached": "profit goal already reached",
+    "insufficient_data": "not enough candle history",
+}
+
+
+def _money_2(value: Decimal | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value.quantize(Decimal('0.01'))}"
+
 
 @dataclass(frozen=True)
 class TradeOutlook:
@@ -83,12 +98,14 @@ def build_trade_outlook(
     progress = max(Decimal("0"), min(Decimal("100"), progress))
 
     atr_values = atr(list(candles), 14) if len(candles) >= 14 else []
-    atr14 = next((value for value in reversed(atr_values) if value is not None), None)
+    atr14_raw = next((value for value in reversed(atr_values) if value is not None), None)
+    atr14 = atr14_raw.quantize(Decimal("0.01")) if atr14_raw is not None else None
 
     ranges: list[Decimal] = []
     for candle in candles[-lookback:]:
         ranges.append(_as_dec(candle.high) - _as_dec(candle.low))
-    avg_daily_range = _mean(ranges)
+    avg_raw = _mean(ranges)
+    avg_daily_range = avg_raw.quantize(Decimal("0.01")) if avg_raw is not None else None
 
     closes = [_as_dec(c.close) for c in candles]
     drift_per_day: Decimal | None = None
@@ -144,10 +161,12 @@ def build_trade_outlook(
         estimated_reach_at = stamp + timedelta(days=max(1, calendar_days))
         day_label = f"{estimated_trading_days} trading day(s)"
         conf_label = {"low": "rough", "medium": "moderate", "high": "strong"}[confidence]
+        method_label = _METHOD_LABELS.get(method, method.replace("_", " "))
         summary = (
             f"{symbol}: about {day_label} to the profit goal at the current pace "
-            f"({method.replace('_', ' ')}, {conf_label} confidence). "
-            f"Remaining {distance_to_target:.2f}; ATR≈{atr14 or 'n/a'}."
+            f"({method_label}, {conf_label} confidence). "
+            f"About ₹{_money_2(distance_to_target)} left to the goal; "
+            f"14-day ATR ≈ ₹{_money_2(atr14)}."
         )
     else:
         summary = (

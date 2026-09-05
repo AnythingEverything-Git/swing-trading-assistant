@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape
+from urllib.parse import urlencode
 
 from app.application.scan.scan_presentation import PresentedScan
 
@@ -21,14 +22,42 @@ def _format_money(value) -> str:
         return str(value)
 
 
-def compose_scan_alert(presented: PresentedScan, *, universe_name: str, data_claim: str) -> ScanAlert:
+def _deep_link(
+    frontend_base_url: str | None,
+    *,
+    scan_run_id: int | None,
+    symbol: str | None = None,
+) -> str | None:
+    base = (frontend_base_url or "").rstrip("/")
+    if not base:
+        return None
+    params: dict[str, str] = {"view": "scan"}
+    if scan_run_id is not None:
+        params["run"] = str(scan_run_id)
+    if symbol:
+        params["symbol"] = symbol
+    return f"{base}/?{urlencode(params)}"
+
+
+def compose_scan_alert(
+    presented: PresentedScan,
+    *,
+    universe_name: str,
+    data_claim: str,
+    scan_run_id: int | None = None,
+    frontend_base_url: str | None = None,
+    ai_brief: str | None = None,
+    data_quality_bullets: list[str] | None = None,
+) -> ScanAlert:
     top_lines: list[str] = []
     top_rows_html: list[str] = []
     for item in presented.top:
         candidate = item.opportunity.candidate
         qty = item.quantity if item.quantity is not None else "—"
+        symbol = item.opportunity.symbol
+        link = _deep_link(frontend_base_url, scan_run_id=scan_run_id, symbol=symbol)
         line = (
-            f"{item.rank}. {item.opportunity.symbol}  "
+            f"{item.rank}. {symbol}  "
             f"Entry {_format_money(candidate.entry_price)}  "
             f"SL {_format_money(candidate.stop_loss)}  "
             f"Tgt {_format_money(candidate.target)}  "
@@ -36,11 +65,21 @@ def compose_scan_alert(presented: PresentedScan, *, universe_name: str, data_cla
             f"score {_format_money(item.quality.score)}  "
             f"qty {qty}"
         )
+        if link:
+            line = f"{line}\n   Open: {link}"
         top_lines.append(line)
+        symbol_cell = escape(symbol)
+        if link:
+            symbol_cell = (
+                f"<a href='{escape(link)}' style='color:#0f766e;text-decoration:none;'>"
+                f"<strong>{escape(symbol)}</strong></a>"
+            )
+        else:
+            symbol_cell = f"<strong>{escape(symbol)}</strong>"
         top_rows_html.append(
             "<tr>"
             f"<td style='padding:8px;border-bottom:1px solid #e5e7eb;'>{item.rank}</td>"
-            f"<td style='padding:8px;border-bottom:1px solid #e5e7eb;'><strong>{escape(item.opportunity.symbol)}</strong></td>"
+            f"<td style='padding:8px;border-bottom:1px solid #e5e7eb;'>{symbol_cell}</td>"
             f"<td style='padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;'>{escape(_format_money(candidate.entry_price))}</td>"
             f"<td style='padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;'>{escape(_format_money(candidate.stop_loss))}</td>"
             f"<td style='padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;'>{escape(_format_money(candidate.target))}</td>"
@@ -57,7 +96,19 @@ def compose_scan_alert(presented: PresentedScan, *, universe_name: str, data_cla
         )
 
     forming_preview = ", ".join(item.forming.symbol for item in presented.forming[:8]) or "none"
+    open_scan = _deep_link(frontend_base_url, scan_run_id=scan_run_id)
     title = f"TradePilot {universe_name} — {presented.report.eligible_count} eligible"
+    brief_block = ""
+    if ai_brief:
+        brief_block = f"AI brief\n{'-' * 42}\n{ai_brief.strip()}\n\n"
+    dq_block = ""
+    if data_quality_bullets:
+        dq_block = (
+            "Data quality notes\n"
+            f"{'-' * 42}\n"
+            + "\n".join(f"- {b}" for b in data_quality_bullets[:6])
+            + "\n\n"
+        )
     body = (
         f"TradePilot AI — Swing Opportunity Alert\n"
         f"{'=' * 42}\n\n"
@@ -66,14 +117,29 @@ def compose_scan_alert(presented: PresentedScan, *, universe_name: str, data_cla
         f"Eligible: {presented.report.eligible_count}  |  "
         f"Forming: {presented.report.forming_count}  |  "
         f"Scanned: {presented.report.symbols_scanned}\n\n"
+        f"{brief_block}"
         f"Top setups\n"
         f"{'-' * 42}\n"
         + "\n".join(top_lines)
         + "\n\n"
         f"Forming watchlist: {forming_preview}\n\n"
-        f"Educational decision support only — not investment advice.\n"
-        f"TradePilot does not place orders."
+        f"{dq_block}"
     )
+    if open_scan:
+        body += f"Open this scan: {open_scan}\n"
+    body += (
+        "\nEducational decision support only — not investment advice.\n"
+        "TradePilot does not place orders."
+    )
+
+    footer_extra = ""
+    if open_scan:
+        footer_extra = (
+            f"<div style='margin-bottom:10px;'>"
+            f"<a href='{escape(open_scan)}' style='display:inline-block;padding:10px 16px;"
+            f"background:#0f766e;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:600;'>"
+            f"Open this scan</a></div>"
+        )
 
     html_body = f"""<!DOCTYPE html>
 <html>
@@ -115,6 +181,8 @@ def compose_scan_alert(presented: PresentedScan, *, universe_name: str, data_cla
               </tr>
             </table>
 
+            {f"<div style='font-size:15px;font-weight:600;margin:8px 0 6px;'>AI brief</div><div style='font-size:13px;line-height:1.5;margin-bottom:14px;white-space:pre-wrap;'>{escape(ai_brief)}</div>" if ai_brief else ""}
+            {"".join(f"<div style='font-size:12px;color:#6b7280;margin:2px 0;'>• {escape(b)}</div>" for b in (data_quality_bullets or [])[:4])}
             <div style="font-size:15px;font-weight:600;margin:8px 0 10px;">Top setups</div>
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;font-size:13px;">
               <thead>
@@ -141,6 +209,7 @@ def compose_scan_alert(presented: PresentedScan, *, universe_name: str, data_cla
         </tr>
         <tr>
           <td style="padding:14px 24px;background:#f9fafb;color:#6b7280;font-size:12px;border-top:1px solid #e5e7eb;">
+            {footer_extra}
             Educational decision support only — not investment advice. TradePilot does not place orders.
           </td>
         </tr>

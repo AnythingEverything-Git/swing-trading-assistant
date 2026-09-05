@@ -1,7 +1,4 @@
-"""Run a universe scan, persist the ranked result, and deliver the alert payload.
-
-Works on demo candles today. After MARKET_DATA_SOURCE=upstox + refresh, the same
-command produces live post-close alerts.
+"""Run a universe scan via the shared scan job service, then deliver email alert.
 
     python scripts/run_scheduled_scan.py --universe NIFTY_50
 """
@@ -19,20 +16,15 @@ _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
-from app.api.routes.scan import to_scan_response
-from app.application.alerts import compose_scan_alert, deliver_alert
-from app.application.product.status_service import ProductStatusService
-from app.application.scan.scan_presentation import present_scan
-from app.application.scan.universe_scan_report_service import UniverseScanReportService
-from app.application.strategy.strategy_evaluation_service import StrategyEvaluationService
+from app.api.schemas import OpportunityScanResponse
+from app.application.alerts.composer import ScanAlert
+from app.application.alerts import deliver_alert
+from app.application.market_data.demo_universe_seed_service import default_demo_seed_range
+from app.application.scan.scan_job_service import execute_scan_job
 from app.core.config import get_settings
-from app.domain.strategy.strategy import BreakoutRetestConfirmationStrategy
-from app.infrastructure.database.repositories.candle_repository import CandleRepository
-from app.infrastructure.database.repositories.instrument_repository import InstrumentRepository
+from app.domain.entities.scan_run import SCAN_STATUS_COMPLETED, SCAN_STATUS_QUEUED
 from app.infrastructure.database.repositories.scan_run_repository import ScanRunRepository
 from app.infrastructure.database.session import create_engine, create_sessionmaker
-from app.application.market_data.query_service import MarketDataQueryService
-from app.application.market_data.demo_universe_seed_service import default_demo_seed_range
 from app.infrastructure.universe import get_universe
 
 
@@ -58,6 +50,7 @@ async def run_scan(
     account_equity: Decimal | None,
     risk_percent: Decimal,
     top_n: int,
+    brief_mode: str = "premarket",
 ) -> None:
     settings = get_settings()
     default_start, default_end = default_demo_seed_range()
@@ -70,62 +63,96 @@ async def run_scan(
     sessionmaker = create_sessionmaker(engine)
     try:
         async with sessionmaker() as session:
-            query = MarketDataQueryService(InstrumentRepository(session), CandleRepository(session))
-            evaluation = StrategyEvaluationService(query, BreakoutRetestConfirmationStrategy())
-            report = await UniverseScanReportService(evaluation).scan_universe(
-                universe, "1d", resolved_start, resolved_end
-            )
-            presented = present_scan(
-                report,
-                account_equity=account_equity,
-                risk_percent=risk_percent if account_equity is not None else None,
-                top_n=top_n,
-            )
-            product = ProductStatusService(CandleRepository(session), settings)
-            status = await product.status("1d")
             started_at = datetime.now(timezone.utc)
-            response = to_scan_response(
-                presented=presented,
-                universe_name=snapshot.name,
-                universe_version=snapshot.version,
-                timeframe="1d",
-                start=resolved_start,
-                end=resolved_end,
-                scan_run_id=None,
-                last_candle_time=status.last_candle_time,
-            )
-            finished_at = datetime.now(timezone.utc)
             scan_run = await ScanRunRepository(session).create(
                 started_at=started_at,
-                finished_at=finished_at,
+                finished_at=None,
                 universe_date=resolved_end,
                 universe_version=snapshot.version,
                 parameters={
                     "universe_name": snapshot.name,
+                    "universe_version": snapshot.version,
                     "timeframe": "1d",
                     "start": resolved_start.isoformat(),
                     "end": resolved_end.isoformat(),
+                    "top_n": top_n,
+                    "min_score": None,
+                    "account_equity": str(account_equity) if account_equity is not None else None,
+                    "risk_percent": str(risk_percent),
+                    "enable_paper_trading": False,
                     "scheduled": True,
-                    "data_source": response.data_source,
                 },
-                result_count=report.eligible_count,
-                metadata={
-                    "symbols_scanned": report.symbols_scanned,
-                    "eligible_count": report.eligible_count,
-                    "forming_count": report.forming_count,
-                    "data_source": response.data_source,
-                },
-                result_payload=response.model_dump(mode="json"),
+                result_count=0,
+                status=SCAN_STATUS_QUEUED,
             )
-            response.scan_run_id = scan_run.id
-            alert = compose_scan_alert(
-                presented, universe_name=snapshot.name, data_claim=response.data_claim
+            await session.commit()
+            scan_run_id = scan_run.id
+
+        await execute_scan_job(sessionmaker=sessionmaker, scan_run_id=scan_run_id, quote_provider=None)
+
+        async with sessionmaker() as session:
+            completed = await ScanRunRepository(session).get_by_id(scan_run_id)
+            if completed is None or completed.status != SCAN_STATUS_COMPLETED or not completed.result_payload:
+                detail = completed.error_message if completed else "missing"
+                raise RuntimeError(f"Scheduled scan failed: {detail}")
+
+            response = OpportunityScanResponse.model_validate(completed.result_payload)
+            body = response.alert_preview or f"Scan {scan_run_id} complete"
+            open_link = f"{settings.frontend_base_url.rstrip('/')}/?view=scan&run={scan_run_id}"
+            if open_link not in body:
+                body = f"{body}\n\nOpen this scan: {open_link}"
+            alert = ScanAlert(
+                title=f"TradePilot {snapshot.name} — {response.eligible_count} eligible ({brief_mode})",
+                body=body,
+                html_body=None,
             )
             delivery = await deliver_alert(alert, settings)
-            await session.commit()
-            print(f"Scheduled scan complete run_id={scan_run.id} source={response.data_source}")
-            print(f"  eligible={report.eligible_count} forming={report.forming_count} top={len(presented.top)}")
+            print(f"Scheduled scan complete run_id={scan_run_id} source={response.data_source}")
+            print(
+                f"  eligible={response.eligible_count} forming={response.forming_count} top={len(response.top)}"
+            )
             print(f"  alert_logged={delivery.logged} telegram={delivery.telegram_sent}")
+            print(alert.body)
+    finally:
+        await engine.dispose()
+
+
+async def run_eod_from_latest(*, universe_name: str) -> None:
+    """Email the latest completed ScanRun as an EOD brief (no new scan)."""
+    settings = get_settings()
+    engine = create_engine(settings.database_url)
+    sessionmaker = create_sessionmaker(engine)
+    try:
+        async with sessionmaker() as session:
+            runs = await ScanRunRepository(session).list_recent(limit=20)
+            match = None
+            for run in runs:
+                if run.status != SCAN_STATUS_COMPLETED or not run.result_payload:
+                    continue
+                params = run.parameters or {}
+                if str(params.get("universe_name") or "") == universe_name or universe_name == "ANY":
+                    match = run
+                    break
+            if match is None:
+                raise RuntimeError(f"No completed scan found for {universe_name}")
+            response = OpportunityScanResponse.model_validate(match.result_payload)
+            body = response.ai_brief or response.alert_preview or f"EOD scan {match.id}"
+            if response.data_quality_bullets:
+                body = (
+                    body
+                    + "\n\nData quality notes\n"
+                    + "\n".join(f"- {b}" for b in response.data_quality_bullets[:6])
+                )
+            open_link = f"{settings.frontend_base_url.rstrip('/')}/?view=scan&run={match.id}"
+            if open_link not in body:
+                body = f"{body}\n\nOpen this scan: {open_link}"
+            alert = ScanAlert(
+                title=f"TradePilot EOD — {response.eligible_count} eligible",
+                body=body,
+                html_body=None,
+            )
+            delivery = await deliver_alert(alert, settings)
+            print(f"EOD brief from run_id={match.id} logged={delivery.logged}")
             print(alert.body)
     finally:
         await engine.dispose()
@@ -139,17 +166,32 @@ def main() -> None:
     parser.add_argument("--account-equity", type=Decimal, default=None)
     parser.add_argument("--risk-percent", type=Decimal, default=Decimal("1"))
     parser.add_argument("--top-n", type=int, default=5)
-    args = parser.parse_args()
-    _run_async(
-        run_scan(
-            universe_name=args.universe,
-            start=args.start,
-            end=args.end,
-            account_equity=args.account_equity,
-            risk_percent=args.risk_percent,
-            top_n=args.top_n,
-        )
+    parser.add_argument(
+        "--brief",
+        choices=["premarket", "eod"],
+        default="premarket",
+        help="Brief mode label for AI/template email copy (eod reuses latest completed run when --reuse-latest).",
     )
+    parser.add_argument(
+        "--reuse-latest",
+        action="store_true",
+        help="For --brief eod: email the latest completed ScanRun instead of running a new scan.",
+    )
+    args = parser.parse_args()
+    if args.brief == "eod" and args.reuse_latest:
+        _run_async(run_eod_from_latest(universe_name=args.universe))
+    else:
+        _run_async(
+            run_scan(
+                universe_name=args.universe,
+                start=args.start,
+                end=args.end,
+                account_equity=args.account_equity,
+                risk_percent=args.risk_percent,
+                top_n=args.top_n,
+                brief_mode=args.brief,
+            )
+        )
 
 
 if __name__ == "__main__":

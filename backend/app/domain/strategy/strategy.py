@@ -296,6 +296,16 @@ class BreakoutRetestConfirmationStrategy:
     max_risk_fraction = Decimal("0.05")
     target_rr = Decimal("2.0")
 
+    def _recent_breakout_start(self, candle_count: int) -> int:
+        """Only breakouts that can still confirm/form near the last bar matter for NOW.
+
+        Confirmation must land on the final candle; retest+confirmation windows are
+        short, so older breakouts cannot produce a valid NOW setup or forming state.
+        """
+        # +2 covers swing confirmation lookaround used by structure helpers.
+        lookback = self.max_retest_window + self.max_confirmation_window + 2
+        return max(2, candle_count - lookback - 1)
+
     def _is_confirmed_swing_high(self, candles: Sequence[Candle], index: int) -> bool:
         if index < 2 or index >= len(candles) - 2:
             return False
@@ -530,7 +540,7 @@ class BreakoutRetestConfirmationStrategy:
         volume_sma_values: list[Decimal | None],
         direction: Direction,
     ) -> StrategyResult:
-        for breakout_index in range(2, len(candles) - 2):
+        for breakout_index in range(self._recent_breakout_start(len(candles)), len(candles) - 2):
             level = self._structure_level(candles, breakout_index, direction)
             if level is None:
                 continue
@@ -613,7 +623,7 @@ class BreakoutRetestConfirmationStrategy:
         last_index = len(candles) - 1
         latest: FormingSetup | None = None
 
-        for breakout_index in range(2, len(candles)):
+        for breakout_index in range(self._recent_breakout_start(len(candles)), len(candles)):
             level = self._structure_level(candles, breakout_index, direction)
             if level is None:
                 continue
@@ -705,13 +715,21 @@ class BreakoutRetestConfirmationStrategy:
             return left if left.breakout_candle_index > right.breakout_candle_index else right
         return left if left.direction == "LONG" else right
 
-    def inspect_forming(self, strategy_input: StrategyInput) -> FormingSetup | None:
+    def inspect_forming(
+        self,
+        strategy_input: StrategyInput,
+        *,
+        evaluated: StrategyResult | None = None,
+    ) -> FormingSetup | None:
         """Return an in-progress setup near the last bar, or None.
 
         Does not change the NOW contract: last-bar confirmation remains ``evaluate()``.
         If ``evaluate()`` already yields a valid setup, forming is None.
+
+        Pass ``evaluated`` to avoid a second full evaluate when the caller already ran it.
         """
-        if self.evaluate(strategy_input).has_setup:
+        result = evaluated if evaluated is not None else self.evaluate(strategy_input)
+        if result.has_setup:
             return None
 
         candles = list(strategy_input.candles)

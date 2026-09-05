@@ -8,6 +8,12 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 
 
+SCAN_STATUS_QUEUED = "queued"
+SCAN_STATUS_RUNNING = "running"
+SCAN_STATUS_COMPLETED = "completed"
+SCAN_STATUS_FAILED = "failed"
+
+
 class ScanRun(BaseModel):
     id: int
     started_at: datetime
@@ -18,3 +24,5 @@ class ScanRun(BaseModel):
     result_count: int = 0
     metadata: Optional[Dict[str, Any]] = None
     result_payload: Optional[Dict[str, Any]] = None
+    status: str = SCAN_STATUS_COMPLETED
+    error_message: Optional[str] = None

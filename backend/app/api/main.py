@@ -75,9 +75,19 @@ def create_app() -> FastAPI:
         else:
             logger.info("Market-data refresh scheduler not started")
 
+        from app.application.scan.scan_job_queue import get_or_create_scan_queue
+
+        scan_queue = get_or_create_scan_queue(app)
+        await scan_queue.start(app)
+
         try:
             yield
         finally:
+            try:
+                await scan_queue.stop()
+            except Exception:
+                logger.exception("Error while stopping scan job worker")
+
             stop_event = getattr(app.state, "refresh_stop_event", None)
             refresh_task = getattr(app.state, "refresh_task", None)
             if stop_event is not None:
@@ -109,6 +119,9 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Swing Trading Assistant - Backend", lifespan=lifespan)
 
+    from .rate_limit import RateLimitMiddleware
+
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[

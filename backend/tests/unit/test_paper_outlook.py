@@ -42,6 +42,12 @@ def test_outlook_estimates_days_when_drifting_toward_target():
     assert outlook.estimated_reach_at is not None
     assert outlook.progress_pct > 0
     assert "INFY" in outlook.summary
+    assert outlook.atr14 is not None
+    assert len(str(outlook.atr14).split(".")[-1]) <= 2
+    assert "14-day ATR ≈ ₹" in outlook.summary
+    atr_token = outlook.summary.split("14-day ATR ≈ ₹", 1)[1].rstrip(".")
+    assert len(atr_token.split(".")[-1]) <= 2
+    assert "drift atr blend" not in outlook.summary.lower()
 
 
 def test_outlook_target_already_reached():

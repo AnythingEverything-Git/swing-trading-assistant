@@ -129,6 +129,27 @@ class CandleRepository:
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+    async def get_range_for_instruments(
+        self,
+        instrument_ids: list[int],
+        timeframe: str,
+        start_timestamp: datetime,
+        end_timestamp: datetime,
+    ) -> List[CandleORM]:
+        """Load candles for many instruments in one query (ordered by instrument, time)."""
+        if not instrument_ids:
+            return []
+        stmt = (
+            select(CandleORM)
+            .where(CandleORM.instrument_id.in_(instrument_ids))
+            .where(CandleORM.timeframe == timeframe)
+            .where(CandleORM.timestamp >= start_timestamp)
+            .where(CandleORM.timestamp <= end_timestamp)
+            .order_by(CandleORM.instrument_id, CandleORM.timestamp)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def latest_timestamp(self, timeframe: str = "1d") -> datetime | None:
         stmt = select(func.max(CandleORM.timestamp)).where(CandleORM.timeframe == timeframe)
         result = await self.session.execute(stmt)

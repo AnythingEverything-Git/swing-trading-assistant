@@ -5,6 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import get_backtest_service
 from app.api.schemas import BacktestRequest, BacktestResponse, BacktestTradeResponse, PerformanceMetricsResponse
 from app.application.backtesting.backtest_service import BacktestService
+from app.application.narrative.backtest_interpreter import interpret_backtest, metrics_as_dict
+from app.application.narrative.grounded_narrator import GroundedNarrator, narrative_llm_enabled
+from app.core.config import get_settings
+import httpx
 
 
 router = APIRouter(prefix="/api/v1/backtest", tags=["backtest"])
@@ -54,6 +58,18 @@ async def run_backtest(
         )
         for trade in result.trades
     ]
+    metrics_payload = metrics_as_dict(result.metrics)
+    settings = get_settings()
+    if narrative_llm_enabled(settings):
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            interp = await interpret_backtest(
+                GroundedNarrator(client, settings),
+                metrics=metrics_payload,
+                symbol=result.symbol,
+            )
+    else:
+        interp = await interpret_backtest(None, metrics=metrics_payload, symbol=result.symbol)
+
     return BacktestResponse(
         symbol=result.symbol,
         timeframe=result.timeframe,
@@ -70,4 +86,6 @@ async def run_backtest(
             average_r=result.metrics.average_r,
             maximum_drawdown=result.metrics.maximum_drawdown,
         ),
+        interpretation=interp.text,
+        interpretation_provider=interp.provider,
     )

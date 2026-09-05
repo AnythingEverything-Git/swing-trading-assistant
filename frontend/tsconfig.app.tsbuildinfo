@@ -1,1 +1,1 @@
-{"root":["./src/main.tsx","./src/vite-env.d.ts","./src/components/setupchart.tsx"],"version":"5.9.3"}
+{"root":["./src/main.tsx","./src/plandeduction.ts","./src/terminology.ts","./src/vite-env.d.ts","./src/components/livevalue.tsx","./src/components/plandeductionpanel.tsx","./src/components/setupchart.tsx","./src/components/stockdetaildrawer.tsx","./src/components/tableheadercontrols.tsx","./src/components/tradedurationtimer.tsx","./src/scan/api.ts","./src/scan/resultcontrols.ts","./src/scan/types.ts"],"version":"5.9.3"}

@@ -4,6 +4,10 @@ Reuses StrategyEvaluationService for eligibility. Does not modify
 OpportunityScanService fail-fast semantics — this facade catches per-symbol
 failures so one missing series cannot abort the whole universe, and never
 maps data failures to NO_SETUP.
+
+Performance: when the market-data provider supports batch candle loads
+(`get_candles_for_symbols`), the universe scan uses 2 DB queries + in-memory
+classification instead of 2N sequential round-trips.
 """
 from __future__ import annotations
 
@@ -64,6 +68,82 @@ class UniverseScanReportService:
         return await self.scan(snapshot.symbols, timeframe, start, end)
 
     async def scan(
+        self,
+        symbols: Sequence[str],
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+    ) -> UniverseScanReport:
+        provider = getattr(self.evaluation_service, "market_data_provider", None)
+        batch_loader = getattr(provider, "get_candles_for_symbols", None)
+        if batch_loader is not None and hasattr(self.evaluation_service, "classify_loaded"):
+            candles_by_symbol = await batch_loader(symbols, timeframe, start, end)
+            return self._classify_preloaded(symbols, timeframe, candles_by_symbol)
+        return await self._scan_sequential(symbols, timeframe, start, end)
+
+    def _classify_preloaded(
+        self,
+        symbols: Sequence[str],
+        timeframe: str,
+        candles_by_symbol: dict,
+    ) -> UniverseScanReport:
+        opportunities: list[EligibleOpportunity] = []
+        forming: list[FormingSetup] = []
+        issues: list[SymbolScanIssue] = []
+        no_setup_count = 0
+        unavailable_count = 0
+        error_count = 0
+        symbols_scanned = 0
+
+        for symbol in symbols:
+            symbols_scanned += 1
+            candles = candles_by_symbol.get(symbol) or []
+            try:
+                result, forming_setup = self.evaluation_service.classify_loaded(
+                    symbol, timeframe, candles
+                )
+            except ValueError as exc:
+                unavailable_count += 1
+                if len(issues) < self.issue_limit:
+                    issues.append(
+                        SymbolScanIssue(symbol=symbol, status="UNAVAILABLE", detail=str(exc))
+                    )
+                continue
+            except Exception as exc:  # noqa: BLE001 — classify unexpected per-symbol failures
+                error_count += 1
+                if len(issues) < self.issue_limit:
+                    issues.append(SymbolScanIssue(symbol=symbol, status="ERROR", detail=str(exc)))
+                continue
+
+            if result.has_setup and result.candidate is not None and result.evidence is not None:
+                opportunities.append(
+                    EligibleOpportunity(
+                        symbol=symbol,
+                        candidate=result.candidate,
+                        evidence=result.evidence,
+                    )
+                )
+                continue
+
+            if forming_setup is not None:
+                forming.append(forming_setup)
+                continue
+
+            no_setup_count += 1
+
+        return UniverseScanReport(
+            symbols_scanned=symbols_scanned,
+            eligible_count=len(opportunities),
+            no_setup_count=no_setup_count,
+            unavailable_count=unavailable_count,
+            error_count=error_count,
+            opportunities=tuple(opportunities),
+            issues=tuple(issues),
+            forming_count=len(forming),
+            forming=tuple(forming),
+        )
+
+    async def _scan_sequential(
         self,
         symbols: Sequence[str],
         timeframe: str,

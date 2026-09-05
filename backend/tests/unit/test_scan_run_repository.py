@@ -41,6 +41,8 @@ async def test_scan_run_repository_create_maps_domain():
     assert result.universe_version == "v1"
     assert result.parameters == {"timeframe": "1d"}
     assert result.metadata == {"symbols_scanned": 498}
+    assert result.status == "completed"
     assert captured["row"].metadata_ == {"symbols_scanned": 498}
     assert captured["row"].result_payload is None
+    assert captured["row"].status == "completed"
     session.flush.assert_awaited_once()

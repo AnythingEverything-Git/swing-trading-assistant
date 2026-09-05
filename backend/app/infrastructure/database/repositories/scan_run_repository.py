@@ -1,13 +1,19 @@
 """Persistence for ScanRun audit records."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.entities.scan_run import ScanRun
+from app.domain.entities.scan_run import (
+    SCAN_STATUS_COMPLETED,
+    SCAN_STATUS_FAILED,
+    SCAN_STATUS_QUEUED,
+    SCAN_STATUS_RUNNING,
+    ScanRun,
+)
 from app.infrastructure.database.models import ScanRunORM
 
 
@@ -26,6 +32,8 @@ class ScanRunRepository:
         result_count: int = 0,
         metadata: dict[str, Any] | None = None,
         result_payload: dict[str, Any] | None = None,
+        status: str = SCAN_STATUS_COMPLETED,
+        error_message: str | None = None,
     ) -> ScanRun:
         row = ScanRunORM(
             started_at=started_at,
@@ -36,6 +44,8 @@ class ScanRunRepository:
             result_count=result_count,
             metadata_=metadata,
             result_payload=result_payload,
+            status=status,
+            error_message=error_message,
         )
         self.session.add(row)
         await self.session.flush()
@@ -52,6 +62,75 @@ class ScanRunRepository:
         result = await self.session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars().all()]
 
+    async def list_ids_by_status(self, statuses: list[str], *, limit: int = 50) -> list[int]:
+        stmt = (
+            select(ScanRunORM.id)
+            .where(ScanRunORM.status.in_(statuses))
+            .order_by(ScanRunORM.id.asc())
+            .limit(max(1, min(limit, 200)))
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def mark_running(self, scan_run_id: int) -> None:
+        await self.session.execute(
+            update(ScanRunORM)
+            .where(ScanRunORM.id == scan_run_id)
+            .values(status=SCAN_STATUS_RUNNING, error_message=None)
+        )
+
+    async def mark_completed(
+        self,
+        scan_run_id: int,
+        *,
+        finished_at: datetime,
+        result_count: int,
+        metadata: dict[str, Any] | None,
+        result_payload: dict[str, Any],
+    ) -> None:
+        await self.session.execute(
+            update(ScanRunORM)
+            .where(ScanRunORM.id == scan_run_id)
+            .values(
+                status=SCAN_STATUS_COMPLETED,
+                finished_at=finished_at,
+                result_count=result_count,
+                metadata_=metadata,
+                result_payload=result_payload,
+                error_message=None,
+            )
+        )
+
+    async def mark_failed(
+        self,
+        scan_run_id: int,
+        *,
+        finished_at: datetime,
+        error_message: str,
+    ) -> None:
+        await self.session.execute(
+            update(ScanRunORM)
+            .where(ScanRunORM.id == scan_run_id)
+            .values(
+                status=SCAN_STATUS_FAILED,
+                finished_at=finished_at,
+                error_message=error_message[:2000],
+            )
+        )
+
+    async def reclaim_stale_jobs(self) -> list[int]:
+        """Re-queue interrupted jobs after process restart; fail stuck running once."""
+        queued = await self.list_ids_by_status([SCAN_STATUS_QUEUED])
+        running = await self.list_ids_by_status([SCAN_STATUS_RUNNING])
+        now = datetime.now(timezone.utc)
+        for scan_run_id in running:
+            await self.mark_failed(
+                scan_run_id,
+                finished_at=now,
+                error_message="Scan interrupted by server restart",
+            )
+        return queued
+
     @staticmethod
     def _to_domain(row: ScanRunORM) -> ScanRun:
         return ScanRun(
@@ -64,4 +143,6 @@ class ScanRunRepository:
             result_count=row.result_count,
             metadata=row.metadata_,
             result_payload=row.result_payload,
+            status=getattr(row, "status", None) or SCAN_STATUS_COMPLETED,
+            error_message=getattr(row, "error_message", None),
         )

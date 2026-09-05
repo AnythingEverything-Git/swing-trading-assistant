@@ -180,7 +180,7 @@ async def run_confirmation_watch(universe_name: str, account_equity: Decimal | N
 
 def main():
     parser = argparse.ArgumentParser(description="TradePilot email alert runner.")
-    parser.add_argument("--mode", choices=["premarket", "confirmation-watch"], required=True)
+    parser.add_argument("--mode", choices=["premarket", "confirmation-watch", "eod"], required=True)
     parser.add_argument("--universe", default="NIFTY_500")
     parser.add_argument("--account-equity", type=Decimal, default=None)
     parser.add_argument("--risk-percent", type=Decimal, default=Decimal("1"))
@@ -189,6 +189,11 @@ def main():
 
     if args.mode == "premarket":
         _run_async(run_premarket(args.universe, args.account_equity, args.risk_percent, args.top_n))
+    elif args.mode == "eod":
+        # Delegate to scheduled scan EOD path (latest completed run).
+        from run_scheduled_scan import run_eod_from_latest
+
+        _run_async(run_eod_from_latest(universe_name=args.universe))
     else:
         _run_async(run_confirmation_watch(args.universe, args.account_equity, args.risk_percent, args.top_n))
 

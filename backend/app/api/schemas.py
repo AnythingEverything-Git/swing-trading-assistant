@@ -149,6 +149,14 @@ class EligibleOpportunityResponse(BaseModel):
     narrative: str | None = None
     invalidation: str | None = None
     quality_reason: str | None = None
+    narrative_source: str | None = "template"
+    invalidation_source: str | None = "template"
+    quality_critique: str | None = None
+    quality_flags: list[str] = []
+    volume_thrust: Decimal | None = None
+    retest_tightness: Decimal | None = None
+    risk_percent: Decimal | None = None
+    confirmation_volume_ratio: Decimal | None = None
     current_price: Decimal | None = None
     current_price_change_percent: Decimal | None = None
 
@@ -198,9 +206,27 @@ class OpportunityScanResponse(BaseModel):
     data_claim: str = "Demo candles — not live market data"
     last_candle_time: datetime | None = None
     alert_preview: str | None = None
+    data_quality_bullets: list[str] | None = None
+    ai_brief: str | None = None
     paper_opened_count: int = 0
     paper_skipped_count: int = 0
     paper_claim: str | None = "PRACTICE TRADES ONLY — fake money, no real broker orders"
+    status: str = "completed"
+    error_message: str | None = None
+
+
+class ScanJobAcceptedResponse(BaseModel):
+    scan_run_id: int
+    status: str = "queued"
+    message: str = "Scan queued"
+
+
+class ScanRunStatusResponse(BaseModel):
+    scan_run_id: int
+    status: str
+    error_message: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class ScanIssueResponse(BaseModel):
@@ -218,6 +244,7 @@ class ScanRunSummaryResponse(BaseModel):
     result_count: int
     symbols_scanned: int | None = None
     data_source: str | None = None
+    status: str | None = None
 
 
 class ProductStatusResponse(BaseModel):
@@ -339,6 +366,27 @@ class ResearchInsightResponse(BaseModel):
     cached: bool = False
 
 
+class PlanDeductionStepPayload(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=200)
+    value: str = Field(default="", max_length=200)
+    summary: str = Field(default="", max_length=2000)
+    details: list[str] = Field(default_factory=list, max_length=20)
+
+
+class PlanDeductionRephraseRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=64)
+    steps: list[PlanDeductionStepPayload] = Field(min_length=1, max_length=12)
+
+
+class PlanDeductionRephraseResponse(BaseModel):
+    symbol: str
+    steps: list[PlanDeductionStepPayload]
+    provider: str
+    grounded: bool = True
+    detail: str | None = None
+
+
 class BacktestRequest(BaseModel):
     symbol: str
     timeframe: str
@@ -394,6 +442,67 @@ class BacktestResponse(BaseModel):
     completed_trades: int
     trades: list[BacktestTradeResponse]
     metrics: PerformanceMetricsResponse
+    interpretation: str | None = None
+    interpretation_provider: str | None = None
+
+
+class PersonalBookRequest(BaseModel):
+    scan_run_id: int | None = None
+    account_equity: Decimal = Field(gt=Decimal("0"))
+    risk_percent: Decimal = Field(default=Decimal("1"), gt=Decimal("0"))
+    max_positions: int = Field(default=3, ge=1, le=10)
+    # Inline opportunities when no scan_run_id (tests / sync)
+    opportunities: list[EligibleOpportunityResponse] | None = None
+
+
+class PersonalBookPickResponse(BaseModel):
+    symbol: str
+    direction: str
+    rank: int
+    quality_score: Decimal
+    quantity: int
+    risk_amount: Decimal
+    entry: Decimal
+    stop: Decimal
+    target: Decimal
+    risk_reward_ratio: Decimal
+
+
+class PersonalBookRejectionResponse(BaseModel):
+    symbol: str
+    reason: str
+
+
+class PersonalBookResponse(BaseModel):
+    picks: list[PersonalBookPickResponse]
+    rejected: list[PersonalBookRejectionResponse]
+    rationale_rules: list[str]
+    explanation: str | None = None
+    explanation_provider: str = "template"
+
+
+class SimilarSetupItemResponse(BaseModel):
+    symbol: str
+    direction: str
+    confirmation_time: datetime
+    quality_score: Decimal
+    atr_percent: Decimal
+    risk_reward_ratio: Decimal
+    distance: Decimal
+    forward_bars: int
+    forward_return_pct: Decimal | None = None
+    hit_target: bool | None = None
+    hit_stop: bool | None = None
+    blurb: str | None = None
+    blurb_provider: str = "template"
+    scan_run_id: int | None = None
+
+
+class SimilarSetupsResponse(BaseModel):
+    symbol: str
+    direction: str | None = None
+    matches: list[SimilarSetupItemResponse]
+    provider: str = "template"
 
 
 class PaperTradeResponse(BaseModel):

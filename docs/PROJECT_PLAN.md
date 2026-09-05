@@ -1,7 +1,7 @@
 # TradePilot AI — Project Plan (from now onwards)
 
-**Last updated:** 2026-09-04  
-**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan for LONG breakout and SHORT breakdown setups, ranked opportunities, forming watchlist, interactive charts, live prices, quality scoring, position sizing, **optional practice trading**, beginner-friendly labels, scan history, backtest, auto-refresh scan, SES email alerts, **clean stock-detail drawer** (Overview / Setup / Technical / F&O / News & Events — open from any stock name including Practice), and **in-app weekday watermark candle refresh** (IST). Gemini research insights remain available via API with template fallback; the detail UI focuses on facts and trade plan (no per-tab AI cards).  
+**Last updated:** 2026-09-05  
+**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan for LONG breakout and SHORT breakdown setups, ranked opportunities, forming watchlist, interactive charts, live prices, quality scoring, position sizing, **optional practice trading**, beginner-friendly labels, scan history, backtest, auto-refresh scan, SES email alerts (with UI deep links), **async scan jobs**, per-IP rate limits, stock-detail drawer, in-app watermark candle refresh, and **Phase B AI moat** (grounded why/invalidation polish, advisory quality critic, morning/EOD brief, severity-aware data-quality notes, backtest interpreter, similar-setup retrieval). Personal book remains **API-only** (`POST /api/v1/scan/book`) — Find setups UI focuses on Top-N ready ideas + tables (no “Your book” panel). **LLM never invents Entry / SL / Target** — strategy owns prices; `NARRATIVE_PROVIDER=template` keeps offline templates. **Still deferred:** auth, Razorpay billing, Telegram delivery.  
 **Data:** 497 Nifty symbols ingested via Upstox 1d candles. Demo mode still available via `MARKET_DATA_SOURCE=demo`.
 
 ---
@@ -25,9 +25,11 @@ For every eligible stock, provide:
 | Current price | Live Upstox quote (auto-refreshes every 15s; animated LTP) |
 | Quality score | `QualityScore` (rules-based ranking) |
 | Position size | Based on account equity + risk % |
-| Why eligible | `StrategyEvidence` (decision + structure) + template narrative |
+| Why eligible | `StrategyEvidence` + template narrative; optional grounded LLM polish (`narrative_source`) |
 
 **Do not turn this into:** a generic screener, chatbot, autonomous trading bot, portfolio app, or broker OMS.
+
+**LLM contract (Phase B):** Strategy owns Entry / SL / Target / R:R. Narratives only rephrase grounded facts (numeric allowlist). Kill-switch: `NARRATIVE_PROVIDER=template` (default) or missing `GOOGLE_API_KEY`.
 
 **Same rules for scan and backtest:** `BreakoutRetestConfirmationStrategy` with last-bar confirmation = "NOW".
 
@@ -108,10 +110,36 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 | Stable detail drawer (no refetch flicker on quote ticks) | Yes |
 | Animated live LTP (`LiveValue`) + production UI motion polish | Yes |
 | Paper trading agent (all eligible + live LTP MTM/exits) | Yes — **optional**; PENDING until entry; live strip; capital; alerts; timer + ETA |
+| Phase B — `GroundedNarrator` facade | Yes |
+| Phase B — scan why + invalidation polish (Top-N) | Yes |
+| Phase B — advisory quality critic (`quality_critique` / flags) | Yes |
+| Phase B — morning / EOD AI brief (email) | Yes |
+| Phase B — data-quality copilot | Yes — severity-aware: quiet “Data note” for ≤5 UNAVAILABLE / no ERROR; loud issues box only when real |
+| Phase B — backtest interpreter | Yes |
+| Phase B — personal book (`POST /api/v1/scan/book`) | Yes — rules solver + LLM explain; **API retained, Find setups UI removed** (redundant with Top-N) |
+| Phase B — similar-setup retrieval | Yes — ScanRun fingerprints + candle forward path; drawer dedupes peers (one per symbol) |
+| Find setups Top-N + filter/sort toolbar | Yes — rank + strategy confidence on cards/table/CSV |
+| Detail drawer tablist polish | Yes — Overview / Setup / Technical / F&O / News labels no longer clipped |
+
+### Phase B checklist
+
+- [x] B1 Shared grounded narrator
+- [x] B2 Scan why eligible polish
+- [x] B3 Invalidation coach
+- [x] B4 Research insight in drawer (single card)
+- [x] B5 Quality critic (advisory only — does not replace rules rank)
+- [x] B6 Morning / EOD brief
+- [x] B7 Data-quality copilot (severity UX so minor gaps do not dominate the desk)
+- [x] B8 Backtest interpreter
+- [x] B9 Personal book (rules + explain) — API only; UI panel removed after usability review
+- [x] B10 Similar-setup retrieval (deduped peers in drawer)
+- [x] Docs + smoke + unit tests (`test_phase_b_ai_moat.py`)
+- [x] Post–Phase B UX polish — data-note quietness, similar-setups redundancy, drawer tabs, drop Your book UI
 
 ### Explicitly not done
 
 - Auth, billing, real broker execution / OMS
+- Telegram alert delivery (email SES is live; Telegram tokens remain optional)
 - WebSocket live ticks (polling quotes every 15s instead)
 - Multi-timeframe beyond `1d`
 
@@ -130,7 +158,7 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 | UC7 | Trader | **Position sizing** per setup | ✅ Quantity + risk amount |
 | UC8 | Trader | Browse long result lists | ✅ Top-10 + See more/less |
 | UC9 | Trader | Export eligibles | ✅ CSV |
-| UC10 | Trader | Trust partial data | ✅ Unavailable/Error cards + issues |
+| UC10 | Trader | Trust partial data | ✅ Metric cards + severity-aware data note / issues (UNAVAILABLE ≠ no setup) |
 | UC11 | Trader | Switch product areas | ✅ Find setups ↔ Stock research ↔ Practice trades |
 | UC12 | Trader | Evaluate / backtest one symbol | ✅ Stock research + live quote |
 | UC13 | Trader | Reload past scan results | ✅ Scan history dropdown |
@@ -142,8 +170,10 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 | UC19 | Trader | Research a symbol via **detail tabs** | ✅ Overview / Setup / Technical / F&O / News |
 | UC20 | Trader | Read **grounded AI insight** on research tabs | ✅ Gemini Flash (facts-only; template fallback) |
 | UC21 | Trader | **Optional practice trades** after scan | ✅ Opt-in; entry watch → fill; live strip; capital; start-trade alert; timer + ETA |
+| UC22 | Trader | See **similar historical setups** for a symbol | ✅ Drawer Overview peers + measured forward outcomes |
+| UC23 | Trader | Filter / sort ranked eligibles on Find setups | ✅ Column filters + strategy-confidence sort |
 
-**Out of scope:** real broker orders, auth/billing, WebSocket ticks.
+**Out of scope:** real broker orders, auth/billing, WebSocket ticks, in-app personal-book portfolio builder (API remains for later).
 
 ---
 
@@ -436,6 +466,6 @@ P9  Practice trades (opt-in, entry→exit)   ✅
 
 ## 9. One-line summary
 
-**Now:** Full-featured product — live Upstox data, ranked LONG + SHORT scan, charts, clean stock-detail drawer (open anywhere; Setup evaluates on demand), optional practice trading, beginner labels, 5‑min auto-refresh, SES alerts, in-app IST watermark candle refresh.  
-**Next:** Deferred features (auth, real broker OMS, WebSocket); run [RELEASE_SMOKE.md](RELEASE_SMOKE.md) Checkpoint I before claiming a release.  
-**Verify:** Checkpoints A–I in §2c before claiming a release.
+**Now:** Full-featured product — live Upstox data, ranked LONG + SHORT scan, **async scan jobs** (202 + poll), charts, clean stock-detail drawer, optional practice trading, beginner labels, 5‑min auto-refresh, SES alerts with deep links, in-app IST watermark candle refresh, per-IP rate limits.  
+**Next:** Deferred commercial shell (auth, Razorpay, Telegram); run [RELEASE_SMOKE.md](RELEASE_SMOKE.md) including async scan + deep-link checks.  
+**Verify:** Checkpoints A–I in §2c plus RELEASE_SMOKE items 11–13 before claiming Phase A (excl. A6) sellable.

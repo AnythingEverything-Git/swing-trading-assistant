@@ -37,6 +37,10 @@ type Opportunity = {
   risk_amount?: string | number | null
   narrative?: string | null
   invalidation?: string | null
+  narrative_source?: string | null
+  invalidation_source?: string | null
+  quality_critique?: string | null
+  quality_flags?: string[]
   current_price?: string | number | null
   current_price_change_percent?: string | number | null
 }
@@ -250,6 +254,22 @@ export function StockDetailDrawer({
   const [setupLoading, setSetupLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [groundedInsight, setGroundedInsight] = useState<{
+    title: string
+    headline?: string | null
+    bullets: string[]
+    provider: string
+  } | null>(null)
+  const [similarSetups, setSimilarSetups] = useState<
+    {
+      symbol: string
+      confirmation_time: string
+      forward_return_pct?: string | number | null
+      forward_bars?: number
+      blurb?: string | null
+      distance: string | number
+    }[]
+  >([])
   const [visibleIndicators, setVisibleIndicators] = useState<string[]>(() => readVisibleIndicators())
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const [draftIndicators, setDraftIndicators] = useState<string[]>(() => readVisibleIndicators())
@@ -422,6 +442,89 @@ export function StockDetailDrawer({
   }, [baseUrl, forming, opportunity, scanEnd, scanStart, symbol])
 
   useEffect(() => {
+    if (!symbol) return
+    let cancelled = false
+    const loadGrounded = async () => {
+      try {
+        const context: Record<string, unknown> = {
+          symbol,
+          setup: resolvedOpportunity
+            ? {
+                narrative: resolvedOpportunity.narrative,
+                entry: resolvedOpportunity.candidate.entry_price,
+                stop: resolvedOpportunity.candidate.stop_loss,
+                target: resolvedOpportunity.candidate.target,
+                invalidation: resolvedOpportunity.invalidation,
+                quality_critique: resolvedOpportunity.quality_critique,
+              }
+            : forming
+              ? { narrative: forming.narrative, stage: forming.stage }
+              : {},
+        }
+        const insightRes = await fetch(
+          `${baseUrl}/api/v1/research/${encodeURIComponent(symbol)}/insight`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tab: 'overview', context }),
+          },
+        )
+        if (insightRes.ok) {
+          const payload = (await insightRes.json()) as {
+            title: string
+            headline?: string | null
+            bullets?: string[]
+            provider: string
+          }
+          if (!cancelled) {
+            setGroundedInsight({
+              title: payload.title,
+              headline: payload.headline,
+              bullets: payload.bullets ?? [],
+              provider: payload.provider,
+            })
+          }
+        }
+      } catch {
+        /* insight is optional polish */
+      }
+      try {
+        const similarRes = await fetch(
+          `${baseUrl}/api/v1/research/${encodeURIComponent(symbol)}/similar-setups?limit=5`,
+        )
+        if (similarRes.ok) {
+          const payload = (await similarRes.json()) as {
+            matches?: {
+              symbol: string
+              confirmation_time: string
+              forward_return_pct?: string | number | null
+              forward_bars?: number
+              blurb?: string | null
+              distance: string | number
+            }[]
+          }
+          if (!cancelled) {
+            const seen = new Set<string>()
+            const unique = (payload.matches ?? []).filter((item) => {
+              const key = `${item.symbol}|${item.confirmation_time.slice(0, 10)}`
+              if (seen.has(key)) return false
+              seen.add(key)
+              return true
+            })
+            setSimilarSetups(unique)
+          }
+        }
+      } catch {
+        /* similar setups optional */
+      }
+    }
+    void loadGrounded()
+    return () => {
+      cancelled = true
+    }
+  }, [baseUrl, symbol, resolvedOpportunity, forming])
+
+  useEffect(() => {
     if (!symbol) {
       setLoading(false)
       return
@@ -587,14 +690,14 @@ export function StockDetailDrawer({
           </button>
         </header>
 
-        <nav className="detail-tabs" role="tablist" aria-label="Stock detail tabs">
+        <nav className="detail-tablist" role="tablist" aria-label="Stock detail tabs">
           {TABS.map((tab) => (
             <button
               key={tab.id}
               type="button"
               role="tab"
               aria-selected={activeTab === tab.id}
-              className={`detail-tab ${activeTab === tab.id ? 'active' : ''}`}
+              className={`detail-tablist-btn${activeTab === tab.id ? ' is-active' : ''}`}
               onClick={() => setActiveTab(tab.id)}
             >
               {tab.label}
@@ -608,6 +711,56 @@ export function StockDetailDrawer({
 
           {activeTab === 'overview' && overview && (
             <div className="detail-stack">
+              {groundedInsight && (
+                <section className="detail-block grounded-insight-card">
+                  <h3>
+                    {groundedInsight.title}
+                    {groundedInsight.provider === 'gemini' || groundedInsight.provider === 'llm' ? (
+                      <span className="ai-polished-badge">AI-polished</span>
+                    ) : null}
+                  </h3>
+                  {groundedInsight.headline && <p className="detail-lede">{groundedInsight.headline}</p>}
+                  <ul>
+                    {groundedInsight.bullets.map((bullet) => (
+                      <li key={bullet}>{bullet}</li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+              {resolvedOpportunity?.invalidation && (
+                <p className="invalidation-copy">
+                  {resolvedOpportunity.invalidation_source === 'llm' && (
+                    <span className="ai-polished-badge">AI-polished</span>
+                  )}
+                  {resolvedOpportunity.invalidation}
+                </p>
+              )}
+              {resolvedOpportunity?.quality_critique && (
+                <p className="quality-critique">{resolvedOpportunity.quality_critique}</p>
+              )}
+              {similarSetups.length > 0 && (
+                <section className="detail-block">
+                  <h3>Similar setups</h3>
+                  <ul className="similar-setups-list">
+                    {similarSetups.map((item) => {
+                      const date = item.confirmation_time.slice(0, 10)
+                      const hasFwd = item.forward_return_pct != null && String(item.forward_return_pct) !== ''
+                      const bars = item.forward_bars ?? 10
+                      return (
+                        <li key={`${item.symbol}-${date}-${item.distance}`}>
+                          <strong>{item.symbol}</strong>
+                          <span> · {date}</span>
+                          <p className="similar-blurb">
+                            {hasFwd
+                              ? `Next ${bars} sessions averaged ${item.forward_return_pct}% (candle path, not live P&L).`
+                              : `Next ${bars} sessions: not enough candle history to measure yet.`}
+                          </p>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </section>
+              )}
               <section className="detail-block">
                 <h3>Performance</h3>
                 <div className="metric-row">
@@ -649,7 +802,23 @@ export function StockDetailDrawer({
           {activeTab === 'setup' && (
             <div className="detail-stack">
               {(resolvedOpportunity?.narrative || forming?.narrative) && (
-                <p className="detail-lede">{resolvedOpportunity?.narrative ?? forming?.narrative}</p>
+                <p className="detail-lede">
+                  {resolvedOpportunity?.narrative_source === 'llm' && (
+                    <span className="ai-polished-badge">AI-polished</span>
+                  )}
+                  {resolvedOpportunity?.narrative ?? forming?.narrative}
+                </p>
+              )}
+              {resolvedOpportunity?.invalidation && (
+                <p className="invalidation-copy">
+                  {resolvedOpportunity.invalidation_source === 'llm' && (
+                    <span className="ai-polished-badge">AI-polished</span>
+                  )}
+                  {resolvedOpportunity.invalidation}
+                </p>
+              )}
+              {resolvedOpportunity?.quality_critique && (
+                <p className="quality-critique">{resolvedOpportunity.quality_critique}</p>
               )}
               <section className="detail-block">
                 <h3>Chart</h3>
@@ -705,8 +874,12 @@ export function StockDetailDrawer({
                       <strong>{resolvedOpportunity.candidate.setup_name}</strong>
                     </div>
                     <div>
-                      <span>Quality</span>
-                      <strong>{formatNumber(resolvedOpportunity.quality_score, 1)}</strong>
+                      <span>Strategy confidence</span>
+                      <strong title="Rules-based setup quality (0–100%), not a predicted win rate">
+                        {resolvedOpportunity.quality_score == null
+                          ? '—'
+                          : `${Math.max(0, Math.min(100, Math.round(Number(resolvedOpportunity.quality_score))))}%`}
+                      </strong>
                     </div>
                     <div>
                       <span>Shares</span>

@@ -13,6 +13,7 @@ from app.application.narrative.template_narrator import (
 from app.application.scan.opportunity_scan_service import EligibleOpportunity
 from app.application.scan.quality_score import QualityScore, score_opportunity
 from app.application.scan.universe_scan_report_service import UniverseScanReport
+from app.domain.strategy.strategy import FormingSetup
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,10 @@ class PresentedOpportunity:
     invalidation: str
     quantity: int | None
     risk_amount: Decimal | None
+    narrative_source: str = "template"
+    invalidation_source: str = "template"
+    quality_critique: str | None = None
+    quality_flags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

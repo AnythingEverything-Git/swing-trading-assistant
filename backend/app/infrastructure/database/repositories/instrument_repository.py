@@ -19,6 +19,15 @@ class InstrumentRepository:
         result = await self.session.execute(stmt)
         return result.scalars().first()
 
+    async def get_by_symbols(self, symbols: list[str]) -> list[InstrumentORM]:
+        if not symbols:
+            return []
+        # Preserve case-sensitive NSE symbols as stored.
+        unique = list(dict.fromkeys(symbols))
+        stmt = select(InstrumentORM).where(InstrumentORM.symbol.in_(unique))
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_or_create(self, symbol: str, name: Optional[str] = None, exchange: Optional[str] = None, metadata: Optional[dict] = None) -> InstrumentORM:
         existing = await self.get_by_symbol(symbol)
         if existing:

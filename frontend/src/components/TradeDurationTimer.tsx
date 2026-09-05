@@ -32,14 +32,12 @@ export function TradeDurationTimer({ startedAt, className = '', label = 'Open fo
   const text = Number.isFinite(started) ? formatElapsed(now - started) : '—'
 
   return (
-    <span className={`trade-duration-timer ${className}`.trim()}>
-      {label ? (
-        <>
-          {label} <strong>{text}</strong>
-        </>
-      ) : (
-        <strong>{text}</strong>
-      )}
+    <span className={`trade-duration-timer ${className}`.trim()} title="Time since this practice trade opened">
+      {label ? <span className="trade-duration-label">{label}</span> : null}
+      <strong className="trade-duration-digits" aria-live="off">
+        {text}
+      </strong>
+      <span className="trade-duration-pulse" aria-hidden="true" />
     </span>
   )
 }

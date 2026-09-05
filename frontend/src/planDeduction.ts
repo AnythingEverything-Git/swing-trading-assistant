@@ -180,9 +180,13 @@ export function buildPlanDeductionSteps(input: DeductionInput): DeductionStep[] 
     },
     {
       id: 'quality',
-      title: '6. Quality score',
-      value: input.qualityScore == null ? '—' : input.formatNumber(input.qualityScore, 1),
-      summary: 'A 0–100 score that ranks how “clean” the setup looks — higher is better.',
+      title: '6. Strategy confidence',
+      value:
+        input.qualityScore == null
+          ? '—'
+          : `${Math.max(0, Math.min(100, Math.round(Number(input.qualityScore))))}%`,
+      summary:
+        'A 0–100% rules-based score for how clean the setup looks — used for ranking. Not a win-rate forecast.',
       details: [
         `Volume thrust (breakout volume ÷ volume SMA) ≈ ${input.formatNumber(q.volumeThrust, 2)}x → up to 30 points (here ≈ ${input.formatNumber(q.volumePoints, 1)}).`,
         `Confirmation volume ÷ SMA ≈ ${input.formatNumber(q.confirmationRatio, 2)}x → up to 25 points (here ≈ ${input.formatNumber(q.confirmationPoints, 1)}).`,
@@ -190,7 +194,7 @@ export function buildPlanDeductionSteps(input: DeductionInput): DeductionStep[] 
         `Stop size as % of price ≈ ${input.formatPercent(q.riskPercentOfPrice)} → up to 20 points (smaller risk % is better; here ≈ ${input.formatNumber(q.riskPoints, 1)}).`,
         input.qualityReason
           ? `Scanner note: ${input.qualityReason}`
-          : 'These four parts are added for the final quality score used in ranking.',
+          : 'These four parts are added for the final confidence used in ranking.',
       ],
     },
     {

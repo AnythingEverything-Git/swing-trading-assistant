@@ -7,7 +7,7 @@ from decimal import Decimal
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from app.api.deps import get_query_service, get_upstox_provider
+from app.api.deps import get_db, get_query_service, get_upstox_provider
 from app.api.schemas import (
     FnoResearchResponse,
     IndicatorReadingResponse,
@@ -18,11 +18,17 @@ from app.api.schemas import (
     OverviewResearchResponse,
     PerformancePointResponse,
     PivotLevelsResponse,
+    PlanDeductionRephraseRequest,
+    PlanDeductionRephraseResponse,
+    PlanDeductionStepPayload,
     ResearchInsightRequest,
     ResearchInsightResponse,
+    SimilarSetupItemResponse,
+    SimilarSetupsResponse,
     TechnicalResearchResponse,
 )
 from app.application.market_data.query_service import MarketDataQueryService
+from app.application.narrative.deduction_rephraser import DeductionRephraser, normalize_steps
 from app.application.narrative.gemini_narrator import GeminiNarrator
 from app.application.narrative.insight_cache import (
     get_cached_insight,
@@ -242,4 +248,156 @@ async def research_insight(
         grounded=result.grounded,
         detail=result.detail,
         cached=False,
+    )
+
+
+@router.post("/plan-deduction/rephrase", response_model=PlanDeductionRephraseResponse)
+async def rephrase_plan_deduction(
+    payload: PlanDeductionRephraseRequest,
+) -> PlanDeductionRephraseResponse:
+    """Polish beginner wording only. Numbers and strategy facts stay locked to the request."""
+    source = normalize_steps([step.model_dump() for step in payload.steps])
+    if not source:
+        raise HTTPException(status_code=400, detail="steps required")
+
+    async with httpx.AsyncClient() as client:
+        result = await DeductionRephraser(client, get_settings()).rephrase(
+            symbol=payload.symbol,
+            steps=source,
+        )
+
+    return PlanDeductionRephraseResponse(
+        symbol=payload.symbol.upper().strip(),
+        steps=[
+            PlanDeductionStepPayload(
+                id=step.id,
+                title=step.title,
+                value=step.value,
+                summary=step.summary,
+                details=list(step.details),
+            )
+            for step in result.steps
+        ],
+        provider=result.provider,
+        grounded=result.grounded,
+        detail=result.detail,
+    )
+
+
+@router.get("/{symbol}/similar-setups", response_model=SimilarSetupsResponse)
+async def similar_setups(
+    symbol: str,
+    direction: str | None = Query(default=None),
+    limit: int = Query(default=5, ge=1, le=20),
+    forward_bars: int = Query(default=10, ge=3, le=30),
+    session=Depends(get_db),
+    query: MarketDataQueryService = Depends(get_query_service),
+) -> SimilarSetupsResponse:
+    """Deterministic similar-setup retrieval from historical ScanRuns + candle forward path."""
+    from app.application.narrative.grounded_narrator import GroundedNarrator, narrative_llm_enabled
+    from app.application.research.similar_setups import (
+        fingerprint_from_opportunity_payload,
+        forward_outcome_from_candles,
+        rank_similar,
+        similar_blurb,
+        SetupFingerprint,
+    )
+    from app.infrastructure.database.repositories.scan_run_repository import ScanRunRepository
+
+    symbol_u = symbol.upper().strip()
+    runs = await ScanRunRepository(session).list_recent(limit=40)
+    corpus: list[SetupFingerprint] = []
+    query_fp: SetupFingerprint | None = None
+
+    for run in runs:
+        payload = run.result_payload or {}
+        for item in list(payload.get("opportunities") or []):
+            fp = fingerprint_from_opportunity_payload(item, scan_run_id=run.id)
+            if fp is None:
+                continue
+            corpus.append(fp)
+            if fp.symbol == symbol_u and (direction is None or fp.direction == direction.upper()):
+                if query_fp is None or fp.confirmation_time > query_fp.confirmation_time:
+                    query_fp = fp
+
+    if query_fp is None:
+        # Synthetic query from latest same-direction peer average placeholders is not allowed —
+        # require an observed setup for this symbol in scan history.
+        return SimilarSetupsResponse(symbol=symbol_u, direction=direction, matches=[], provider="template")
+
+    neighbors = rank_similar(query_fp, corpus, limit=limit)
+    settings = get_settings()
+    matches: list[SimilarSetupItemResponse] = []
+    narrator = None
+    client = None
+    if narrative_llm_enabled(settings):
+        client = httpx.AsyncClient(timeout=20.0)
+        narrator = GroundedNarrator(client, settings)
+    try:
+        for peer, distance in neighbors:
+            start = peer.confirmation_time - timedelta(days=5)
+            end = max(
+                peer.confirmation_time + timedelta(days=max(forward_bars * 3, 40)),
+                datetime.now(timezone.utc),
+            )
+            try:
+                candles = await query.get_candles(peer.symbol, "1d", start, end)
+            except Exception:
+                candles = []
+            ret, hit_t, hit_s = forward_outcome_from_candles(
+                candles,
+                confirmation_time=peer.confirmation_time,
+                direction=peer.direction,
+                entry=peer.entry,
+                stop=peer.stop,
+                target=peer.target,
+                forward_bars=forward_bars,
+            )
+            measured_bars = forward_bars
+            if ret is None and candles:
+                # Fall back to whatever post-confirmation bars exist.
+                ret, hit_t, hit_s = forward_outcome_from_candles(
+                    candles,
+                    confirmation_time=peer.confirmation_time,
+                    direction=peer.direction,
+                    entry=peer.entry,
+                    stop=peer.stop,
+                    target=peer.target,
+                    forward_bars=max(1, min(forward_bars, len(candles))),
+                )
+                if ret is not None:
+                    measured_bars = max(1, min(forward_bars, len(candles) - 1))
+            blurb = await similar_blurb(
+                narrator,
+                match=peer,
+                forward_return_pct=ret,
+                forward_bars=measured_bars,
+            )
+            matches.append(
+                SimilarSetupItemResponse(
+                    symbol=peer.symbol,
+                    direction=peer.direction,
+                    confirmation_time=peer.confirmation_time,
+                    quality_score=peer.quality_score,
+                    atr_percent=peer.atr_percent,
+                    risk_reward_ratio=peer.risk_reward_ratio,
+                    distance=distance,
+                    forward_bars=measured_bars,
+                    forward_return_pct=ret,
+                    hit_target=hit_t,
+                    hit_stop=hit_s,
+                    blurb=blurb.text,
+                    blurb_provider=blurb.provider,
+                    scan_run_id=peer.scan_run_id,
+                )
+            )
+    finally:
+        if client is not None:
+            await client.aclose()
+
+    return SimilarSetupsResponse(
+        symbol=symbol_u,
+        direction=query_fp.direction,
+        matches=matches,
+        provider="llm" if any(m.blurb_provider == "llm" for m in matches) else "template",
     )

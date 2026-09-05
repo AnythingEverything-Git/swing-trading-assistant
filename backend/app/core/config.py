@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     market_data_refresh_time: str = "16:15"
     market_data_refresh_universe: str = "NIFTY_500"
     market_data_refresh_run_on_startup: bool = False
+    # Deep links in email alerts (UI origin, no trailing slash)
+    frontend_base_url: str = "http://127.0.0.1:5173"
 
     model_config = SettingsConfigDict(
         env_file=default_env_file(),

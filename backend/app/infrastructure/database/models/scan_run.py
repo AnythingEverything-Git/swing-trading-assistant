@@ -4,8 +4,10 @@ Stores metadata about scan executions; does not store full instrument lists.
 """
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Integer, String, DateTime, JSON
+
+from sqlalchemy import Integer, String, DateTime, JSON, Text
 from sqlalchemy.orm import Mapped, mapped_column
+
 from ..base import Base
 
 
@@ -22,3 +24,5 @@ class ScanRunORM(Base):
     # Avoid attribute name `metadata` which is reserved by DeclarativeBase.
     metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
     result_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="completed")
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

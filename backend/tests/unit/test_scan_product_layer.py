@@ -129,8 +129,15 @@ def test_alert_mentions_data_claim_and_top():
     )
     presented = present_scan(report, top_n=5)
     alert = compose_scan_alert(
-        presented, universe_name="NIFTY_50", data_claim="Demo candles — not live market data"
+        presented,
+        universe_name="NIFTY_50",
+        data_claim="Demo candles — not live market data",
+        scan_run_id=42,
+        frontend_base_url="http://127.0.0.1:5173",
     )
     assert "Demo candles" in alert.body
     assert "INFY" in alert.body
     assert "not investment advice" in alert.body.lower()
+    assert "run=42" in alert.body
+    assert "symbol=INFY" in alert.body
+    assert alert.html_body and "Open this scan" in alert.html_body
