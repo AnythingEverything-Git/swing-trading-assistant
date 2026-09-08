@@ -119,8 +119,54 @@ async def run_watermark_refresh(app: Any, *, end: datetime | None = None) -> Non
             logger.warning("Watermark refresh ... %s more failures", len(failed) - 20)
 
 
+async def run_intraday_1m_active_refresh(app: Any) -> None:
+    """Watermark/catch-up 1m for a capped active universe during market hours."""
+    settings = get_settings()
+    if not bool(getattr(settings, "intraday_1m_refresh_enabled", True)):
+        return
+    sessionmaker = getattr(app.state, "sessionmaker", None)
+    provider = getattr(app.state, "ingest_provider", None)
+    if sessionmaker is None or provider is None:
+        return
+    universe_name = getattr(settings, "intraday_1m_refresh_universe", "NIFTY_50") or "NIFTY_50"
+    limit = int(getattr(settings, "intraday_1m_refresh_limit", 50) or 50)
+    try:
+        symbols = list(get_universe(universe_name).get_snapshot().symbols)[:limit]
+    except ValueError:
+        logger.warning("Intraday 1m refresh: unsupported universe %s", universe_name)
+        return
+
+    from app.application.intraday.active_set_ingest import ensure_1m_for_symbols
+
+    async with sessionmaker() as session:
+        instrument_repo = InstrumentRepository(session)
+        candle_repo = CandleRepository(session)
+        result = await ensure_1m_for_symbols(
+            symbols=symbols,
+            provider=provider,
+            instrument_repo=instrument_repo,
+            candle_repo=candle_repo,
+            pause_s=0.05,
+        )
+        await session.commit()
+    logger.info(
+        "Intraday 1m active refresh universe=%s attempted=%s saved=%s skipped=%s",
+        universe_name,
+        result.get("attempted"),
+        result.get("saved"),
+        result.get("skipped"),
+    )
+
+
+def _in_intraday_window(now_ist: datetime) -> bool:
+    if now_ist.weekday() >= 5:
+        return False
+    minutes = now_ist.hour * 60 + now_ist.minute
+    return (9 * 60 + 10) <= minutes <= (15 * 60 + 15)
+
+
 async def refresh_scheduler_loop(app: Any, stop_event: asyncio.Event) -> None:
-    """Wait until each weekday IST fire time and run watermark refresh."""
+    """Weekday 1d watermark + optional intraday 1m active-set loop."""
     settings = get_settings()
     if not scheduler_should_run(settings):
         logger.info("Market-data refresh scheduler idle (disabled or non-upstox source)")
@@ -134,6 +180,8 @@ async def refresh_scheduler_loop(app: Any, stop_event: asyncio.Event) -> None:
         await stop_event.wait()
         return
 
+    interval = max(60, int(getattr(settings, "intraday_1m_refresh_interval_sec", 300) or 300))
+
     if bool(getattr(settings, "market_data_refresh_run_on_startup", False)):
         if not getattr(app.state, "refresh_running", False):
             app.state.refresh_running = True
@@ -144,35 +192,42 @@ async def refresh_scheduler_loop(app: Any, stop_event: asyncio.Event) -> None:
             finally:
                 app.state.refresh_running = False
 
+    next_1d = next_weekday_fire(datetime.now(IST), hour, minute)
+    next_1m = datetime.now(IST)
+
     while not stop_event.is_set():
         now_ist = datetime.now(IST)
-        next_fire = next_weekday_fire(now_ist, hour, minute)
-        delay = max(1.0, (next_fire - now_ist).total_seconds())
-        logger.info(
-            "Market-data refresh scheduled next_fire_ist=%s delay_s=%.0f",
-            next_fire.isoformat(),
-            delay,
-        )
+        # Intraday loop
+        if (
+            bool(getattr(settings, "intraday_1m_refresh_enabled", True))
+            and _in_intraday_window(now_ist)
+            and now_ist >= next_1m
+            and not getattr(app.state, "refresh_running", False)
+        ):
+            app.state.refresh_running = True
+            try:
+                await run_intraday_1m_active_refresh(app)
+            except Exception:
+                logger.exception("Intraday 1m refresh failed")
+            finally:
+                app.state.refresh_running = False
+            next_1m = now_ist + timedelta(seconds=interval)
+
+        # Daily 1d watermark
+        if now_ist >= next_1d and not getattr(app.state, "refresh_running", False):
+            app.state.refresh_running = True
+            try:
+                await run_watermark_refresh(app)
+            except Exception:
+                logger.exception("Scheduled watermark refresh failed")
+            finally:
+                app.state.refresh_running = False
+            next_1d = next_weekday_fire(datetime.now(IST), hour, minute)
+
         try:
-            await asyncio.wait_for(stop_event.wait(), timeout=delay)
-            break
+            await asyncio.wait_for(stop_event.wait(), timeout=15.0)
         except asyncio.TimeoutError:
-            pass
-
-        if stop_event.is_set():
-            break
-
-        if getattr(app.state, "refresh_running", False):
-            logger.warning("Skipping watermark refresh — previous run still in progress")
             continue
-
-        app.state.refresh_running = True
-        try:
-            await run_watermark_refresh(app)
-        except Exception:
-            logger.exception("Scheduled watermark refresh failed")
-        finally:
-            app.state.refresh_running = False
 
 
 __all__ = [
@@ -182,5 +237,6 @@ __all__ = [
     "scheduler_should_run",
     "utc_today_end",
     "run_watermark_refresh",
+    "run_intraday_1m_active_refresh",
     "refresh_scheduler_loop",
 ]

@@ -1,4 +1,15 @@
 # Docs
 
-- [TradePilot AI — Project Plan (from now onwards)](./PROJECT_PLAN.md)
+- [TradePilot AI — Project Plan](./PROJECT_PLAN.md)
+- [Sellable execution checklist (EP0–EP9)](./SELLABLE_EXECUTION.md)
+- [TradePilot — Product Use Cases & Wireframes](./TRADEPILOT_PRODUCT_USE_CASES.md) (sellable Swing + Intraday spec)
+- [Wireframe assets](./wireframes/README.md)
 - [Demo Runbook](./DEMO_RUNBOOK.md)
+- [Release Smoke](./RELEASE_SMOKE.md)
+- [Sellable Smoke](./SELLABLE_SMOKE.md)
+- [Launch checklist](./LAUNCH_CHECKLIST.md)
+- [Ops schedulers (EP7)](./OPS_SCHEDULERS.md)
+- [Intraday Strategy V1 (frozen)](./INTRADAY_STRATEGY_V1.md)
+- [Intraday Implementation Plan](./INTRADAY_IMPLEMENTATION_PLAN.md)
+- [Intraday Smoke](./INTRADAY_SMOKE.md)
+- [Intraday Certification V1](./INTRADAY_CERTIFICATION_V1.md)

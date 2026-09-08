@@ -78,6 +78,8 @@ class UpstoxMarketDataProvider(MarketDataProvider):
             "1d": ("days", "1"),
             "1w": ("weeks", "1"),
             "1mo": ("months", "1"),
+            "1m": ("minutes", "1"),
+            "5m": ("minutes", "5"),
         }
 
         if timeframe not in timeframe_map:
@@ -190,6 +192,96 @@ class UpstoxMarketDataProvider(MarketDataProvider):
             )
 
         # Chronological order
+        result.sort(key=lambda c: c.timestamp)
+        return result
+
+    async def get_intraday_candles(self, symbol: str, timeframe: str = "1m") -> List[Candle]:
+        """Fetch today's session candles via Upstox V3 intraday endpoint.
+
+        Endpoint: GET /v3/historical-candle/intraday/{instrument_key}/{unit}/{interval}
+        """
+        timeframe_map = {
+            "1m": ("minutes", "1"),
+            "5m": ("minutes", "5"),
+        }
+        if timeframe not in timeframe_map:
+            raise ValueError(f"Unsupported intraday timeframe: {timeframe}")
+        if not self._base_url:
+            raise UpstoxAPIError("Upstox base URL not configured")
+
+        instrument_key = self._resolve_instrument_key(symbol)
+        unit, interval = timeframe_map[timeframe]
+        encoded_key = quote(str(instrument_key), safe="")
+        url = (
+            f"{self._base_url.rstrip('/')}/v3/historical-candle/intraday/"
+            f"{encoded_key}/{unit}/{interval}"
+        )
+        headers = {}
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+        resp = await self._client.get(url, headers=headers, timeout=self._timeout)
+        status = getattr(resp, "status_code", None) or getattr(resp, "status", None)
+        if status is None or int(status) >= 400:
+            raise UpstoxAPIError(f"Upstox intraday API error: status={status}")
+
+        try:
+            payload = resp.json()
+            if isawaitable(payload):
+                payload = await payload
+        except Exception as exc:
+            raise UpstoxAPIError("Invalid JSON from Upstox intraday API") from exc
+
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            raise UpstoxAPIError("Upstox intraday reported non-success status")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise UpstoxAPIError("Malformed Upstox intraday response: missing data")
+        candles_arr = data.get("candles")
+        if not isinstance(candles_arr, list):
+            raise UpstoxAPIError("Malformed Upstox intraday response: candles")
+
+        result: List[Candle] = []
+        for idx, rec in enumerate(candles_arr):
+            if not isinstance(rec, (list, tuple)) or len(rec) < 6:
+                raise UpstoxAPIError(f"Malformed intraday candle at index {idx}")
+            ts_raw = rec[0]
+            try:
+                if isinstance(ts_raw, (int, float)):
+                    ts_val = float(ts_raw)
+                    ts = datetime.fromtimestamp(
+                        ts_val / 1000.0 if ts_val > 1e12 else ts_val,
+                        tz=timezone.utc,
+                    )
+                elif isinstance(ts_raw, str):
+                    ts = datetime.fromisoformat(ts_raw)
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                else:
+                    raise ValueError("unsupported timestamp type")
+            except Exception as exc:
+                raise UpstoxAPIError(f"Invalid intraday timestamp at index {idx}") from exc
+            try:
+                open_p = Decimal(str(rec[1]))
+                high_p = Decimal(str(rec[2]))
+                low_p = Decimal(str(rec[3]))
+                close_p = Decimal(str(rec[4]))
+                vol_int = int(rec[5]) if rec[5] is not None else None
+            except Exception as exc:
+                raise UpstoxAPIError(f"Invalid intraday OHLC at index {idx}") from exc
+            result.append(
+                Candle(
+                    symbol=symbol,
+                    exchange="UPSTOX",
+                    instrument_id=instrument_key,
+                    timeframe=timeframe,
+                    timestamp=ts,
+                    open=open_p,
+                    high=high_p,
+                    low=low_p,
+                    close=close_p,
+                    volume=vol_int,
+                )
+            )
         result.sort(key=lambda c: c.timestamp)
         return result
 

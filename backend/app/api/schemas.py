@@ -121,8 +121,8 @@ class OpportunityScanRequest(BaseModel):
     start: datetime
     end: datetime
     universe: str = Field(
-        default="NIFTY_500",
-        description="Index universe to scan: NIFTY_50, NIFTY_100, NIFTY_200, or NIFTY_500.",
+        default="NSE_ALL",
+        description="Universe: NSE_ALL, NSE_CASH, NSE_ETF, NIFTY_50/100/200/500.",
     )
     account_equity: Decimal | None = Field(
         default=None,
@@ -135,6 +135,10 @@ class OpportunityScanRequest(BaseModel):
     enable_paper_trading: bool = Field(
         default=False,
         description="When true, create practice watches for eligible setups after the scan.",
+    )
+    filters: dict | None = Field(
+        default=None,
+        description="In-app UniverseFilterSpec fields (asset_class, min_price, min_adv_inr, ...).",
     )
 
 
@@ -213,6 +217,7 @@ class OpportunityScanResponse(BaseModel):
     paper_claim: str | None = "PRACTICE TRADES ONLY — fake money, no real broker orders"
     status: str = "completed"
     error_message: str | None = None
+    filter_coverage: dict | None = None
 
 
 class ScanJobAcceptedResponse(BaseModel):
@@ -235,6 +240,14 @@ class ScanIssueResponse(BaseModel):
     detail: str
 
 
+class ScanRunFilterCoverageSummary(BaseModel):
+    universe_total: int | None = None
+    after_filters: int | None = None
+    input_count: int | None = None
+    output_count: int | None = None
+    dropped: int | None = None
+
+
 class ScanRunSummaryResponse(BaseModel):
     id: int
     started_at: datetime
@@ -245,6 +258,9 @@ class ScanRunSummaryResponse(BaseModel):
     symbols_scanned: int | None = None
     data_source: str | None = None
     status: str | None = None
+    eligible_count: int | None = None
+    top_count: int | None = None
+    filter_coverage: ScanRunFilterCoverageSummary | None = None
 
 
 class ProductStatusResponse(BaseModel):
@@ -255,6 +271,9 @@ class ProductStatusResponse(BaseModel):
     symbols_with_candles: int
     environment: str
     plug_and_play: str
+    symbols_with_1m: int = 0
+    last_1m_candle_time: datetime | None = None
+    stale_risk: str = "High"
 
 
 class MarketQuoteResponse(BaseModel):
@@ -562,6 +581,31 @@ class PaperSummaryResponse(BaseModel):
 
 class PaperCloseRequest(BaseModel):
     price: Decimal | None = Field(default=None, gt=Decimal("0"))
+
+
+class PaperArmItem(BaseModel):
+    symbol: str = Field(min_length=1, max_length=32)
+    direction: str = Field(default="LONG", pattern="^(LONG|SHORT)$")
+    entry_price: Decimal = Field(gt=Decimal("0"))
+    stop_loss: Decimal = Field(gt=Decimal("0"))
+    target: Decimal = Field(gt=Decimal("0"))
+    quantity: int = Field(gt=0)
+    risk_amount: Decimal | None = Field(default=None, ge=Decimal("0"))
+    setup_name: str | None = None
+    quality_score: Decimal | None = None
+    scan_run_id: int | None = None
+
+
+class PaperArmRequest(BaseModel):
+    items: list[PaperArmItem] = Field(min_length=1, max_length=50)
+
+
+class PaperArmResponse(BaseModel):
+    claim: str = "PRACTICE TRADES ONLY — fake money, no real broker orders"
+    opened: int
+    skipped_qty: int
+    skipped_open: int
+    message: str
 
 
 class PaperOutlookItem(BaseModel):

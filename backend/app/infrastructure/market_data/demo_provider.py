@@ -1,16 +1,20 @@
 """Deterministic demo market-data provider for development without Upstox.
 
-Generates realistic 1d OHLCV series from a symbol-derived seed. Independent of
-live vendors. Explicitly instantiable; not a silent production replacement.
+Generates realistic 1d OHLCV series from a symbol-derived seed. Also supports
+synthetic `1m` / `5m` session bars (IST) for intraday ORB MVP demos.
+Independent of live vendors. Explicitly instantiable; not a silent production replacement.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, time, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Sequence
+from zoneinfo import ZoneInfo
 
 from app.domain.market_data import Candle
 from app.domain.market_data.provider import MarketDataProvider
+
+_IST = ZoneInfo("Asia/Kolkata")
 
 # First 22 bars of the known Breakout->Retest->Confirmation fixture (confirmation on last bar).
 # Used only as a price/volume pattern; the strategy still decides eligibility.
@@ -120,13 +124,20 @@ class DemoMarketDataProvider(MarketDataProvider):
             raise ValueError("start and end required")
         if start > end:
             raise ValueError("start must be <= end")
-        if timeframe != "1d":
-            raise ValueError("DemoMarketDataProvider only supports timeframe '1d'")
-
         normalized = symbol.strip().upper()
         if not normalized:
             raise ValueError("symbol must be a non-empty string")
 
+        if timeframe == "1d":
+            return self._daily_candles(normalized, start, end)
+        if timeframe in {"1m", "5m"}:
+            candles_1m = self._minute_candles(normalized, start, end)
+            if timeframe == "1m":
+                return candles_1m
+            return _aggregate_5m(candles_1m)
+        raise ValueError("DemoMarketDataProvider supports timeframes '1d', '1m', '5m'")
+
+    def _daily_candles(self, normalized: str, start: datetime, end: datetime) -> List[Candle]:
         start_ts = _as_utc(start)
         end_ts = _as_utc(end)
         dates = _daily_timestamps(start_ts, end_ts)
@@ -158,6 +169,18 @@ class DemoMarketDataProvider(MarketDataProvider):
             )
             for ts, ohlc in zip(dates, levels)
         ]
+
+    def _minute_candles(self, normalized: str, start: datetime, end: datetime) -> List[Candle]:
+        start_ist = start.astimezone(_IST) if start.tzinfo else start.replace(tzinfo=timezone.utc).astimezone(_IST)
+        end_ist = end.astimezone(_IST) if end.tzinfo else end.replace(tzinfo=timezone.utc).astimezone(_IST)
+        days = _weekday_dates(start_ist.date(), end_ist.date())
+        seed = self.symbol_seed(normalized)
+        base = Decimal(100 + (seed % 400)) + (Decimal(seed % 100) / Decimal(100))
+        out: list[Candle] = []
+        for day in days:
+            out.extend(_generate_session_1m(normalized, day, base, seed))
+        # Clip to requested window
+        return [c for c in out if start <= c.timestamp <= end]
 
 
 def create_demo_market_data_provider() -> DemoMarketDataProvider:
@@ -276,6 +299,157 @@ def _generate_with_setup_tail(
             )
         )
     return warmup + tail
+
+
+def _weekday_dates(start: date, end: date) -> list[date]:
+    out: list[date] = []
+    cur = start
+    while cur <= end:
+        if cur.weekday() < 5:
+            out.append(cur)
+        cur += timedelta(days=1)
+    return out
+
+
+def _generate_session_1m(
+    symbol: str,
+    day: date,
+    base: Decimal,
+    seed: int,
+) -> list[Candle]:
+    """Synthetic NSE cash session 09:15–15:29 IST.
+
+    ORB-friendly path: bullish OR, then breakout after 09:20 for most seeds.
+    """
+    rng = _LCG(seed ^ (day.toordinal() * 2654435761 & 0xFFFFFFFF))
+    price = base * (Decimal("1") + Decimal(str((rng.uniform_signed()) * 0.01)))
+    candles: list[Candle] = []
+    # High OR volume for stocks-in-play demos when symbol hash even
+    or_vol_boost = 8 if (seed % 2 == 0 or symbol.startswith("ORB")) else 2
+
+    minute = datetime(day.year, day.month, day.day, 9, 15, tzinfo=_IST)
+    session_end = datetime(day.year, day.month, day.day, 15, 30, tzinfo=_IST)
+    bar_i = 0
+    or_high = price
+    while minute < session_end:
+        in_or = minute.hour == 9 and minute.minute < 20
+        # Bullish OR: drift up during first 5 minutes
+        if in_or:
+            ret = Decimal("0.0008") + Decimal(str(rng.uniform() * 0.0004))
+            vol = int(5000 * or_vol_boost + rng.uniform() * 500)
+        elif bar_i == 5:
+            # First post-OR bar: mild break above OR high (avoid huge gap → RISK_INVALID)
+            ret = Decimal("0.0015")
+            vol = int(3000 + rng.uniform() * 800)
+        else:
+            ret = Decimal(str(rng.uniform_signed() * 0.0006))
+            vol = int(800 + rng.uniform() * 400)
+
+        open_p = price
+        close_p = price * (Decimal("1") + ret)
+        if bar_i == 5 and not in_or:
+            # Trade through OR high without gap-open far above it
+            open_p = min(open_p, or_high)
+            close_p = max(close_p, or_high + Decimal("0.10"))
+            high = max(close_p, or_high + Decimal("0.15"))
+            low = min(open_p, or_high - Decimal("0.05"))
+            wick = Decimal("0")
+        else:
+            wick = abs(close_p - open_p) * Decimal("0.15") + Decimal("0.05")
+            high = max(open_p, close_p) + wick
+            low = min(open_p, close_p) - wick
+            if low <= 0:
+                low = min(open_p, close_p) * Decimal("0.999")
+
+        if in_or:
+            or_high = max(or_high, high)
+
+        if bar_i == 5 and not in_or:
+            candles.append(
+                Candle(
+                    symbol=symbol,
+                    exchange="DEMO",
+                    instrument_id=None,
+                    timeframe="1m",
+                    timestamp=minute,
+                    open=_quantize(open_p),
+                    high=_quantize(high),
+                    low=_quantize(max(Decimal("0.01"), low)),
+                    close=_quantize(close_p),
+                    volume=max(1, vol),
+                )
+            )
+            price = close_p
+            minute += timedelta(minutes=1)
+            bar_i += 1
+            continue
+
+        candles.append(
+            Candle(
+                symbol=symbol,
+                exchange="DEMO",
+                instrument_id=None,
+                timeframe="1m",
+                timestamp=minute,
+                open=_quantize(open_p),
+                high=_quantize(high),
+                low=_quantize(low),
+                close=_quantize(close_p),
+                volume=max(1, vol),
+            )
+        )
+        price = close_p
+        minute += timedelta(minutes=1)
+        bar_i += 1
+    return candles
+
+
+def _aggregate_5m(candles_1m: Sequence[Candle]) -> list[Candle]:
+    if not candles_1m:
+        return []
+    out: list[Candle] = []
+    bucket: list[Candle] = []
+    for candle in candles_1m:
+        ts = candle.timestamp.astimezone(_IST)
+        # Bucket by floor to 5 minutes from 09:15
+        bucket.append(candle)
+        if len(bucket) == 5 or (
+            bucket and ts.minute % 5 == 4
+        ):
+            if len(bucket) >= 1:
+                first, last = bucket[0], bucket[-1]
+                out.append(
+                    Candle(
+                        symbol=first.symbol,
+                        exchange=first.exchange,
+                        instrument_id=first.instrument_id,
+                        timeframe="5m",
+                        timestamp=first.timestamp,
+                        open=first.open,
+                        high=max(c.high for c in bucket),
+                        low=min(c.low for c in bucket),
+                        close=last.close,
+                        volume=sum(int(c.volume or 0) for c in bucket),
+                    )
+                )
+            bucket = []
+    if bucket:
+        first, last = bucket[0], bucket[-1]
+        out.append(
+            Candle(
+                symbol=first.symbol,
+                exchange=first.exchange,
+                instrument_id=first.instrument_id,
+                timeframe="5m",
+                timestamp=first.timestamp,
+                open=first.open,
+                high=max(c.high for c in bucket),
+                low=min(c.low for c in bucket),
+                close=last.close,
+                volume=sum(int(c.volume or 0) for c in bucket),
+            )
+        )
+    return out
 
 
 __all__ = ["DemoMarketDataProvider", "create_demo_market_data_provider"]

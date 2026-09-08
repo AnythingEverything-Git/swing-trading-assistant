@@ -19,7 +19,19 @@ from ..infrastructure.market_data.factory import UpstoxProviderFactory
 from ..infrastructure.market_data.demo_provider import DemoMarketDataProvider
 from ..infrastructure.market_data.source import live_ready, normalize_market_data_source
 from ..application.market_data.refresh_scheduler import refresh_scheduler_loop, scheduler_should_run
-from .routes import backtest, market_data, paper, product, research, scan, strategy
+from .routes import (
+    ai_copilot,
+    backtest,
+    intraday,
+    market_data,
+    paper,
+    product,
+    product_shell,
+    research,
+    scan,
+    strategy,
+    universe_filters,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +153,10 @@ def create_app() -> FastAPI:
     app.include_router(strategy.router)
     app.include_router(backtest.router)
     app.include_router(scan.router)
+    app.include_router(universe_filters.router)
+    app.include_router(intraday.router)
+    app.include_router(ai_copilot.router)
+    app.include_router(product_shell.router)
     app.include_router(product.router)
     app.include_router(research.router)
     app.include_router(paper.router)

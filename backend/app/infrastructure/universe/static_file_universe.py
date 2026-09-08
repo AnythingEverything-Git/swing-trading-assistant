@@ -14,20 +14,33 @@ from app.domain.universe.universe import StockUniverse, UniverseSnapshot, normal
 
 _DATA_DIR = Path(__file__).resolve().parent / "data"
 
-UniverseName = Literal["NIFTY_50", "NIFTY_100", "NIFTY_200", "NIFTY_500"]
-
-_UNIVERSE_FILES: dict[UniverseName, Path] = {
-    "NIFTY_50": _DATA_DIR / "nifty_50_constituents.json",
-    "NIFTY_100": _DATA_DIR / "nifty_100_constituents.json",
-    "NIFTY_200": _DATA_DIR / "nifty_200_constituents.json",
-    "NIFTY_500": _DATA_DIR / "nifty500_constituents.json",
-}
-
-SUPPORTED_UNIVERSE_NAMES: tuple[UniverseName, ...] = (
+UniverseName = Literal[
     "NIFTY_50",
     "NIFTY_100",
     "NIFTY_200",
     "NIFTY_500",
+    "NSE_ETF",
+    "NSE_CASH",
+    "NSE_ALL",
+]
+
+_UNIVERSE_FILES: dict[str, Path] = {
+    "NIFTY_50": _DATA_DIR / "nifty_50_constituents.json",
+    "NIFTY_100": _DATA_DIR / "nifty_100_constituents.json",
+    "NIFTY_200": _DATA_DIR / "nifty_200_constituents.json",
+    "NIFTY_500": _DATA_DIR / "nifty500_constituents.json",
+    "NSE_ETF": _DATA_DIR / "nse_etf_constituents.json",
+    "NSE_CASH": _DATA_DIR / "nse_cash_eq_constituents.json",
+}
+
+SUPPORTED_UNIVERSE_NAMES: tuple[str, ...] = (
+    "NIFTY_50",
+    "NIFTY_100",
+    "NIFTY_200",
+    "NIFTY_500",
+    "NSE_ETF",
+    "NSE_CASH",
+    "NSE_ALL",
 )
 
 
@@ -88,13 +101,53 @@ class Nifty50Universe(StaticFileStockUniverse):
         super().__init__(path or _UNIVERSE_FILES["NIFTY_50"])
 
 
+class CompositeStockUniverse:
+    """Union of two file-backed universes (e.g. NSE cash + ETF = NSE_ALL)."""
+
+    def __init__(self, *parts: StaticFileStockUniverse, name: str = "NSE_ALL") -> None:
+        if not parts:
+            raise ValueError("CompositeStockUniverse requires at least one part")
+        self._parts = parts
+        self._name = name
+
+    def get_snapshot(self) -> UniverseSnapshot:
+        symbols: list[str] = []
+        seen: set[str] = set()
+        versions: list[str] = []
+        as_of: date | None = None
+        for part in self._parts:
+            snap = part.get_snapshot()
+            versions.append(snap.version)
+            if snap.as_of and (as_of is None or snap.as_of > as_of):
+                as_of = snap.as_of
+            for sym in snap.symbols:
+                if sym not in seen:
+                    seen.add(sym)
+                    symbols.append(sym)
+        return UniverseSnapshot(
+            name=self._name,
+            version="+".join(versions)[:120],
+            as_of=as_of,
+            symbols=tuple(symbols),
+        )
+
+
 def get_universe(name: str) -> StockUniverse:
     """Resolve a supported index universe by name."""
     key = name.strip().upper()
+    if key == "NSE_ALL":
+        return CompositeStockUniverse(
+            StaticFileStockUniverse(_UNIVERSE_FILES["NSE_CASH"]),
+            StaticFileStockUniverse(_UNIVERSE_FILES["NSE_ETF"]),
+            name="NSE_ALL",
+        )
+    if key == "NSE_MORNING":
+        # Alias: morning desk uses full NSE_ALL master
+        return get_universe("NSE_ALL")
     if key not in _UNIVERSE_FILES:
         supported = ", ".join(SUPPORTED_UNIVERSE_NAMES)
         raise ValueError(f"unsupported universe '{name}'; expected one of: {supported}")
-    return StaticFileStockUniverse(_UNIVERSE_FILES[key])  # type: ignore[index]
+    return StaticFileStockUniverse(_UNIVERSE_FILES[key])
 
 
 def _parse_as_of(value: object) -> date | None:
@@ -111,6 +164,7 @@ def _parse_as_of(value: object) -> date | None:
 
 __all__ = [
     "StaticFileStockUniverse",
+    "CompositeStockUniverse",
     "Nifty500Universe",
     "Nifty200Universe",
     "Nifty100Universe",

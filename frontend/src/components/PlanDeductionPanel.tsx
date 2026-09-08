@@ -6,6 +6,8 @@ type Props = {
   steps: DeductionStep[]
   baseUrl: string
   onClose?: () => void
+  /** Wireframe-style tile: shorter intro, denser steps. */
+  compact?: boolean
 }
 
 type RephraseState = {
@@ -14,7 +16,7 @@ type RephraseState = {
   detail?: string | null
 }
 
-export function PlanDeductionPanel({ symbol, steps, baseUrl, onClose }: Props) {
+export function PlanDeductionPanel({ symbol, steps, baseUrl, onClose, compact = false }: Props) {
   const [view, setView] = useState<RephraseState>({ steps, provider: 'loading' })
 
   useEffect(() => {
@@ -73,41 +75,70 @@ export function PlanDeductionPanel({ symbol, steps, baseUrl, onClose }: Props) {
   }, [baseUrl, steps, symbol])
 
   return (
-    <div className="plan-deduction" role="region" aria-label={`How TradePilot decided ${symbol}`}>
-      <div className="plan-deduction-head">
-        <div>
-          <h4>How TradePilot decided {symbol}</h4>
-          <p>
-            Numbers and conclusions come only from strategy rules. AI may polish the wording for clarity — it
-            cannot change levels, risk math, or the trade plan.
-          </p>
-          <p className="field-hint plan-deduction-provider">
-            {view.provider === 'loading'
-              ? 'Polishing wording…'
-              : view.provider === 'gemini'
-                ? 'Wording polished by AI · facts locked to strategy rules'
-                : 'Showing strategy wording (AI polish unavailable or unchanged)'}
-          </p>
+    <div
+      className={`plan-deduction${compact ? ' is-compact' : ''}`}
+      role="region"
+      aria-label={`How decided ${symbol}`}
+    >
+      {!compact ? (
+        <div className="plan-deduction-head">
+          <div>
+            <h4>How decided · {symbol}</h4>
+            <p>
+              Numbers and conclusions come only from strategy rules. AI may polish wording — it cannot change
+              levels, risk math, or the trade plan.
+            </p>
+            <p className="field-hint plan-deduction-provider">
+              {view.provider === 'loading'
+                ? 'Polishing wording…'
+                : view.provider === 'gemini'
+                  ? 'Wording polished by AI · facts locked to strategy rules'
+                  : 'Showing strategy wording (AI polish unavailable or unchanged)'}
+            </p>
+          </div>
+          {onClose ? (
+            <button type="button" className="ghost-btn" onClick={onClose} aria-label="Close">
+              ×
+            </button>
+          ) : null}
         </div>
-        {onClose ? (
-          <button type="button" className="ghost-btn" onClick={onClose}>
-            Hide
-          </button>
-        ) : null}
-      </div>
+      ) : (
+        <p className="plan-deduction-compact-meta" aria-live="polite">
+          {view.provider === 'loading'
+            ? 'Polishing wording…'
+            : view.provider === 'gemini'
+              ? 'Facts locked · wording polished'
+              : 'Facts locked to strategy rules'}
+        </p>
+      )}
       <ol className="plan-deduction-steps">
-        {view.steps.map((step) => (
+        {view.steps.map((step, index) => (
           <li key={step.id} className="plan-deduction-step">
             <div className="plan-deduction-step-top">
-              <strong>{step.title}</strong>
+              <strong>
+                {compact ? (
+                  <>
+                    <span className="plan-deduction-index">{index + 1}</span>
+                    {step.title.replace(/^\d+\.\s*/, '')}
+                  </>
+                ) : (
+                  step.title
+                )}
+              </strong>
               <span className="plan-deduction-value">{step.value}</span>
             </div>
-            <p className="plan-deduction-summary">{step.summary}</p>
-            <ul>
-              {step.details.map((line, index) => (
-                <li key={`${step.id}-${index}`}>{line}</li>
-              ))}
-            </ul>
+            {compact ? (
+              <p className="plan-deduction-summary">{step.summary}</p>
+            ) : (
+              <>
+                <p className="plan-deduction-summary">{step.summary}</p>
+                <ul>
+                  {step.details.map((line, detailIndex) => (
+                    <li key={`${step.id}-${detailIndex}`}>{line}</li>
+                  ))}
+                </ul>
+              </>
+            )}
           </li>
         ))}
       </ol>

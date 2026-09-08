@@ -25,4 +25,7 @@ async def product_status(
             "Set MARKET_DATA_SOURCE=upstox and UPSTOX_ACCESS_TOKEN, restart, "
             "then run python scripts/refresh_market_data.py"
         ),
+        symbols_with_1m=status.symbols_with_1m,
+        last_1m_candle_time=status.last_1m_candle_time,
+        stale_risk=status.stale_risk,
     )

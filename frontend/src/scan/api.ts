@@ -16,7 +16,7 @@ function detailFromErrorPayload(payload: unknown, fallback: string): string {
   return fallback
 }
 
-export async function listScanRuns(baseUrl: string, limit = 8): Promise<ScanRunSummary[]> {
+export async function listScanRuns(baseUrl: string, limit = 30): Promise<ScanRunSummary[]> {
   const response = await fetch(`${baseUrl}/api/v1/scan/runs?limit=${limit}`)
   if (!response.ok) throw new Error('Failed to load scan history')
   return (await response.json()) as ScanRunSummary[]

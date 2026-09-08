@@ -1,0 +1,196 @@
+{
+  "strategy_id": "NSE_STOCKS_ETF_ORB_RVOL_5M_V1",
+  "config_hash": "CONFIG_V1",
+  "source": "demo",
+  "start": "2026-09-01",
+  "end": "2026-09-07",
+  "oos_start": null,
+  "holdout_frac": 0.3,
+  "cost_stress_mult": "2",
+  "overall": {
+    "sessions": 5,
+    "fills": 5,
+    "closed_trades": 5,
+    "winners": 2,
+    "losers": 3,
+    "win_rate": 0.4,
+    "net_pnl": "304.305478",
+    "est_friction": "399.49468",
+    "net_pnl_after_friction": "-95.189202",
+    "worst_day_pnl": "-506.07436",
+    "best_day_pnl": "1179.80250",
+    "avg_coverage_pct": 100.0,
+    "reason_counts": {
+      "TRADED": 5
+    },
+    "flags": {
+      "concentration_top3_symbol_abs_pnl_share": 1.0,
+      "concentration_warn": true,
+      "cost_fragile_at_stress": true,
+      "low_coverage_warn": false,
+      "thin_sample_warn": true
+    }
+  },
+  "in_sample": {
+    "sessions": 4,
+    "fills": 4,
+    "closed_trades": 4,
+    "winners": 2,
+    "losers": 2,
+    "win_rate": 0.5,
+    "net_pnl": "772.994798",
+    "est_friction": "319.57836",
+    "net_pnl_after_friction": "453.416438",
+    "worst_day_pnl": "-506.07436",
+    "best_day_pnl": "1179.80250",
+    "avg_coverage_pct": 100.0,
+    "reason_counts": {
+      "TRADED": 4
+    },
+    "flags": {
+      "concentration_top3_symbol_abs_pnl_share": 1.0,
+      "concentration_warn": false,
+      "cost_fragile_at_stress": false,
+      "low_coverage_warn": false,
+      "thin_sample_warn": true
+    }
+  },
+  "oos": {
+    "sessions": 1,
+    "fills": 1,
+    "closed_trades": 1,
+    "winners": 0,
+    "losers": 1,
+    "win_rate": 0.0,
+    "net_pnl": "-468.68932",
+    "est_friction": "79.91632",
+    "net_pnl_after_friction": "-548.60564",
+    "worst_day_pnl": "-468.68932",
+    "best_day_pnl": "-468.68932",
+    "avg_coverage_pct": 100.0,
+    "reason_counts": {
+      "TRADED": 1
+    },
+    "flags": {
+      "concentration_top3_symbol_abs_pnl_share": 1.0,
+      "concentration_warn": false,
+      "cost_fragile_at_stress": false,
+      "low_coverage_warn": false,
+      "thin_sample_warn": true
+    }
+  },
+  "go_no_go_notes": [
+    "Thin sample (<20 closed trades) \u2014 do not certify.",
+    "PnL concentrated in \u22643 symbols \u2014 automatic rejection risk (\u00a724).",
+    "Sign flips after friction stress \u2014 cost fragile.",
+    "OOS collapses vs in-sample \u2014 do not mutate V1; design V2 if needed."
+  ],
+  "days": [
+    {
+      "session_date": "2026-09-01",
+      "bucket": "is",
+      "fills": 1,
+      "closed": 1,
+      "winners": 1,
+      "losers": 0,
+      "pnl": "1179.80250",
+      "est_friction": "79.83000",
+      "pnl_after_friction": "1099.97250",
+      "eligible": 1,
+      "total": 1,
+      "coverage_pct": 100.0,
+      "reason_counts": {
+        "TRADED": 1
+      },
+      "symbol_pnl": {
+        "ORBDEMO": "1179.80250"
+      },
+      "data_source": "demo"
+    },
+    {
+      "session_date": "2026-09-02",
+      "bucket": "is",
+      "fills": 1,
+      "closed": 1,
+      "winners": 1,
+      "losers": 0,
+      "pnl": "584.142618",
+      "est_friction": "79.98612",
+      "pnl_after_friction": "504.156498",
+      "eligible": 1,
+      "total": 1,
+      "coverage_pct": 100.0,
+      "reason_counts": {
+        "TRADED": 1
+      },
+      "symbol_pnl": {
+        "ORBDEMO": "584.142618"
+      },
+      "data_source": "demo"
+    },
+    {
+      "session_date": "2026-09-03",
+      "bucket": "is",
+      "fills": 1,
+      "closed": 1,
+      "winners": 0,
+      "losers": 1,
+      "pnl": "-506.07436",
+      "est_friction": "79.8864",
+      "pnl_after_friction": "-585.96076",
+      "eligible": 1,
+      "total": 1,
+      "coverage_pct": 100.0,
+      "reason_counts": {
+        "TRADED": 1
+      },
+      "symbol_pnl": {
+        "ORBDEMO": "-506.07436"
+      },
+      "data_source": "demo"
+    },
+    {
+      "session_date": "2026-09-04",
+      "bucket": "is",
+      "fills": 1,
+      "closed": 1,
+      "winners": 0,
+      "losers": 1,
+      "pnl": "-484.87596",
+      "est_friction": "79.87584",
+      "pnl_after_friction": "-564.75180",
+      "eligible": 1,
+      "total": 1,
+      "coverage_pct": 100.0,
+      "reason_counts": {
+        "TRADED": 1
+      },
+      "symbol_pnl": {
+        "ORBDEMO": "-484.87596"
+      },
+      "data_source": "demo"
+    },
+    {
+      "session_date": "2026-09-07",
+      "bucket": "oos",
+      "fills": 1,
+      "closed": 1,
+      "winners": 0,
+      "losers": 1,
+      "pnl": "-468.68932",
+      "est_friction": "79.91632",
+      "pnl_after_friction": "-548.60564",
+      "eligible": 1,
+      "total": 1,
+      "coverage_pct": 100.0,
+      "reason_counts": {
+        "TRADED": 1
+      },
+      "symbol_pnl": {
+        "ORBDEMO": "-468.68932"
+      },
+      "data_source": "demo"
+    }
+  ],
+  "note": "Scaffold only \u2014 not V1 certification. See docs/INTRADAY_CERTIFICATION_V1.md."
+}

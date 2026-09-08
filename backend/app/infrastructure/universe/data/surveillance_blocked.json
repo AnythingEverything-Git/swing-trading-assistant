@@ -1,0 +1,21 @@
+{
+  "name": "SURVEILLANCE_BLOCKED",
+  "version": "2026-09-08-pit-v1",
+  "as_of": "2026-09-08",
+  "source_note": "Point-in-time ASM/GSM/ESM/T2T dump for ORB eligibility. Replace with exchange CSV exports; keep dated entries for backtests.",
+  "symbols": [],
+  "entries": [
+    {
+      "symbol": "YESBANK",
+      "from": "2020-03-06",
+      "to": null,
+      "reason": "ASM_EXAMPLE_STUB"
+    },
+    {
+      "symbol": "IDEA",
+      "from": "2024-01-01",
+      "to": null,
+      "reason": "GSM_EXAMPLE_STUB"
+    }
+  ]
+}

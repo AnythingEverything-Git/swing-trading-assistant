@@ -1,0 +1,14 @@
+{
+  "name": "SHORT_NOT_PERMITTED",
+  "version": "2026-09-08-v1",
+  "as_of": "2026-09-08",
+  "source_note": "Hard denylist — never short these (ETFs / special cases). Broader short policy uses short_allowed.json allowlist.",
+  "symbols": [
+    "NIFTYBEES",
+    "BANKBEES",
+    "GOLDBEES",
+    "SILVERBEES",
+    "JUNIORBEES",
+    "ITBEES"
+  ]
+}

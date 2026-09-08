@@ -109,6 +109,14 @@ export type OpportunityScanResponse = {
   paper_claim?: string | null
   status?: string
   error_message?: string | null
+  filter_coverage?: {
+    universe_total?: number
+    after_filters?: number
+    input_count?: number
+    output_count?: number
+    dropped?: number
+    drop_reasons?: Record<string, number>
+  } | null
 }
 
 export type ScanRunSummary = {
@@ -120,6 +128,15 @@ export type ScanRunSummary = {
   symbols_scanned: number | null
   data_source: string | null
   status?: string | null
+  eligible_count?: number | null
+  top_count?: number | null
+  filter_coverage?: {
+    universe_total?: number | null
+    after_filters?: number | null
+    input_count?: number | null
+    output_count?: number | null
+    dropped?: number | null
+  } | null
 }
 
 export type ScanJobAccepted = {
@@ -146,4 +163,5 @@ export type StartScanRequest = {
   top_n?: number
   min_score?: string
   enable_paper_trading?: boolean
+  filters?: Record<string, unknown>
 }

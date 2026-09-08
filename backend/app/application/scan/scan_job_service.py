@@ -82,7 +82,7 @@ async def execute_scan_job(
 
         params = run.parameters or {}
         try:
-            universe_name = str(params.get("universe_name") or "NIFTY_500")
+            universe_name = str(params.get("universe_name") or "NSE_ALL")
             timeframe = str(params.get("timeframe") or "1d")
             start = _parse_dt(params["start"])
             end = _parse_dt(params["end"])
@@ -92,16 +92,29 @@ async def execute_scan_job(
             risk_percent = _decimal_or_none(params.get("risk_percent")) or Decimal("1")
             enable_paper = bool(params.get("enable_paper_trading"))
 
+            from app.domain.universe.filters import UniverseFilterSpec, filter_symbols
+
             universe = get_universe(universe_name)
             snapshot = universe.get_snapshot()
+            filter_spec = UniverseFilterSpec.from_mapping(params.get("filters") if isinstance(params.get("filters"), dict) else None)
+            kept, filter_decisions = filter_symbols(snapshot.symbols, filter_spec, session_date=end.date())
+            filter_coverage = {
+                "universe_total": len(snapshot.symbols),
+                "after_filters": len(kept),
+                "dropped": sum(1 for d in filter_decisions if not d.kept),
+                "drop_reasons": {},
+            }
+            for d in filter_decisions:
+                if not d.kept and d.reason:
+                    filter_coverage["drop_reasons"][d.reason] = filter_coverage["drop_reasons"].get(d.reason, 0) + 1
 
             query = MarketDataQueryService(
                 InstrumentRepository(session),
                 CandleRepository(session),
             )
             evaluation = StrategyEvaluationService(query, BreakoutRetestConfirmationStrategy())
-            report = await UniverseScanReportService(evaluation).scan_universe(
-                universe, timeframe, start, end
+            report = await UniverseScanReportService(evaluation).scan(
+                kept, timeframe, start, end
             )
             presented = present_scan(
                 report,
@@ -110,6 +123,22 @@ async def execute_scan_job(
                 top_n=top_n,
                 min_score=min_score,
             )
+            if filter_spec.direction in ("LONG", "SHORT"):
+                from dataclasses import replace
+
+                wanted = filter_spec.direction
+
+                def _dir(item) -> str:
+                    cand = getattr(item.opportunity, "candidate", None)
+                    return str(getattr(cand, "direction", "") or "").upper()
+
+                filtered_ops = tuple(item for item in presented.opportunities if _dir(item) == wanted)
+                filtered_top = tuple(item for item in presented.top if _dir(item) == wanted)
+                presented = replace(
+                    presented,
+                    opportunities=filtered_ops,
+                    top=filtered_top or filtered_ops[:top_n],
+                )
             settings = get_settings()
             presented, dq_bullets, _provider = await enrich_presented_scan(
                 presented, settings=settings
@@ -154,6 +183,7 @@ async def execute_scan_job(
                 ai_brief=ai_brief,
             )
             response.status = "completed"
+            response.filter_coverage = filter_coverage
             await enrich_current_prices_with_provider(response, quote_provider)
 
             if enable_paper:
@@ -186,6 +216,9 @@ async def execute_scan_job(
                 "error_count": report.error_count,
                 "issues_recorded": len(report.issues),
                 "data_source": response.data_source,
+                "filter_coverage": filter_coverage,
+                "filters": filter_spec.to_dict(),
+                "top_count": len(response.top or []),
             }
             await repo.mark_completed(
                 scan_run_id,

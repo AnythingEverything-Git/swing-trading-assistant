@@ -1,8 +1,8 @@
 # TradePilot AI — Project Plan (from now onwards)
 
-**Last updated:** 2026-09-05  
-**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Product features include: multi-index scan for LONG breakout and SHORT breakdown setups, ranked opportunities, forming watchlist, interactive charts, live prices, quality scoring, position sizing, **optional practice trading**, beginner-friendly labels, scan history, backtest, auto-refresh scan, SES email alerts (with UI deep links), **async scan jobs**, per-IP rate limits, stock-detail drawer, in-app watermark candle refresh, and **Phase B AI moat** (grounded why/invalidation polish, advisory quality critic, morning/EOD brief, severity-aware data-quality notes, backtest interpreter, similar-setup retrieval). Personal book remains **API-only** (`POST /api/v1/scan/book`) — Find setups UI focuses on Top-N ready ideas + tables (no “Your book” panel). **LLM never invents Entry / SL / Target** — strategy owns prices; `NARRATIVE_PROVIDER=template` keeps offline templates. **Still deferred:** auth, Razorpay billing, Telegram delivery.  
-**Data:** 497 Nifty symbols ingested via Upstox 1d candles. Demo mode still available via `MARKET_DATA_SOURCE=demo`.
+**Last updated:** 2026-09-09  
+**Status:** Live Upstox data active (`MARKET_DATA_SOURCE=upstox`). Swing desk (P0–P9 + Phase B) is complete. **Phase 10** Intraday ORB V1 on `feature/intraday-trading`. **Sellable UI:** wireframe build through **UC-C7** (Home → Capital → Guided/Pro → Universe/Filters → Find setups → Inspect → Chart evidence → Forming → Practice arm → Scan history screen → Auto-refresh bar). Spec: [`TRADEPILOT_PRODUCT_USE_CASES.md`](./TRADEPILOT_PRODUCT_USE_CASES.md) · [`SELLABLE_EXECUTION.md`](./SELLABLE_EXECUTION.md) · [`wireframes/`](./wireframes/README.md). **LLM never invents Entry / SL / Target**. Auth/Razorpay/OMS = EP8 shell then later harden.  
+**Data:** Nifty + NSE cash/ETF master (`NSE_ALL`); demo via `MARKET_DATA_SOURCE=demo`.
 
 ---
 
@@ -10,7 +10,7 @@
 
 TradePilot AI must answer:
 
-> **Out of the selected Nifty universe (50 / 100 / 200 / 500), which stocks have a valid swing-trading opportunity RIGHT NOW?**
+> **Out of the filtered NSE universe (default all cash + ETFs), which names have a valid swing or intraday opportunity RIGHT NOW?**
 
 For every eligible stock, provide:
 
@@ -82,7 +82,7 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 | Scan presentation layer (`present_scan`) | Yes |
 | Alert composer + delivery (Telegram-ready) | Yes |
 | Product status service (data freshness) | Yes |
-| Scan history (persist + reload) | Yes |
+| Scan history (persist + reload) | Yes — dedicated Swing **Scan history** screen (Open + Export CSV) |
 | Interactive chart (lightweight-charts: candles + volume + S/R + markers) | Yes |
 | Live current price in scan results (auto-refresh 15s) | Yes |
 | Quote API (`GET /api/v1/market-data/quotes`) | Yes |
@@ -90,12 +90,13 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 | ScanRun persistence (+ `result_payload` JSON) | Yes |
 | Volume BigInteger migration | Yes |
 | Scan API + universe request field | Yes |
-| Scan UI + Research desk menu | Yes — Find setups / Stock research / Practice trades |
+| Scan UI + Research desk menu | Yes — Home · Swing · Intraday · Research · Practice · Account |
 | Detail overlay, top-ranked cards, See more, CSV | Yes |
 | INR rounding + dark/light theme | Yes |
 | Demo runbook | Yes |
-| Auto-refresh scan (default 5 min; user can change / Off) | Yes |
+| Auto-refresh scan (default 5 min; user can change / Off) | Yes — **AutoRefreshBar** with countdown; pauses criteria/inspect |
 | Collapsible scan criteria (pause refresh while open) | Yes |
+| Wireframe UC-A → UC-C7 sellable Swing desks | Yes — see §2d |
 | Instant Qty / risk update when equity or risk % changes | Yes |
 | Amazon SES email alerts (HTML + text template) | Yes (verified) |
 | Pre-market daily email alert | Yes |
@@ -159,13 +160,13 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 | UC8 | Trader | Browse long result lists | ✅ Top-10 + See more/less |
 | UC9 | Trader | Export eligibles | ✅ CSV |
 | UC10 | Trader | Trust partial data | ✅ Metric cards + severity-aware data note / issues (UNAVAILABLE ≠ no setup) |
-| UC11 | Trader | Switch product areas | ✅ Find setups ↔ Stock research ↔ Practice trades |
+| UC11 | Trader | Switch product areas | ✅ Home · Swing · Intraday · Research · Practice · Account |
 | UC12 | Trader | Evaluate / backtest one symbol | ✅ Stock research + live quote |
-| UC13 | Trader | Reload past scan results | ✅ Scan history dropdown |
+| UC13 | Trader | Reload past scan results | ✅ Dedicated Scan history screen (Open + CSV) |
 | UC14 | Operator | Reproduce from checkout | ✅ Demo runbook |
 | UC15 | Operator | Refresh market data | ✅ `refresh_market_data.py` |
 | UC16 | Operator | Audit a scan | ✅ `scan_run_id` + full JSON payload |
-| UC17 | Trader | Auto-refresh scan results | ✅ Default 5 min; Off / other rates; pauses when criteria open |
+| UC17 | Trader | Auto-refresh scan results | ✅ AutoRefreshBar · countdown · pauses criteria/inspect |
 | UC18 | Operator | Email alerts via Amazon SES | ✅ Pre-market summary + confirmation watch; HTML template |
 | UC19 | Trader | Research a symbol via **detail tabs** | ✅ Overview / Setup / Technical / F&O / News |
 | UC20 | Trader | Read **grounded AI insight** on research tabs | ✅ Gemini Flash (facts-only; template fallback) |
@@ -180,43 +181,43 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 ## 2c. UI / product checkpoints (run at http://127.0.0.1:5173)
 
 ### Checkpoint A — Scan North Star
-1. Top menu switches **Find setups** ↔ **Stock research** ↔ **Practice trades**.
+1. Top menu switches **Home · Swing · Intraday · Research · Practice · Account**.
 2. Theme toggle: **Dark ↔ Light**, persists after refresh.
-3. Universe select: **Nifty 50 / 100 / 200 / 500**; defaults to Nifty 500.
+3. Universe: **NSE all / Stocks / ETFs** + Nifty shortcuts; filter builder + presets + coverage.
 4. Data banner shows source (demo or live Upstox) + last candle date + symbol count.
 5. Scan → metrics show symbols scanned / eligible / forming / no setup / unavailable / errors.
-6. **Current price** and **% change** columns in both eligible and forming tables.
+6. **Current price** and **% change** on eligible and forming surfaces.
 
 ### Checkpoint B — Ranked results + current price
-1. **Top-N cards** show rank, symbol, current price, change %, entry, score, qty.
-2. Table has **Rank, Current, Change** columns alongside Entry / SL / Target / R:R / Score / Qty.
+1. **Top ideas** cards show symbol, direction, entry/stop/target, insight.
+2. Results table: Symbol · Direction · Entry / Stop / Target · Score · Qty · Open plan.
 3. Prices auto-refresh every 15 seconds with **smooth up/down flash** (no full-table flicker).
 
 ### Checkpoint C — Detail overlay + interactive chart
-1. Click any symbol → detail drawer opens.
+1. Intentional open → stock detail drawer (does **not** auto-open after Find setups).
 2. Tabs: **Overview | Setup | Technical | F&O | News & Events**.
-3. **Setup** tab keeps Trade plan / Evidence / Forming + chart.
-4. **Interactive chart** (TradingView-style): candlesticks + volume + levels + B/R/C markers; pan / zoom / crosshair.
+3. **Inspect plan** (UC-C2) and **Chart evidence** (UC-C3) for full-screen plan review.
+4. **Interactive chart**: candlesticks + volume + levels + B/R/C markers; pan / zoom / crosshair.
 5. Header LTP updates live **without** reloading tab data or blanking the panel.
 6. NOW badge active when confirmation date matches scan end.
 
 ### Checkpoint D — Forming watchlist
-1. Forming table shows stage, current price, change, resistance, bars remaining.
-2. Click forming symbol → detail drawer with chart + forming evidence.
+1. Forming desk shows stage, progress, why waiting, Why watching rail.
+2. Click forming symbol → detail or open from actions.
 
 ### Checkpoint E — Export, history & audit
-1. Export CSV with rounded numeric columns.
-2. Scan history dropdown: reload any past scan.
-3. Alert preview in collapsible section.
+1. Export CSV from Find setups and from Scan history rows.
+2. **Scan history** Swing subnav screen: Date · Universe · Eligible % · Coverage % · Open · Export CSV.
+3. Alert preview in collapsible section where present.
 
 ### Checkpoint F — Research desk
-1. Menu → Research desk; live quote shown below form (animated LTP).
+1. Menu → Research; live quote shown below form (animated LTP).
 2. Evaluate / backtest use same INR formatting.
 
-### Checkpoint G — Ops cadence (P5)
+### Checkpoint G — Ops cadence (P5 / UC-C7)
 1. After Scan, criteria collapse; toggle expands to edit anytime.
-2. Auto-refresh defaults to **5 minutes**; Off / other intervals available.
-3. Auto-refresh **pauses** while criteria is open; resumes when collapsed.
+2. **AutoRefreshBar** on Results: toggle ON/OFF · interval · **Next refresh in m:ss**.
+3. Auto-refresh **pauses** while criteria is open, while inspecting a plan, off Swing, or during a scan; preference persisted.
 4. Changing Risk % / equity updates **Qty** immediately (does not change eligible set).
 5. SES configured: `python scripts/send_test_alert_email.py` delivers HTML alert.
 
@@ -242,6 +243,36 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 10. Open trades show **running timer** and **estimated profit-by date** from candle drift + ATR outlook (`GET /api/v1/paper/outlook`).
 
 Operator walkthrough: [RELEASE_SMOKE.md](RELEASE_SMOKE.md).
+
+---
+
+## 2d. Sellable wireframe build (UC-A → UC-C)
+
+Track against [`TRADEPILOT_PRODUCT_USE_CASES.md`](./TRADEPILOT_PRODUCT_USE_CASES.md) and [`docs/wireframes/`](./wireframes/README.md). Build one screen at a time; engine levels stay strategy-owned.
+
+| UC | Screen | Status |
+|----|--------|--------|
+| A1 | Home hub | ✅ |
+| A2 | Capital & risk | ✅ |
+| A3 | Guided vs Pro | ✅ |
+| A4 | Data readiness banner | ✅ |
+| B1 | NSE universe picker | ✅ |
+| B2 | Filter builder | ✅ |
+| B3 | Filter presets | ✅ |
+| B4 | Coverage / skips drawer | ✅ |
+| C1 | Find setups desk | ✅ |
+| C2 | Inspect plan | ✅ |
+| C3 | Chart evidence | ✅ |
+| C4 | Forming watchlist | ✅ |
+| C5 | Practice from scan (`POST /paper/arm`) | ✅ |
+| C6 | Scan history (dedicated Swing screen) | ✅ |
+| C7 | Auto-refresh bar + countdown | ✅ |
+| D1+ | Research symbol workspace (first-class) | 🔄 drawer today · next wireframe pass |
+| E* | Intraday desk polish vs wireframes | 🔄 product live · wireframe alignment ongoing |
+| F* | Copilot / coach surfaces | 🔄 APIs + partial UI |
+
+**Next UI pass:** UC-D1 Symbol workspace (and remaining D/F sellable surfaces), then deepen Intraday E-series wireframe parity.
+
 ---
 
 ## 3. Guiding principles
@@ -359,6 +390,39 @@ Auth, billing, **real** broker execution / OMS, WebSocket ticks, multi-timeframe
 | P9.8 | Start-trade alert + persistent live practice strip | ✅ |
 | P9.9 | Live duration timer + candle/ATR profit ETA outlook | ✅ |
 
+### Phase 10 — Intraday ORB V1 — **In progress** (`feature/intraday-trading`)
+
+Frozen spec: [`INTRADAY_STRATEGY_V1.md`](./INTRADAY_STRATEGY_V1.md)  
+Implementation plan: [`INTRADAY_IMPLEMENTATION_PLAN.md`](./INTRADAY_IMPLEMENTATION_PLAN.md)
+
+| ID | Task | Status |
+|----|------|--------|
+| P10.0 | Refine + lock CONFIG_V1 + implementation plan | ✅ |
+| P10.1 | Minute candle ingest (`1m`/`5m`) via Upstox + demo | ✅ range/today/demo/watermark scripts; Upstox map |
+| P10.2 | Pure ORB domain engine + unit tests | ✅ `domain/intraday` + `test_intraday_orb_v1.py` |
+| P10.3 | Intraday session services + persistence | ✅ `intraday_sessions` table + repo; memory cache + DB reload |
+| P10.4 | Backtest harness + cost/slippage reports | ✅ friction, WF/holdout, MFE/MAE/giveback, entry buckets |
+| P10.5 | Intraday API (parallel to swing scan) | ✅ chart 1m/5m, morning, practice LTP, divergence |
+| P10.6 | Paper/sim execution (stop + 15:10 flatten) | ✅ practice + live LTP tick |
+| P10.7 | Intraday UI desk | ✅ full desk use cases |
+| P10.8 | Universe/surveillance/short-allow hardening | ✅ NSE_CASH/ETF master + PIT JSON feeds |
+| P10.9 | Walk-forward / OOS certification (go/no-go) | 🔄 tooling + memo; **NO_GO until multi-year 1m** |
+
+### Phase 11 — Sellable wireframe UI (Swing A–C) — **Done through C7**
+
+| ID | Task | Status |
+|----|------|--------|
+| P11.1 | Shell: Home, Capital & risk, Guided/Pro, data readiness | ✅ UC-A1–A4 |
+| P11.2 | Universe picker, filter builder, presets, coverage | ✅ UC-B1–B4 |
+| P11.3 | Find setups → Inspect → Chart evidence → Forming | ✅ UC-C1–C4 |
+| P11.4 | Practice from scan (`/paper/arm`) | ✅ UC-C5 |
+| P11.5 | Scan history dedicated screen + CSV | ✅ UC-C6 |
+| P11.6 | Auto-refresh bar + countdown + pause rules | ✅ UC-C7 |
+| P11.7 | Research workspace D-series wireframe parity | 🔄 next |
+| P11.8 | Copilot / coach F-series surfaces | 🔄 next |
+
+Swing `1d` BreakoutRetest desk remains default and unchanged.
+
 ---
 
 ## 5. Status snapshot
@@ -374,6 +438,8 @@ P6  Deferred                              —
 P7  Groww detail tabs + Gemini + UX polish ✅
 P8  SHORT breakdown setups + tests        ✅
 P9  Practice trades (opt-in, entry→exit)   ✅
+P10 Intraday ORB V1                       🔄 product+eligibility done; cert needs multi-year 1m
+P11 Sellable wireframe UI (A–C7)          ✅ through UC-C7; D/F next
 ```
 
 | Phase | Status |
@@ -388,6 +454,8 @@ P9  Practice trades (opt-in, entry→exit)   ✅
 | P7 | Done |
 | P8 | Done |
 | P9 | Done |
+| P10 | In progress — product + NSE master + PIT eligibility done; cert NO_GO until multi-year 1m |
+| P11 | Done through UC-C7 — Research D-series + Copilot F-series next |
 
 ---
 
@@ -404,6 +472,8 @@ P9  Practice trades (opt-in, entry→exit)   ✅
 | P7 | Detail tabs + research APIs + Gemini insights; drawer stable under 15s quote poll |
 | P8 | SHORT mirror of LONG strategy with forming + backtest + exhaustive unit tests |
 | P9 | Opt-in practice: entry watch → fill → Stop/Target; live strip; capital; alerts; timer + ATR/drift ETA |
+| P10 | Intraday ORB V1: minute data + frozen engine + session API/UI; certification memo (profit not assumed) |
+| P11 | Wireframe Swing desks A1–C7 shipping; D/F remaining |
 
 ---
 
@@ -466,6 +536,6 @@ P9  Practice trades (opt-in, entry→exit)   ✅
 
 ## 9. One-line summary
 
-**Now:** Full-featured product — live Upstox data, ranked LONG + SHORT scan, **async scan jobs** (202 + poll), charts, clean stock-detail drawer, optional practice trading, beginner labels, 5‑min auto-refresh, SES alerts with deep links, in-app IST watermark candle refresh, per-IP rate limits.  
-**Next:** Deferred commercial shell (auth, Razorpay, Telegram); run [RELEASE_SMOKE.md](RELEASE_SMOKE.md) including async scan + deep-link checks.  
-**Verify:** Checkpoints A–I in §2c plus RELEASE_SMOKE items 11–13 before claiming Phase A (excl. A6) sellable.
+**Now:** Full-featured **swing** product — live Upstox `1d`, ranked LONG + SHORT, async scan, practice trading, Phase B AI moat.  
+**Next:** Complete Phase 10 certification on `feature/intraday-trading` — multi-year 1m backfill + fill [`INTRADAY_CERTIFICATION_V1.md`](./INTRADAY_CERTIFICATION_V1.md) go/no-go (do not retune CONFIG_V1).  
+**Verify:** Checkpoints A–I in §2c plus RELEASE_SMOKE items 11–13 before claiming Phase A (excl. A6) sellable; intraday certification is separate (P10.9).

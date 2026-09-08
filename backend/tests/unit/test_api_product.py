@@ -14,6 +14,9 @@ class FakeProductStatusService:
             last_candle_time=None,
             symbols_with_candles=12,
             environment="development",
+            symbols_with_1m=8,
+            last_1m_candle_time=None,
+            stale_risk="High",
         )
 
 
@@ -28,4 +31,6 @@ def test_product_status_reports_demo_and_plug_and_play():
     assert data["live_ready"] is False
     assert "not live" in data["claim"].lower()
     assert data["symbols_with_candles"] == 12
+    assert data["symbols_with_1m"] == 8
+    assert data["stale_risk"] == "High"
     assert "UPSTOX_ACCESS_TOKEN" in data["plug_and_play"]

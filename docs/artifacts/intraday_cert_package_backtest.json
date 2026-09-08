@@ -1,0 +1,318 @@
+{
+  "strategy_id": "NSE_STOCKS_ETF_ORB_RVOL_5M_V1",
+  "config_hash": "CONFIG_V1",
+  "source": "demo",
+  "start": "2026-09-01",
+  "end": "2026-09-07",
+  "oos_start": null,
+  "holdout_frac": 0.3,
+  "cost_stress_mult": "2",
+  "overall": {
+    "sessions": 5,
+    "fills": 15,
+    "closed_trades": 15,
+    "winners": 6,
+    "losers": 9,
+    "win_rate": 0.4,
+    "net_pnl": "642.73486",
+    "est_friction": "1706.17380",
+    "net_pnl_after_friction": "-1063.43894",
+    "worst_day_pnl": "-974.31932",
+    "best_day_pnl": "1627.32250",
+    "avg_coverage_pct": 96.0,
+    "reason_counts": {
+      "TRADED": 15,
+      "PORTFOLIO_RISK_LIMIT": 9,
+      "CORPORATE_ACTION_BLOCK": 1
+    },
+    "entry_time_buckets": {
+      "09:20-10:00": 15
+    },
+    "sector_abs_pnl": {
+      "UNKNOWN": "7494.71910"
+    },
+    "mfe_sum": "8784.75",
+    "mae_sum": "5245.04",
+    "avg_giveback_winners": "0.2513877590230482353109603378",
+    "flags": {
+      "concentration_top3_symbol_abs_pnl_share": 0.7278,
+      "concentration_warn": true,
+      "sector_top_share": 1.0,
+      "sector_concentration_warn": true,
+      "cost_fragile_at_stress": true,
+      "low_coverage_warn": false,
+      "thin_sample_warn": true,
+      "high_giveback_warn": false
+    }
+  },
+  "in_sample": {
+    "sessions": 4,
+    "fills": 12,
+    "closed_trades": 12,
+    "winners": 6,
+    "losers": 6,
+    "win_rate": 0.5,
+    "net_pnl": "1617.05418",
+    "est_friction": "1346.05748",
+    "net_pnl_after_friction": "270.99670",
+    "worst_day_pnl": "-172.99506",
+    "best_day_pnl": "1627.32250",
+    "avg_coverage_pct": 100.0,
+    "reason_counts": {
+      "TRADED": 12,
+      "PORTFOLIO_RISK_LIMIT": 8
+    },
+    "entry_time_buckets": {
+      "09:20-10:00": 12
+    },
+    "sector_abs_pnl": {
+      "UNKNOWN": "6520.39978"
+    },
+    "mfe_sum": "7493.46",
+    "mae_sum": "4118.18",
+    "avg_giveback_winners": "0.2513877590230482353109603378",
+    "flags": {
+      "concentration_top3_symbol_abs_pnl_share": 0.7515,
+      "concentration_warn": true,
+      "sector_top_share": 1.0,
+      "sector_concentration_warn": true,
+      "cost_fragile_at_stress": false,
+      "low_coverage_warn": false,
+      "thin_sample_warn": true,
+      "high_giveback_warn": false
+    }
+  },
+  "oos": {
+    "sessions": 1,
+    "fills": 3,
+    "closed_trades": 3,
+    "winners": 0,
+    "losers": 3,
+    "win_rate": 0.0,
+    "net_pnl": "-974.31932",
+    "est_friction": "360.11632",
+    "net_pnl_after_friction": "-1334.43564",
+    "worst_day_pnl": "-974.31932",
+    "best_day_pnl": "-974.31932",
+    "avg_coverage_pct": 80.0,
+    "reason_counts": {
+      "CORPORATE_ACTION_BLOCK": 1,
+      "TRADED": 3,
+      "PORTFOLIO_RISK_LIMIT": 1
+    },
+    "entry_time_buckets": {
+      "09:20-10:00": 3
+    },
+    "sector_abs_pnl": {
+      "UNKNOWN": "974.31932"
+    },
+    "mfe_sum": "1291.29",
+    "mae_sum": "1126.86",
+    "avg_giveback_winners": null,
+    "flags": {
+      "concentration_top3_symbol_abs_pnl_share": 1.0,
+      "concentration_warn": false,
+      "sector_top_share": 1.0,
+      "sector_concentration_warn": false,
+      "cost_fragile_at_stress": false,
+      "low_coverage_warn": false,
+      "thin_sample_warn": true,
+      "high_giveback_warn": false
+    }
+  },
+  "go_no_go_notes": [
+    "Thin sample (<20 closed trades) \u2014 do not certify.",
+    "PnL concentrated in \u22643 symbols \u2014 automatic rejection risk (\u00a724).",
+    "Sign flips after friction stress \u2014 cost fragile.",
+    "OOS collapses vs in-sample \u2014 do not mutate V1; design V2 if needed."
+  ],
+  "days": [
+    {
+      "session_date": "2026-09-01",
+      "bucket": "is",
+      "fills": 3,
+      "closed": 3,
+      "winners": 3,
+      "losers": 0,
+      "pnl": "1627.32250",
+      "est_friction": "359.83000",
+      "pnl_after_friction": "1267.49250",
+      "eligible": 5,
+      "total": 5,
+      "coverage_pct": 100.0,
+      "reason_counts": {
+        "TRADED": 3,
+        "PORTFOLIO_RISK_LIMIT": 2
+      },
+      "symbol_pnl": {
+        "TCS": "192.03",
+        "HDFCBANK": "255.49",
+        "ORBDEMO": "1179.80250"
+      },
+      "symbol_sectors": {
+        "TCS": "UNKNOWN",
+        "HDFCBANK": "UNKNOWN",
+        "ORBDEMO": "UNKNOWN"
+      },
+      "entry_time_buckets": {
+        "09:20-10:00": 3
+      },
+      "mfe_sum": "2321.29",
+      "mae_sum": "790.28",
+      "givebacks": [
+        "0.2884615384615384615384615385",
+        "0.6627906976744186046511627907",
+        "0.08807536231884057971014492754"
+      ],
+      "data_source": "demo"
+    },
+    {
+      "session_date": "2026-09-02",
+      "bucket": "is",
+      "fills": 3,
+      "closed": 3,
+      "winners": 1,
+      "losers": 2,
+      "pnl": "-172.99506",
+      "est_friction": "360.61416",
+      "pnl_after_friction": "-533.60922",
+      "eligible": 5,
+      "total": 5,
+      "coverage_pct": 100.0,
+      "reason_counts": {
+        "TRADED": 3,
+        "PORTFOLIO_RISK_LIMIT": 2
+      },
+      "symbol_pnl": {
+        "INFY": "-412.27506",
+        "TCS": "484.84",
+        "HDFCBANK": "-245.56"
+      },
+      "symbol_sectors": {
+        "INFY": "UNKNOWN",
+        "TCS": "UNKNOWN",
+        "HDFCBANK": "UNKNOWN"
+      },
+      "entry_time_buckets": {
+        "09:20-10:00": 3
+      },
+      "mfe_sum": "1184.16",
+      "mae_sum": "1298.49",
+      "givebacks": [
+        "0.1636363636363636363636363636"
+      ],
+      "data_source": "demo"
+    },
+    {
+      "session_date": "2026-09-03",
+      "bucket": "is",
+      "fills": 3,
+      "closed": 3,
+      "winners": 1,
+      "losers": 2,
+      "pnl": "131.75931",
+      "est_friction": "361.856",
+      "pnl_after_friction": "-230.09669",
+      "eligible": 5,
+      "total": 5,
+      "coverage_pct": 100.0,
+      "reason_counts": {
+        "TRADED": 3,
+        "PORTFOLIO_RISK_LIMIT": 2
+      },
+      "symbol_pnl": {
+        "INFY": "-486.42069",
+        "TCS": "-471.60",
+        "HDFCBANK": "1089.78"
+      },
+      "symbol_sectors": {
+        "INFY": "UNKNOWN",
+        "TCS": "UNKNOWN",
+        "HDFCBANK": "UNKNOWN"
+      },
+      "entry_time_buckets": {
+        "09:20-10:00": 3
+      },
+      "mfe_sum": "1935.46",
+      "mae_sum": "1151.70",
+      "givebacks": [
+        "0.1214285714285714285714285714"
+      ],
+      "data_source": "demo"
+    },
+    {
+      "session_date": "2026-09-04",
+      "bucket": "is",
+      "fills": 3,
+      "closed": 3,
+      "winners": 1,
+      "losers": 2,
+      "pnl": "30.96743",
+      "est_friction": "263.75732",
+      "pnl_after_friction": "-232.78989",
+      "eligible": 5,
+      "total": 5,
+      "coverage_pct": 100.0,
+      "reason_counts": {
+        "TRADED": 3,
+        "PORTFOLIO_RISK_LIMIT": 2
+      },
+      "symbol_pnl": {
+        "RELIANCE": "-440.61705",
+        "INFY": "866.78448",
+        "TCS": "-395.20"
+      },
+      "symbol_sectors": {
+        "RELIANCE": "UNKNOWN",
+        "INFY": "UNKNOWN",
+        "TCS": "UNKNOWN"
+      },
+      "entry_time_buckets": {
+        "09:20-10:00": 3
+      },
+      "mfe_sum": "2052.55",
+      "mae_sum": "877.71",
+      "givebacks": [
+        "0.1839340206185567010309278351"
+      ],
+      "data_source": "demo"
+    },
+    {
+      "session_date": "2026-09-07",
+      "bucket": "oos",
+      "fills": 3,
+      "closed": 3,
+      "winners": 0,
+      "losers": 3,
+      "pnl": "-974.31932",
+      "est_friction": "360.11632",
+      "pnl_after_friction": "-1334.43564",
+      "eligible": 4,
+      "total": 5,
+      "coverage_pct": 80.0,
+      "reason_counts": {
+        "CORPORATE_ACTION_BLOCK": 1,
+        "TRADED": 3,
+        "PORTFOLIO_RISK_LIMIT": 1
+      },
+      "symbol_pnl": {
+        "TCS": "-496.85",
+        "ORBDEMO": "-468.68932",
+        "HDFCBANK": "-8.78"
+      },
+      "symbol_sectors": {
+        "TCS": "UNKNOWN",
+        "ORBDEMO": "UNKNOWN",
+        "HDFCBANK": "UNKNOWN"
+      },
+      "entry_time_buckets": {
+        "09:20-10:00": 3
+      },
+      "mfe_sum": "1291.29",
+      "mae_sum": "1126.86",
+      "givebacks": [],
+      "data_source": "demo"
+    }
+  ],
+  "note": "Scaffold only \u2014 not V1 certification. See docs/INTRADAY_CERTIFICATION_V1.md."
+}

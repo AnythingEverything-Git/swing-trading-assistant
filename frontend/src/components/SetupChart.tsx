@@ -33,34 +33,63 @@ function num(value: string | number | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+/** Skip a level when it is essentially the same price as another already drawn. */
+function near(a: number, b: number, rel = 0.0015): boolean {
+  const scale = Math.max(Math.abs(a), Math.abs(b), 1)
+  return Math.abs(a - b) / scale < rel
+}
+
 export function SetupChart({
   candles,
   levels,
+  height = 360,
+  variant = 'default',
 }: {
   candles: ChartCandle[]
   levels: Levels
+  height?: number
+  /** Inspect: plan levels only. Evidence: structure + plan + markers. */
+  variant?: 'default' | 'inspect' | 'evidence'
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const isInspect = variant === 'inspect'
+  const isEvidence = variant === 'evidence'
+  const roomy = isInspect || isEvidence
 
   useEffect(() => {
     if (!hostRef.current || candles.length === 0) return
-    const chart = createChart(hostRef.current, {
-      width: hostRef.current.clientWidth || 860,
-      height: 360,
+    const host = hostRef.current
+    const chartHeight = Math.max(height, host.clientHeight || height)
+
+    const chart = createChart(host, {
+      width: host.clientWidth || 860,
+      height: chartHeight,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#94a3b8',
+        textColor: '#64748b',
+        fontSize: roomy ? 11 : 12,
+        attributionLogo: false,
       },
       grid: {
-        vertLines: { color: 'rgba(148, 163, 184, 0.15)' },
-        horzLines: { color: 'rgba(148, 163, 184, 0.15)' },
+        vertLines: { color: 'rgba(148, 163, 184, 0.12)' },
+        horzLines: { color: 'rgba(148, 163, 184, 0.12)' },
       },
-      rightPriceScale: { borderColor: 'rgba(148, 163, 184, 0.3)' },
+      rightPriceScale: {
+        borderColor: 'rgba(148, 163, 184, 0.28)',
+        minimumWidth: roomy ? 78 : 64,
+        scaleMargins: roomy ? { top: 0.08, bottom: 0.18 } : { top: 0.1, bottom: 0.2 },
+      },
+      leftPriceScale: { visible: false },
       timeScale: {
-        borderColor: 'rgba(148, 163, 184, 0.3)',
+        borderColor: 'rgba(148, 163, 184, 0.28)',
         timeVisible: true,
+        rightOffset: roomy ? 6 : 4,
+        barSpacing: roomy ? 7 : 6,
+        fixLeftEdge: true,
+        fixRightEdge: true,
       },
       crosshair: { mode: CrosshairMode.Normal },
+      handleScroll: { vertTouchDrag: false },
     })
 
     const candleSeries = chart.addCandlestickSeries({
@@ -70,6 +99,8 @@ export function SetupChart({
       borderDownColor: '#dc2626',
       wickUpColor: '#16a34a',
       wickDownColor: '#dc2626',
+      priceLineVisible: false,
+      lastValueVisible: true,
     })
     const volumeSeries = chart.addHistogramSeries({
       priceFormat: { type: 'volume' },
@@ -77,7 +108,7 @@ export function SetupChart({
       color: 'rgba(71, 85, 105, 0.45)',
     })
     chart.priceScale('vol').applyOptions({
-      scaleMargins: { top: 0.7, bottom: 0 },
+      scaleMargins: { top: roomy ? 0.78 : 0.72, bottom: 0 },
       borderVisible: false,
     })
 
@@ -96,12 +127,14 @@ export function SetupChart({
           close,
         }
       })
-      .filter((item): item is { time: UTCTimestamp; open: number; high: number; low: number; close: number } => item !== null)
+      .filter(
+        (item): item is { time: UTCTimestamp; open: number; high: number; low: number; close: number } =>
+          item !== null,
+      )
 
     candleSeries.setData(priceData)
     const toTime = (timestamp: string) => Math.floor(new Date(timestamp).getTime() / 1000) as UTCTimestamp
 
-    // Small visual anchors for the strategy evidence bars.
     const markers: Array<{
       time: UTCTimestamp
       position: 'aboveBar' | 'belowBar'
@@ -109,7 +142,11 @@ export function SetupChart({
       shape: 'circle' | 'arrowUp' | 'arrowDown' | 'square'
       text: string
     }> = []
-    if (typeof levels.breakoutIndex === 'number' && levels.breakoutIndex >= 0 && levels.breakoutIndex < candles.length) {
+    if (
+      typeof levels.breakoutIndex === 'number' &&
+      levels.breakoutIndex >= 0 &&
+      levels.breakoutIndex < candles.length
+    ) {
       markers.push({
         time: toTime(candles[levels.breakoutIndex].timestamp),
         position: 'aboveBar',
@@ -118,7 +155,11 @@ export function SetupChart({
         text: 'B',
       })
     }
-    if (typeof levels.retestIndex === 'number' && levels.retestIndex >= 0 && levels.retestIndex < candles.length) {
+    if (
+      typeof levels.retestIndex === 'number' &&
+      levels.retestIndex >= 0 &&
+      levels.retestIndex < candles.length
+    ) {
       markers.push({
         time: toTime(candles[levels.retestIndex].timestamp),
         position: 'belowBar',
@@ -127,7 +168,11 @@ export function SetupChart({
         text: 'R',
       })
     }
-    if (typeof levels.confirmationIndex === 'number' && levels.confirmationIndex >= 0 && levels.confirmationIndex < candles.length) {
+    if (
+      typeof levels.confirmationIndex === 'number' &&
+      levels.confirmationIndex >= 0 &&
+      levels.confirmationIndex < candles.length
+    ) {
       markers.push({
         time: toTime(candles[levels.confirmationIndex].timestamp),
         position: 'aboveBar',
@@ -156,42 +201,74 @@ export function SetupChart({
         .filter((item): item is { time: UTCTimestamp; value: number; color: string } => item !== null),
     )
 
-    const addLine = (price: string | number | null | undefined, title: string, color: string) => {
+    const drawn: number[] = []
+    const addLine = (
+      price: string | number | null | undefined,
+      title: string,
+      color: string,
+      opts?: { axisLabel?: boolean; style?: LineStyle },
+    ) => {
       const p = num(price)
       if (p == null) return
+      if (drawn.some((existing) => near(existing, p))) return
+      drawn.push(p)
       candleSeries.createPriceLine({
         price: p,
         title,
         color,
-        lineWidth: 1,
-        axisLabelVisible: true,
-        lineStyle: LineStyle.Dashed,
+        lineWidth: roomy ? 2 : 1,
+        axisLabelVisible: opts?.axisLabel ?? true,
+        lineStyle: opts?.style ?? LineStyle.Dashed,
       })
     }
-    addLine(levels.resistance, 'Ceiling', '#0f766e')
-    addLine(levels.support, 'Floor', '#c2410c')
-    addLine(levels.entry, 'Buy/sell', '#16a34a')
-    addLine(levels.stop, 'Safety', '#dc2626')
-    addLine(levels.target, 'Goal', '#0369a1')
+
+    if (isInspect) {
+      addLine(levels.entry, 'Entry', '#16a34a', { style: LineStyle.Solid })
+      addLine(levels.stop, 'Stop', '#dc2626')
+      addLine(levels.target, 'Target', '#0369a1')
+    } else if (isEvidence) {
+      addLine(levels.resistance, 'Ceiling', '#0f766e')
+      addLine(levels.support, 'Support', '#c2410c', { style: LineStyle.Solid })
+      addLine(levels.entry, 'Entry', '#16a34a', { style: LineStyle.Solid })
+      addLine(levels.stop, 'Stop', '#dc2626')
+      addLine(levels.target, 'Target', '#0369a1')
+    } else {
+      addLine(levels.resistance, 'Ceiling', '#0f766e')
+      addLine(levels.support, 'Floor', '#c2410c')
+      addLine(levels.entry, 'Entry', '#16a34a')
+      addLine(levels.stop, 'Stop', '#dc2626')
+      addLine(levels.target, 'Target', '#0369a1')
+    }
 
     chart.timeScale().fitContent()
-    const observer = new ResizeObserver(() => {
+    const syncSize = () => {
       if (!hostRef.current) return
-      chart.applyOptions({ width: hostRef.current.clientWidth })
-    })
-    observer.observe(hostRef.current)
+      const nextH = Math.max(height, hostRef.current.clientHeight || height)
+      chart.applyOptions({
+        width: hostRef.current.clientWidth,
+        height: nextH,
+      })
+    }
+    const observer = new ResizeObserver(syncSize)
+    observer.observe(host)
+    syncSize()
     return () => {
       observer.disconnect()
       chart.remove()
     }
-  }, [candles, levels])
+  }, [candles, levels, height, isInspect, isEvidence, roomy])
 
   if (candles.length === 0) {
     return <p className="field-hint">No candles for this range.</p>
   }
 
   return (
-    <div className="setup-chart" role="img" aria-label="Interactive price and volume chart">
+    <div
+      className={`setup-chart${roomy ? ' is-inspect' : ''}`}
+      role="img"
+      aria-label="Interactive price and volume chart"
+      style={{ ['--setup-chart-height' as string]: `${height}px` }}
+    >
       <div className="setup-chart-host" ref={hostRef} />
     </div>
   )

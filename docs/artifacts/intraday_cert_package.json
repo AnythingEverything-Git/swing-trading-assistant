@@ -1,0 +1,153 @@
+{
+  "strategy_id": "NSE_STOCKS_ETF_ORB_RVOL_5M_V1",
+  "config_hash": "CONFIG_V1",
+  "generated_for": {
+    "start": "2026-09-01",
+    "end": "2026-09-07",
+    "source": "demo"
+  },
+  "decision": "NO_GO",
+  "eligibility_inventory": {
+    "morning_universe_total": 2647,
+    "morning_stocks": 2535,
+    "morning_etfs": 112,
+    "nse_cash_count": 2535,
+    "nse_etf_file_count": 112,
+    "short_denylist_count": 6,
+    "short_allowlist_count": 50,
+    "surveillance_blocked_today": 2,
+    "corporate_action_entries": 3,
+    "filters_file_backed": true,
+    "note": "Eligibility is file-backed PIT. Replace JSON dumps with exchange/broker exports before claiming live validation. Multi-year 1m OOS still required for go."
+  },
+  "backtest_path": "D:/Study/GenAI/swing-trading-assistant/docs/artifacts/intraday_cert_package_backtest.json",
+  "backtest_summary": {
+    "overall": {
+      "sessions": 5,
+      "fills": 15,
+      "closed_trades": 15,
+      "winners": 6,
+      "losers": 9,
+      "win_rate": 0.4,
+      "net_pnl": "642.73486",
+      "est_friction": "1706.17380",
+      "net_pnl_after_friction": "-1063.43894",
+      "worst_day_pnl": "-974.31932",
+      "best_day_pnl": "1627.32250",
+      "avg_coverage_pct": 96.0,
+      "reason_counts": {
+        "TRADED": 15,
+        "PORTFOLIO_RISK_LIMIT": 9,
+        "CORPORATE_ACTION_BLOCK": 1
+      },
+      "entry_time_buckets": {
+        "09:20-10:00": 15
+      },
+      "sector_abs_pnl": {
+        "UNKNOWN": "7494.71910"
+      },
+      "mfe_sum": "8784.75",
+      "mae_sum": "5245.04",
+      "avg_giveback_winners": "0.2513877590230482353109603378",
+      "flags": {
+        "concentration_top3_symbol_abs_pnl_share": 0.7278,
+        "concentration_warn": true,
+        "sector_top_share": 1.0,
+        "sector_concentration_warn": true,
+        "cost_fragile_at_stress": true,
+        "low_coverage_warn": false,
+        "thin_sample_warn": true,
+        "high_giveback_warn": false
+      }
+    },
+    "in_sample": {
+      "sessions": 4,
+      "fills": 12,
+      "closed_trades": 12,
+      "winners": 6,
+      "losers": 6,
+      "win_rate": 0.5,
+      "net_pnl": "1617.05418",
+      "est_friction": "1346.05748",
+      "net_pnl_after_friction": "270.99670",
+      "worst_day_pnl": "-172.99506",
+      "best_day_pnl": "1627.32250",
+      "avg_coverage_pct": 100.0,
+      "reason_counts": {
+        "TRADED": 12,
+        "PORTFOLIO_RISK_LIMIT": 8
+      },
+      "entry_time_buckets": {
+        "09:20-10:00": 12
+      },
+      "sector_abs_pnl": {
+        "UNKNOWN": "6520.39978"
+      },
+      "mfe_sum": "7493.46",
+      "mae_sum": "4118.18",
+      "avg_giveback_winners": "0.2513877590230482353109603378",
+      "flags": {
+        "concentration_top3_symbol_abs_pnl_share": 0.7515,
+        "concentration_warn": true,
+        "sector_top_share": 1.0,
+        "sector_concentration_warn": true,
+        "cost_fragile_at_stress": false,
+        "low_coverage_warn": false,
+        "thin_sample_warn": true,
+        "high_giveback_warn": false
+      }
+    },
+    "oos": {
+      "sessions": 1,
+      "fills": 3,
+      "closed_trades": 3,
+      "winners": 0,
+      "losers": 3,
+      "win_rate": 0.0,
+      "net_pnl": "-974.31932",
+      "est_friction": "360.11632",
+      "net_pnl_after_friction": "-1334.43564",
+      "worst_day_pnl": "-974.31932",
+      "best_day_pnl": "-974.31932",
+      "avg_coverage_pct": 80.0,
+      "reason_counts": {
+        "CORPORATE_ACTION_BLOCK": 1,
+        "TRADED": 3,
+        "PORTFOLIO_RISK_LIMIT": 1
+      },
+      "entry_time_buckets": {
+        "09:20-10:00": 3
+      },
+      "sector_abs_pnl": {
+        "UNKNOWN": "974.31932"
+      },
+      "mfe_sum": "1291.29",
+      "mae_sum": "1126.86",
+      "avg_giveback_winners": null,
+      "flags": {
+        "concentration_top3_symbol_abs_pnl_share": 1.0,
+        "concentration_warn": false,
+        "sector_top_share": 1.0,
+        "sector_concentration_warn": false,
+        "cost_fragile_at_stress": false,
+        "low_coverage_warn": false,
+        "thin_sample_warn": true,
+        "high_giveback_warn": false
+      }
+    },
+    "go_no_go_notes": [
+      "Thin sample (<20 closed trades) \u2014 do not certify.",
+      "PnL concentrated in \u22643 symbols \u2014 automatic rejection risk (\u00a724).",
+      "Sign flips after friction stress \u2014 cost fragile.",
+      "OOS collapses vs in-sample \u2014 do not mutate V1; design V2 if needed.",
+      "Demo source \u2014 automatic NO_GO for certification."
+    ]
+  },
+  "operator_checklist": [
+    "Refresh universe: python scripts/build_nse_universe_from_upstox.py",
+    "Multi-year 1m: python scripts/refresh_intraday_candles.py --mode range --universe NIFTY_50 --start YYYY-MM-DD --end YYYY-MM-DD",
+    "Update surveillance_blocked.json / corporate_actions.json / short_allowed.json from official dumps",
+    "Collect practice divergence over live mornings",
+    "Paste decision into docs/INTRADAY_CERTIFICATION_V1.md \u2014 never retune CONFIG_V1"
+  ]
+}

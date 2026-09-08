@@ -90,8 +90,13 @@ class Settings(BaseSettings):
     # In-app weekday watermark refresh (IST); only runs when source=upstox
     market_data_refresh_enabled: bool = True
     market_data_refresh_time: str = "16:15"
-    market_data_refresh_universe: str = "NIFTY_500"
+    market_data_refresh_universe: str = "NSE_ALL"
     market_data_refresh_run_on_startup: bool = False
+    # Intraday 1m active-set loop during market hours (EP7)
+    intraday_1m_refresh_enabled: bool = True
+    intraday_1m_refresh_interval_sec: int = 300
+    intraday_1m_refresh_universe: str = "NIFTY_50"
+    intraday_1m_refresh_limit: int = 50
     # Deep links in email alerts (UI origin, no trailing slash)
     frontend_base_url: str = "http://127.0.0.1:5173"
 

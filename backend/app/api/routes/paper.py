@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_ingest_provider, get_query_service
 from app.api.schemas import (
+    PaperArmRequest,
+    PaperArmResponse,
     PaperCloseRequest,
     PaperOutlookItem,
     PaperOutlookResponse,
@@ -100,6 +102,30 @@ async def tick_paper_trades(
         pending_trades=[_trade_response(t) for t in result.pending_trades],
         open_trades=[_trade_response(t) for t in result.open_trades],
         total_unrealized=total_unrealized,
+    )
+
+
+@router.post("/arm", response_model=PaperArmResponse)
+async def arm_paper_trades(
+    payload: PaperArmRequest,
+    svc: PaperTradeService = Depends(get_paper_service),
+) -> PaperArmResponse:
+    """Opt-in practice watches from selected scan eligibles (PENDING until entry)."""
+    result = await svc.open_from_items([item.model_dump(mode="python") for item in payload.items])
+    parts: list[str] = []
+    if result.opened:
+        parts.append(f"Armed {result.opened} practice watch(es)")
+    if result.skipped_open:
+        parts.append(f"skipped {result.skipped_open} already watching/open")
+    if result.skipped_qty:
+        parts.append(f"skipped {result.skipped_qty} with no share size")
+    message = " · ".join(parts) if parts else "No practice watches created"
+    return PaperArmResponse(
+        claim=_CLAIM,
+        opened=result.opened,
+        skipped_qty=result.skipped_qty,
+        skipped_open=result.skipped_open,
+        message=message,
     )
 
 

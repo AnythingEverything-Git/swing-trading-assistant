@@ -2,15 +2,35 @@
 import ReactDOM from 'react-dom/client'
 import './styles.css'
 import { LiveValue } from './components/LiveValue'
-import { PlanDeductionPanel } from './components/PlanDeductionPanel'
-import { SetupChart, type ChartCandle } from './components/SetupChart'
+import type { ChartCandle } from './components/SetupChart'
 import { StockDetailDrawer } from './components/StockDetailDrawer'
+import { InspectPlanDesk } from './components/InspectPlanDesk'
+import { ChartEvidenceDesk } from './components/ChartEvidenceDesk'
+import { FormingWatchlistDesk } from './components/FormingWatchlistDesk'
+import { PracticeFromScanDesk } from './components/PracticeFromScanDesk'
+import { ScanHistoryDesk, scanCoveragePct } from './components/ScanHistoryDesk'
 import {
   HeaderFilterSelect,
   HeaderSortFilter,
   SortHeaderButton,
 } from './components/TableHeaderControls'
 import { TradeDurationTimer } from './components/TradeDurationTimer'
+import { IntradayDesk } from './components/IntradayDesk'
+import { HomeHub } from './components/HomeHub'
+import { PracticeBook } from './components/PracticeBook'
+import { ResearchDesk } from './components/ResearchDesk'
+import { CapitalRisk } from './components/CapitalRisk'
+import { GuidedProMode } from './components/GuidedProMode'
+import { DataReadinessBanner } from './components/DataReadinessBanner'
+import { FilterBuilder, DEFAULT_FILTERS, filtersToPayload, type UniverseFilterState } from './components/FilterBuilder'
+import { FilterPresets } from './components/FilterPresets'
+import { CoverageDrawer } from './components/CoverageDrawer'
+import {
+  FindSetupsCriteriaBar,
+  FindSetupsResultsLayout,
+  countActiveFilters,
+} from './components/FindSetupsDesk'
+import { UniversePicker, type ScanUniverse } from './components/UniversePicker'
 import { buildPlanDeductionSteps } from './planDeduction'
 import {
   getScanRun,
@@ -57,6 +77,7 @@ type ThemeMode = 'light' | 'dark'
 const THEME_STORAGE_KEY = 'tradepilot-theme'
 const RISK_STORAGE_KEY = 'tradepilot-risk-profile'
 const PAPER_ENABLED_KEY = 'tradepilot-paper-enabled'
+const AUTO_REFRESH_STORAGE_KEY = 'tradepilot-auto-refresh'
 
 function readStoredRisk(): { equity: string; riskPercent: string } {
   try {
@@ -240,6 +261,9 @@ type ProductStatus = {
   symbols_with_candles: number
   environment: string
   plug_and_play: string
+  symbols_with_1m?: number
+  last_1m_candle_time?: string | null
+  stale_risk?: string
 }
 
 type MarketQuote = {
@@ -471,27 +495,82 @@ function deductionStepsForOpportunity(
   })
 }
 
-type AppView = 'scan' | 'research' | 'paper'
-type ScanUniverse = 'NIFTY_50' | 'NIFTY_100' | 'NIFTY_200' | 'NIFTY_500'
+type AppView = 'home' | 'scan' | 'history' | 'research' | 'paper' | 'intraday' | 'practice' | 'account'
 
 const SCAN_UNIVERSES: { value: ScanUniverse; label: string }[] = [
+  { value: 'NSE_ALL', label: 'NSE all (cash + ETFs)' },
+  { value: 'NSE_CASH', label: 'NSE cash' },
+  { value: 'NSE_ETF', label: 'NSE ETFs' },
   { value: 'NIFTY_50', label: 'Nifty 50' },
   { value: 'NIFTY_100', label: 'Nifty 100' },
   { value: 'NIFTY_200', label: 'Nifty 200' },
   { value: 'NIFTY_500', label: 'Nifty 500' },
 ]
 
+const UNIVERSE_STORAGE_KEY = 'tp_scan_universe'
+const FILTERS_STORAGE_KEY = 'tp_scan_filters'
+
+function readStoredUniverse(): ScanUniverse {
+  try {
+    const raw = localStorage.getItem(UNIVERSE_STORAGE_KEY)
+    if (raw && SCAN_UNIVERSES.some((u) => u.value === raw)) return raw as ScanUniverse
+  } catch {
+    /* ignore */
+  }
+  return 'NSE_ALL'
+}
+
+function readStoredFilters(): UniverseFilterState {
+  try {
+    const raw = localStorage.getItem(FILTERS_STORAGE_KEY)
+    if (!raw) return DEFAULT_FILTERS
+    const parsed = JSON.parse(raw) as Partial<UniverseFilterState>
+    return { ...DEFAULT_FILTERS, ...parsed, sectors: Array.isArray(parsed.sectors) ? parsed.sectors : [] }
+  } catch {
+    return DEFAULT_FILTERS
+  }
+}
+
+function persistScanFilters(next: UniverseFilterState) {
+  try {
+    localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(next))
+  } catch {
+    /* ignore */
+  }
+}
+
+function assetClassForUniverse(universe: ScanUniverse): UniverseFilterState['asset_class'] {
+  if (universe === 'NSE_CASH') return 'STOCK'
+  if (universe === 'NSE_ETF') return 'ETF'
+  return 'ALL'
+}
+
 function App() {
   const storedRisk = readStoredRisk()
   const [theme, setTheme] = useState<ThemeMode>(() => readStoredTheme())
-  const [activeView, setActiveView] = useState<AppView>('scan')
-  const [scanUniverse, setScanUniverse] = useState<ScanUniverse>('NIFTY_500')
+  const [activeView, setActiveView] = useState<AppView>('home')
+  const [scanUniverse, setScanUniverse] = useState<ScanUniverse>(() => readStoredUniverse())
+  const [guidedMode, setGuidedMode] = useState(() => {
+    try {
+      return localStorage.getItem('tp_guided') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const [scanFilters, setScanFilters] = useState<UniverseFilterState>(() => readStoredFilters())
   const [symbol, setSymbol] = useState('')
   const [timeframe, setTimeframe] = useState('1d')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
   const [accountEquity, setAccountEquity] = useState(storedRisk.equity)
   const [riskPercent, setRiskPercent] = useState(storedRisk.riskPercent)
+  const [capitalRiskOpen, setCapitalRiskOpen] = useState(false)
+  const [universeOpen, setUniverseOpen] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [presetsOpen, setPresetsOpen] = useState(false)
+  const [coverageOpen, setCoverageOpen] = useState(false)
+  const [guidedProOpen, setGuidedProOpen] = useState(false)
+  const [showHowItWorks, setShowHowItWorks] = useState(false)
   const [slippagePerShare, setSlippagePerShare] = useState('0')
   const [costPerTrade, setCostPerTrade] = useState('0')
   const [loading, setLoading] = useState(false)
@@ -521,13 +600,43 @@ function App() {
   })
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
   const [selectedKind, setSelectedKind] = useState<'eligible' | 'forming' | 'lookup'>('eligible')
-  const [deductionSymbol, setDeductionSymbol] = useState<string | null>(null)
+  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false)
+  const [inspectPlanOpen, setInspectPlanOpen] = useState(false)
+  const [chartEvidenceOpen, setChartEvidenceOpen] = useState(false)
   const [showAllOpportunities, setShowAllOpportunities] = useState(false)
   const [scanCriteriaCollapsed, setScanCriteriaCollapsed] = useState(false)
-  const [refreshInterval, setRefreshInterval] = useState('300')
-  const [autoRefreshActive, setAutoRefreshActive] = useState(true)
+  const [refreshInterval, setRefreshInterval] = useState(() => {
+    try {
+      const raw = localStorage.getItem(AUTO_REFRESH_STORAGE_KEY)
+      if (!raw) return '300'
+      const parsed = JSON.parse(raw) as { interval?: string }
+      const interval = String(parsed.interval ?? '300')
+      return ['30', '60', '120', '300', '600'].includes(interval) ? interval : '300'
+    } catch {
+      return '300'
+    }
+  })
+  const [autoRefreshActive, setAutoRefreshActive] = useState(() => {
+    try {
+      const raw = localStorage.getItem(AUTO_REFRESH_STORAGE_KEY)
+      if (!raw) return true
+      const parsed = JSON.parse(raw) as { enabled?: boolean }
+      return parsed.enabled !== false
+    } catch {
+      return true
+    }
+  })
+  const [autoRefreshSecondsLeft, setAutoRefreshSecondsLeft] = useState<number | null>(null)
+  const [autoRefreshPaused, setAutoRefreshPaused] = useState(false)
+  const [autoRefreshPauseReason, setAutoRefreshPauseReason] = useState<string | null>(null)
+  const autoRefreshDeadlineRef = useRef<number | null>(null)
+  const autoRefreshRemainingRef = useRef<number | null>(null)
   const [productStatus, setProductStatus] = useState<ProductStatus | null>(null)
   const [scanHistory, setScanHistory] = useState<ScanRunSummary[]>([])
+  const [historySelectedId, setHistorySelectedId] = useState<number | null>(null)
+  const [historyBusyId, setHistoryBusyId] = useState<number | null>(null)
+  const [historyError, setHistoryError] = useState('')
+  const [historyRefreshing, setHistoryRefreshing] = useState(false)
   const [chartCandles, setChartCandles] = useState<ChartCandle[]>([])
   const [minScore, setMinScore] = useState('')
   const [topN, setTopN] = useState('5')
@@ -555,11 +664,21 @@ function App() {
   )
 
   const showPracticeStrip = paperTradingEnabled || openPaperTrades.length > 0 || pendingPaperTrades.length > 0
+  const scanFocusOpen = inspectPlanOpen || chartEvidenceOpen
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem(THEME_STORAGE_KEY, theme)
   }, [theme])
+
+  function persistGuidedMode(next: boolean) {
+    setGuidedMode(next)
+    try {
+      localStorage.setItem('tp_guided', next ? '1' : '0')
+    } catch {
+      /* ignore */
+    }
+  }
 
   useEffect(() => {
     localStorage.setItem(
@@ -579,7 +698,7 @@ function App() {
       try {
         const statusResp = await fetch(`${baseUrl}/api/v1/product/status`)
         if (statusResp.ok) setProductStatus((await statusResp.json()) as ProductStatus)
-        setScanHistory(await listScanRuns(baseUrl, 8))
+        setScanHistory(await listScanRuns(baseUrl, 30))
       } catch {
         /* banner stays empty until a scan */
       }
@@ -588,13 +707,94 @@ function App() {
   }, [baseUrl])
 
   useEffect(() => {
-    if (!selectedSymbol) return
+    setHistorySelectedId((current) => {
+      if (current && scanHistory.some((run) => run.id === current)) return current
+      return scanHistory[0]?.id ?? null
+    })
+  }, [scanHistory])
+
+  async function refreshScanHistory() {
+    setHistoryRefreshing(true)
+    try {
+      const runs = await listScanRuns(baseUrl, 30)
+      setScanHistory(runs)
+      setHistoryError('')
+      setHistorySelectedId((current) => {
+        if (current && runs.some((run) => run.id === current)) return current
+        return runs[0]?.id ?? null
+      })
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : 'Failed to load scan history')
+    } finally {
+      setHistoryRefreshing(false)
+    }
+  }
+
+  async function openScanHistoryRun(runId: number) {
+    setHistoryBusyId(runId)
+    setHistoryError('')
+    try {
+      const payload = await getScanRun(baseUrl, runId)
+      if (!isCompletedScan(payload)) {
+        setHistoryError(
+          payload.status === 'failed'
+            ? payload.error_message || 'That scan failed'
+            : 'That scan is still running — try again shortly.',
+        )
+        return
+      }
+      setScanResult(withPositionSizing(payload, accountEquity, riskPercent))
+      setHistorySelectedId(runId)
+      setSelectedSymbol(null)
+      setDetailDrawerOpen(false)
+      setInspectPlanOpen(false)
+      setChartEvidenceOpen(false)
+      setShowAllOpportunities(false)
+      setScanCriteriaCollapsed(true)
+      setScanError('')
+      setActiveView('scan')
+      window.setTimeout(() => {
+        document.getElementById('find-setups-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 80)
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : 'Failed to open scan')
+    } finally {
+      setHistoryBusyId(null)
+    }
+  }
+
+  async function exportScanHistoryCsv(runId: number) {
+    setHistoryError('')
+    try {
+      const payload = await getScanRun(baseUrl, runId)
+      if (!isCompletedScan(payload)) {
+        setHistoryError(
+          payload.status === 'failed'
+            ? payload.error_message || 'That scan failed'
+            : 'That scan is still running — export when it finishes.',
+        )
+        return
+      }
+      const sized = withPositionSizing(payload, accountEquity, riskPercent)
+      downloadEligibleCsv(sized, sized.opportunities ?? [])
+      setHistorySelectedId(runId)
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : 'Failed to export CSV')
+    }
+  }
+  async function refreshProductStatus() {
+    const statusResp = await fetch(`${baseUrl}/api/v1/product/status`)
+    if (statusResp.ok) setProductStatus((await statusResp.json()) as ProductStatus)
+  }
+
+  useEffect(() => {
+    if (!detailDrawerOpen) return
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => {
       document.body.style.overflow = previousOverflow
     }
-  }, [selectedSymbol])
+  }, [detailDrawerOpen])
 
   const openStockDetail = useCallback(
     (rawSymbol: string, preferred?: 'eligible' | 'forming') => {
@@ -603,11 +803,13 @@ function App() {
       if (preferred === 'forming') {
         setSelectedKind('forming')
         setSelectedSymbol(next)
+        setDetailDrawerOpen(true)
         return
       }
       if (preferred === 'eligible') {
         setSelectedKind('eligible')
         setSelectedSymbol(next)
+        setDetailDrawerOpen(true)
         return
       }
       const scan = scanResult
@@ -620,13 +822,21 @@ function App() {
       else if (inForming) setSelectedKind('forming')
       else setSelectedKind('lookup')
       setSelectedSymbol(next)
+      setDetailDrawerOpen(true)
     },
     [scanResult],
   )
 
   useEffect(() => {
     const { view, runId, symbol: deepSymbol } = readDeepLinkParams()
+    if (view === 'home' || view === '' || view == null) setActiveView('home')
     if (view === 'scan') setActiveView('scan')
+    if (view === 'history') setActiveView('history')
+    if (view === 'intraday') setActiveView('intraday')
+    if (view === 'research') setActiveView('research')
+    if (view === 'paper') setActiveView('paper')
+    if (view === 'practice') setActiveView('practice')
+    if (view === 'account') setCapitalRiskOpen(true)
     if (runId == null) return
     let cancelled = false
     const loadDeepLink = async () => {
@@ -647,7 +857,10 @@ function App() {
         setActiveView('scan')
         setScanCriteriaCollapsed(true)
         if (deepSymbol) {
-          openStockDetail(deepSymbol, 'eligible')
+          setSelectedKind('eligible')
+          setSelectedSymbol(deepSymbol)
+          setInspectPlanOpen(true)
+          setChartEvidenceOpen(false)
         }
       } catch (err) {
         if (!cancelled) {
@@ -677,6 +890,11 @@ function App() {
       null
     )
   }, [scanResult, selectedSymbol, selectedKind])
+
+  const inspectDeductionSteps = useMemo(() => {
+    if (!selectedOpportunity) return []
+    return deductionStepsForOpportunity(selectedOpportunity, accountEquity, riskPercent)
+  }, [selectedOpportunity, accountEquity, riskPercent])
 
   const selectedForming = useMemo(() => {
     if (!scanResult || !selectedSymbol) return null
@@ -980,16 +1198,23 @@ function App() {
   }
 
   const refreshPaperBook = useCallback(async () => {
-    if (!paperTradingEnabled) return
     try {
       const response = await fetch(`${baseUrl}/api/v1/paper/trades?status=ALL`)
-      if (!response.ok) throw new Error('Failed to load practice trades')
+      if (!response.ok) {
+        throw new Error(`Failed to load practice trades (HTTP ${response.status})`)
+      }
       setPaperBook((await response.json()) as PaperBook)
       setPaperError('')
     } catch (caught) {
-      setPaperError(caught instanceof Error ? caught.message : 'Practice book unavailable')
+      const message =
+        caught instanceof TypeError
+          ? 'Cannot reach API — is the backend running on the configured URL?'
+          : caught instanceof Error
+            ? caught.message
+            : 'Practice book unavailable'
+      setPaperError(message)
     }
-  }, [baseUrl, paperTradingEnabled])
+  }, [baseUrl])
 
   const refreshPaperOutlook = useCallback(async () => {
     if (!paperTradingEnabled) return
@@ -1130,7 +1355,12 @@ function App() {
     }
 
     setScanLoading(true)
-    setScanProgress(`Scanning ${SCAN_UNIVERSES.find((item) => item.value === scanUniverse)?.label ?? scanUniverse}…`)
+    const universeLabel = SCAN_UNIVERSES.find((item) => item.value === scanUniverse)?.label ?? scanUniverse
+    const largeHint =
+      scanUniverse === 'NSE_ALL' || scanUniverse === 'NSE_CASH'
+        ? ' — large universe may take a few minutes'
+        : ''
+    setScanProgress(`Scanning ${universeLabel}${largeHint}…`)
     setScanError('')
     try {
       const payload = await runScanAndWait(
@@ -1145,6 +1375,7 @@ function App() {
           top_n: Math.max(1, Math.min(50, Number(topN) || 5)),
           min_score: minScore || undefined,
           enable_paper_trading: paperTradingEnabled,
+          filters: filtersToPayload(scanFilters),
         },
         {
           onStatus: (status) => {
@@ -1157,9 +1388,17 @@ function App() {
         },
       )
       setScanResult(withPositionSizing(payload, accountEquity, riskPercent))
-      setSelectedSymbol(null)
-      setDeductionSymbol(null)
+      const first =
+        payload.top?.[0]?.symbol ||
+        payload.opportunities?.[0]?.symbol ||
+        null
+      setSelectedSymbol(first)
+      setSelectedKind('eligible')
+      setDetailDrawerOpen(false)
+      setInspectPlanOpen(false)
+      setChartEvidenceOpen(false)
       setShowAllOpportunities(false)
+      if (payload.scan_run_id != null) setHistorySelectedId(payload.scan_run_id)
       if (paperTradingEnabled) {
         if ((payload.paper_opened_count ?? 0) > 0) {
           setPaperNotice(
@@ -1176,7 +1415,7 @@ function App() {
         void refreshPaperBook()
       }
       try {
-        setScanHistory(await listScanRuns(baseUrl, 8))
+        setScanHistory(await listScanRuns(baseUrl, 30))
       } catch {
         /* ignore history refresh */
       }
@@ -1184,6 +1423,7 @@ function App() {
       setScanError(caughtError instanceof Error ? caughtError.message : 'Unexpected error.')
       setScanResult(null)
       setSelectedSymbol(null)
+      setDetailDrawerOpen(false)
     } finally {
       setScanLoading(false)
       setScanProgress('')
@@ -1200,6 +1440,11 @@ function App() {
   }, [paperTradingEnabled, refreshPaperBook, refreshPaperOutlook])
 
   useEffect(() => {
+    if (!scanResult || scanFocusOpen) return
+    void refreshPaperBook()
+  }, [scanResult?.scan_run_id, scanFocusOpen, refreshPaperBook])
+
+  useEffect(() => {
     if (!paperTradingEnabled) return
     // Poll on every view so entry fills raise alerts and the live strip stays current.
     void tickPaperBook()
@@ -1209,15 +1454,83 @@ function App() {
     return () => window.clearInterval(timer)
   }, [paperTradingEnabled, tickPaperBook])
 
-  // Auto-refresh scan at user-chosen interval
+  // Auto-refresh scan: countdown, pause when criteria / inspect open or off Swing
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        AUTO_REFRESH_STORAGE_KEY,
+        JSON.stringify({ enabled: autoRefreshActive, interval: refreshInterval }),
+      )
+    } catch {
+      /* ignore */
+    }
+  }, [autoRefreshActive, refreshInterval])
+
+  useEffect(() => {
+    autoRefreshDeadlineRef.current = null
+    autoRefreshRemainingRef.current = null
+    setAutoRefreshSecondsLeft(null)
+  }, [refreshInterval, scanResult?.scan_run_id])
+
   useEffect(() => {
     const intervalMs = Number(refreshInterval) * 1000
-    if (!autoRefreshActive || intervalMs <= 0 || !scanResult || !scanCriteriaCollapsed) return
-    const timer = window.setInterval(() => {
-      void handleScanRef.current()
-    }, intervalMs)
+    if (!autoRefreshActive || intervalMs <= 0 || !scanResult) {
+      autoRefreshDeadlineRef.current = null
+      autoRefreshRemainingRef.current = null
+      setAutoRefreshSecondsLeft(null)
+      setAutoRefreshPaused(false)
+      setAutoRefreshPauseReason(null)
+      return
+    }
+
+    const tick = () => {
+      let pauseReason: string | null = null
+      if (activeView !== 'scan') pauseReason = 'Paused off Swing'
+      else if (!scanCriteriaCollapsed) pauseReason = 'Paused — criteria panel open'
+      else if (scanFocusOpen) pauseReason = 'Paused while inspecting a plan'
+      else if (scanLoading) pauseReason = 'Scan in progress'
+
+      if (pauseReason) {
+        if (autoRefreshDeadlineRef.current != null) {
+          autoRefreshRemainingRef.current = Math.max(0, autoRefreshDeadlineRef.current - Date.now())
+          autoRefreshDeadlineRef.current = null
+        }
+        setAutoRefreshPaused(true)
+        setAutoRefreshPauseReason(pauseReason)
+        const rem = autoRefreshRemainingRef.current
+        setAutoRefreshSecondsLeft(rem != null ? Math.ceil(rem / 1000) : Math.ceil(intervalMs / 1000))
+        return
+      }
+
+      setAutoRefreshPaused(false)
+      setAutoRefreshPauseReason(null)
+      if (autoRefreshDeadlineRef.current == null) {
+        const remaining = autoRefreshRemainingRef.current ?? intervalMs
+        autoRefreshDeadlineRef.current = Date.now() + remaining
+        autoRefreshRemainingRef.current = null
+      }
+      const leftMs = autoRefreshDeadlineRef.current - Date.now()
+      if (leftMs <= 0) {
+        autoRefreshDeadlineRef.current = Date.now() + intervalMs
+        setAutoRefreshSecondsLeft(Math.ceil(intervalMs / 1000))
+        void handleScanRef.current()
+        return
+      }
+      setAutoRefreshSecondsLeft(Math.ceil(leftMs / 1000))
+    }
+
+    tick()
+    const timer = window.setInterval(tick, 250)
     return () => window.clearInterval(timer)
-  }, [autoRefreshActive, refreshInterval, scanResult?.scan_run_id, scanCriteriaCollapsed])
+  }, [
+    autoRefreshActive,
+    refreshInterval,
+    scanResult?.scan_run_id,
+    scanCriteriaCollapsed,
+    scanFocusOpen,
+    activeView,
+    scanLoading,
+  ])
 
   // Collapse criteria after first successful scan
   useEffect(() => {
@@ -1226,21 +1539,38 @@ function App() {
 
   return (
     <main className="app-shell">
-      <header className="top-bar">
-        <div className="brand-block">
-          <p className="brand-mark">TradePilot AI</p>
-          <p className="brand-tagline">Nifty swing setups · entry · stop · target · evidence</p>
-        </div>
+      <header className="top-bar wireframe-topbar">
+        <button
+          type="button"
+          className="brand-block brand-home"
+          onClick={() => setActiveView('home')}
+        >
+          <p className="brand-mark">TradePilot</p>
+        </button>
         <nav className="app-menu" aria-label="Primary">
           <button
             type="button"
-            className={`menu-link ${activeView === 'scan' ? 'active' : ''}`}
+            className={`menu-link ${activeView === 'scan' || activeView === 'history' ? 'active' : ''}`}
             onClick={() => {
               setActiveView('scan')
               setSelectedSymbol(null)
+              setDetailDrawerOpen(false)
+              setInspectPlanOpen(false)
+              setChartEvidenceOpen(false)
             }}
           >
-            Find setups
+            Swing
+          </button>
+          <button
+            type="button"
+            className={`menu-link ${activeView === 'intraday' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveView('intraday')
+              setSelectedSymbol(null)
+              setDetailDrawerOpen(false)
+            }}
+          >
+            Intraday
           </button>
           <button
             type="button"
@@ -1248,52 +1578,88 @@ function App() {
             onClick={() => {
               setActiveView('research')
               setSelectedSymbol(null)
+              setDetailDrawerOpen(false)
             }}
           >
-            Stock research
+            Research
           </button>
           <button
             type="button"
-            className={`menu-link ${activeView === 'paper' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveView('paper')
-              setSelectedSymbol(null)
-              void refreshPaperBook()
-              void tickPaperBook()
-            }}
+            className={`menu-link ${activeView === 'practice' || activeView === 'paper' ? 'active' : ''}`}
+            onClick={() => setActiveView('practice')}
           >
-            Practice trades
+            Practice
+          </button>
+          <button
+            type="button"
+            className={`menu-link ${capitalRiskOpen ? 'active' : ''}`}
+            onClick={() => setCapitalRiskOpen(true)}
+          >
+            Account
           </button>
         </nav>
-        <button
-          type="button"
-          className="theme-toggle"
-          onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
-          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
-        >
-          <span className="theme-toggle-icon" aria-hidden="true">
-            {theme === 'dark' ? '○' : '●'}
-          </span>
-          <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
-        </button>
+        <div className="topbar-trailing">
+          <button
+            type="button"
+            className="topbar-capital"
+            onClick={() => setCapitalRiskOpen(true)}
+            title="Open capital & risk"
+          >
+            <span>Your capital</span>
+            <strong>
+              {new Intl.NumberFormat('en-IN', {
+                style: 'currency',
+                currency: 'INR',
+                maximumFractionDigits: 0,
+              }).format(Number(accountEquity) || 0)}
+            </strong>
+          </button>
+          <div className="mode-toggle-wrap">
+            <div className="mode-toggle" role="group" aria-label="Guided or Pro">
+              <button
+                type="button"
+                className={guidedMode ? 'active' : ''}
+                onClick={() => persistGuidedMode(true)}
+              >
+                Guided
+              </button>
+              <button
+                type="button"
+                className={!guidedMode ? 'active' : ''}
+                onClick={() => persistGuidedMode(false)}
+              >
+                Pro
+              </button>
+            </div>
+            <button
+              type="button"
+              className="mode-compare-btn"
+              onClick={() => setGuidedProOpen(true)}
+              title="Guided vs Pro"
+              aria-label="Compare Guided and Pro modes"
+            >
+              ?
+            </button>
+          </div>
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          >
+            <span className="theme-toggle-icon" aria-hidden="true">
+              {theme === 'dark' ? '○' : '●'}
+            </span>
+          </button>
+        </div>
       </header>
 
-      <div className={`data-banner ${productStatus?.live_ready ? 'live' : 'demo'}`}>
-        <strong>{scanResult?.data_claim ?? productStatus?.claim ?? 'Demo candles — not live market data'}</strong>
-        <span>
-          {(() => {
-            const source = (scanResult?.data_source ?? productStatus?.data_source ?? 'demo').toLowerCase()
-            if (source === 'upstox') return 'Live Upstox market data'
-            if (source === 'demo') return 'Demo candle data'
-            return `Data source: ${source}`
-          })()}
-          {productStatus?.last_candle_time || scanResult?.last_candle_time
-            ? ` · last bar ${formatDateTime(scanResult?.last_candle_time ?? productStatus?.last_candle_time)}`
-            : ''}
-          {productStatus ? ` · ${productStatus.symbols_with_candles} symbols loaded` : ''}
-        </span>
-      </div>
+      <DataReadinessBanner
+        status={productStatus}
+        formatDateTime={formatDateTime}
+        onRefresh={refreshProductStatus}
+      />
 
       {entryAlerts.length > 0 && (
         <div className="start-trade-alert" role="alert" aria-live="assertive">
@@ -1344,7 +1710,7 @@ function App() {
         </div>
       )}
 
-      {showPracticeStrip && (
+      {showPracticeStrip && !scanFocusOpen && (
         <div
           className={`live-practice-strip${openPaperTrades.length > 0 ? ' is-live' : ' is-watching'}`}
           aria-live="polite"
@@ -1448,1120 +1814,422 @@ function App() {
         </div>
       )}
 
+      {activeView === 'home' && (
+        <HomeHub
+          onOpenSwing={() => setActiveView('scan')}
+          onOpenIntraday={() => setActiveView('intraday')}
+          onOpenResearch={() => setActiveView('research')}
+          dataLive={Boolean(productStatus?.live_ready)}
+          lastCandleTime={
+            productStatus?.last_candle_time
+              ? formatDateTime(productStatus.last_candle_time)
+              : null
+          }
+        />
+      )}
+
       {activeView === 'scan' && (
-      <section className="panel scan-panel">
-        <header className="header-block">
-          <p className="eyebrow">Find setups</p>
-          <h1>Swing trade ideas</h1>
-          <p className="header-copy">
-            Scan Nifty 50 / 100 / 200 / 500 for stocks that look ready to trade now — either buy (expect price up) or
-            sell short (expect price down), after a clear break, retest, and confirmation.
-          </p>
-        </header>
-
-        <form
-          className="strategy-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void handleScan()
-          }}
-        >
-          {scanResult && (
-            <button
-              type="button"
-              className="collapse-toggle"
-              onClick={() => setScanCriteriaCollapsed((c) => !c)}
-            >
-              {scanCriteriaCollapsed ? '▶ Show scan criteria' : '▼ Hide scan criteria'}
-            </button>
-          )}
-          <div className={`scan-criteria-fields ${scanCriteriaCollapsed ? 'collapsed' : ''}`}>
-          <div className="field-group">
-            <label htmlFor="scan-universe">Stock list</label>
-            <select
-              id="scan-universe"
-              value={scanUniverse}
-              onChange={(event) => setScanUniverse(event.target.value as ScanUniverse)}
-            >
-              {SCAN_UNIVERSES.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="field-row two-col">
-            <div className="field-group">
-              <label htmlFor="scan-start">Start date</label>
-              <input
-                id="scan-start"
-                type="date"
-                value={scanStart}
-                onChange={(event) => setScanStart(event.target.value)}
-              />
-            </div>
-            <div className="field-group">
-              <label htmlFor="scan-end">End date</label>
-              <input
-                id="scan-end"
-                type="date"
-                value={scanEnd}
-                onChange={(event) => setScanEnd(event.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="field-row two-col">
-            <div className="field-group">
-              <label htmlFor="scan-equity">Your capital (₹)</label>
-              <input
-                id="scan-equity"
-                type="number"
-                min="0"
-                step="0.01"
-                value={accountEquity}
-                onChange={(event) => setAccountEquity(event.target.value)}
-              />
-            </div>
-            <div className="field-group">
-              <label htmlFor="scan-risk">Max loss per trade (%)</label>
-              <input
-                id="scan-risk"
-                type="number"
-                min="0"
-                step="0.01"
-                value={riskPercent}
-                onChange={(event) => setRiskPercent(event.target.value)}
-              />
-              <p className="field-hint">
-                Used only to choose how many shares to size (max risk now{' '}
-                {formatPrice((Number(accountEquity) * Number(riskPercent)) / 100)}). The list of setups stays the same.
-              </p>
-            </div>
-          </div>
-
-
-          <div className="field-group paper-opt-in">
-            <label className="checkbox-label" htmlFor="scan-paper-enabled">
-              <input
-                id="scan-paper-enabled"
-                type="checkbox"
-                checked={paperTradingEnabled}
-                onChange={(event) => setPaperEnabled(event.target.checked)}
-              />
-              <span>
-                Practice trades (optional) — watch buy/sell price, then auto-exit at safety
-                exit or profit goal. Fake money only.
-              </span>
-            </label>
-          </div>
-
-          <div className="field-row two-col">
-            <div className="field-group">
-              <label htmlFor="scan-timeframe">Timeframe</label>
-              <input id="scan-timeframe" type="text" value="1d" readOnly disabled />
-            </div>
-            <div className="field-group">
-              <label htmlFor="scan-top-n">Top ideas to highlight</label>
-              <select id="scan-top-n" value={topN} onChange={(event) => setTopN(event.target.value)}>
-                <option value="3">Top 3</option>
-                <option value="5">Top 5</option>
-                <option value="10">Top 10</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="field-row two-col">
-            <div className="field-group">
-              <label htmlFor="scan-min-score">Min strategy confidence %</label>
-              <input
-                id="scan-min-score"
-                type="number"
-                min="0"
-                max="100"
-                step="1"
-                value={minScore}
-                onChange={(event) => setMinScore(event.target.value)}
-                placeholder="Optional — applied on scan"
-                title={strategyConfidenceHint()}
-              />
-            </div>
-            <div className="field-group">
-              <label className="field-spacer-label" htmlFor="scan-min-score-hint">
-                &nbsp;
-              </label>
-              <p id="scan-min-score-hint" className="field-hint">
-                Confidence is rules-based setup quality, not a win-rate forecast.
-              </p>
-            </div>
-          </div>
-
-          {scanHistory.length > 0 && (
-            <div className="field-group">
-              <label htmlFor="scan-history">Reload a previous scan</label>
-              <select
-                id="scan-history"
-                defaultValue=""
-                onChange={async (event) => {
-                  const id = event.target.value
-                  if (!id) return
-                  try {
-                    const payload = await getScanRun(baseUrl, Number(id))
-                    if (!isCompletedScan(payload)) {
-                      setScanError(
-                        payload.status === 'failed'
-                          ? payload.error_message || 'That scan failed'
-                          : 'That scan is still running — try again shortly.',
-                      )
-                      return
-                    }
-                    setScanResult(withPositionSizing(payload, accountEquity, riskPercent))
-                    setSelectedSymbol(null)
-                    setDeductionSymbol(null)
-                    setShowAllOpportunities(false)
-                    setScanError('')
-                  } catch (err) {
-                    setScanError(err instanceof Error ? err.message : 'Failed to load scan')
-                  }
-                }}
-              >
-                <option value="">Select a scan run</option>
-                {scanHistory.map((run) => (
-                  <option key={run.id} value={run.id}>
-                    #{run.id} · {run.universe_name ?? 'scan'} · {run.result_count} eligible
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          </div>{/* end scan-criteria-fields */}
-
-          <div className="actions">
-            <button type="submit" className="primary-button" disabled={scanLoading}>
-              {scanLoading
-                ? scanProgress || 'Scanning…'
-                : `Scan ${SCAN_UNIVERSES.find((item) => item.value === scanUniverse)?.label ?? scanUniverse}`}
-            </button>
-          </div>
-
-          {scanResult && (
-            <div className="refresh-controls">
-              <div className="field-group">
-                <label htmlFor="refresh-interval">Auto-refresh every</label>
-                <select
-                  id="refresh-interval"
-                  value={refreshInterval}
-                  onChange={(event) => {
-                    const val = event.target.value
-                    setRefreshInterval(val)
-                    setAutoRefreshActive(val !== '0')
-                  }}
-                >
-                  <option value="0">Off</option>
-                  <option value="30">30 seconds</option>
-                  <option value="60">1 minute</option>
-                  <option value="120">2 minutes</option>
-                  <option value="300">5 minutes</option>
-                  <option value="600">10 minutes</option>
-                </select>
-              </div>
-              {autoRefreshActive && (
-                <span className="refresh-indicator">
-                  {scanCriteriaCollapsed ? '↻ Auto-refreshing' : '⏸ Paused while criteria is open'}
-                </span>
-              )}
-            </div>
-          )}
-
-          <p className="field-hint">
-            Full universe scan reads persisted daily candles and can take several seconds for larger indexes.
-          </p>
-        </form>
-
-        {scanError && <div className="status error">{scanError}</div>}
-
-        {scanResult && (
-          <section className="result-card">
-            <h2>{scanResult.universe_name.replace('_', ' ')}</h2>
-            <div className="result-grid">
+      <section
+        className={`panel scan-panel find-setups-panel ${guidedMode ? 'guided' : 'pro'}${
+          scanFocusOpen ? ' is-inspecting' : ''
+        }`}
+      >
+        {!scanFocusOpen ? (
+          <header className="header-block find-setups-header">
+            <div className="swing-screen-head">
               <div>
-                <strong>Universe version:</strong> {scanResult.universe_version}
-              </div>
-              <div>
-                <strong>Timeframe:</strong> {scanResult.timeframe}
-              </div>
-              <div>
-                <strong>Range:</strong> {formatDateTime(scanResult.start)} → {formatDateTime(scanResult.end)}
-              </div>
-              {scanResult.scan_run_id != null && (
-                <div>
-                  <strong>Scan run:</strong> #{scanResult.scan_run_id}
-                </div>
-              )}
-            </div>
-
-            <div className="metric-grid metric-grid-five">
-              <div className="metric-card">
-                <span>Stocks scanned</span>
-                <strong>{scanResult.symbols_scanned}</strong>
-              </div>
-              <div className="metric-card metric-accent">
-                <span>Ready now</span>
-                <strong>{scanResult.eligible_count}</strong>
-              </div>
-              <div className="metric-card">
-                <span>Almost ready</span>
-                <strong>{scanResult.forming_count ?? 0}</strong>
-              </div>
-              <div className="metric-card">
-                <span>No idea</span>
-                <strong>{scanResult.no_setup_count}</strong>
-              </div>
-              <div className="metric-card">
-                <span>No data</span>
-                <strong>{scanResult.unavailable_count ?? 0}</strong>
-              </div>
-              <div className="metric-card">
-                <span>Errors</span>
-                <strong>{scanResult.error_count ?? 0}</strong>
-              </div>
-            </div>
-
-            {(scanResult.issues?.length ?? 0) > 0 && (() => {
-              const issues = scanResult.issues ?? []
-              const errorCount = issues.filter((i) => i.status === 'ERROR').length
-              const unavailableCount = issues.filter((i) => i.status === 'UNAVAILABLE').length
-              const severe = errorCount > 0 || unavailableCount > 5
-              const summary =
-                unavailableCount === 1
-                  ? `${issues[0]?.symbol ?? '1 symbol'} skipped — no usable candles (not a failed setup).`
-                  : errorCount > 0
-                    ? `${errorCount} evaluator error(s), ${unavailableCount} missing-candle skip(s).`
-                    : `${unavailableCount} symbols skipped for missing candles — Ready now is unaffected.`
-              if (!severe) {
-                return (
-                  <details className="issues-note">
-                    <summary>
-                      <span className="issues-note-label">Data note</span>
-                      <span className="issues-note-summary">{summary}</span>
-                    </summary>
-                    <ul>
-                      {issues.slice(0, 8).map((issue) => (
-                        <li key={`${issue.symbol}-${issue.status}`}>
-                          <strong>{issue.symbol}</strong> · {issue.status === 'UNAVAILABLE' ? 'no candles' : issue.status}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )
-              }
-              return (
-                <div className="issues-box">
-                  <h3>Data issues</h3>
-                  {scanResult.data_quality_bullets && scanResult.data_quality_bullets.length > 0 && (
-                    <ul className="data-quality-bullets">
-                      {scanResult.data_quality_bullets.map((bullet) => (
-                        <li key={bullet}>{bullet}</li>
-                      ))}
-                    </ul>
-                  )}
-                  <ul>
-                    {issues.map((issue) => (
-                      <li key={`${issue.symbol}-${issue.status}`}>
-                        <strong>{issue.symbol}</strong> · {issue.status}
-                        <span>
-                          {/at least one|empty|no candle/i.test(issue.detail)
-                            ? 'No usable daily candles in the scan window.'
-                            : issue.detail}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )
-            })()}
-
-            {topReadyIdeas.length > 0 && (
-              <div className="top-book">
-                <h3>Top {topReadyIdeas.length} ready ideas</h3>
-                <p className="field-hint">
-                  Ranked by strategy confidence. Rank #1 is the strongest rules-based setup in this scan
-                  (after your filters).
+                <p className="eyebrow">Swing</p>
+                <h1>Find setups</h1>
+                <p className="header-copy">
+                  Ranked breakout-retest ideas on your filtered NSE universe. Engine owns Entry / Stop / Target.
                 </p>
-                <div className="top-grid">
-                  {topReadyIdeas.map((item) => {
-                    const isShort = item.candidate.direction === 'SHORT'
-                    return (
-                      <button
-                        type="button"
-                        className={`top-card ${isShort ? 'top-card-short' : 'top-card-long'}`}
-                        key={`top-${item.symbol}`}
-                        onClick={() => openStockDetail(item.symbol, 'eligible')}
-                      >
-                        <div className="top-card-head">
-                          <span className="top-rank">#{item.rank}</span>
-                          <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                            {directionLabel(item.candidate.direction)}
-                          </span>
-                          {item.narrative_source === 'llm' && (
-                            <span className="ai-polished-badge" title="Wording polished by AI from grounded facts">
-                              AI-polished
-                            </span>
-                          )}
-                        </div>
-                        <strong className="top-symbol">{item.symbol}</strong>
-                        <div className="top-metric">
-                          <span className="top-label">Live price</span>
-                          <span className="top-value">
-                            <LiveValue
-                              value={item.current_price}
-                              formatted={formatPrice(item.current_price)}
-                            />
-                          </span>
-                        </div>
-                        <div className="top-metric">
-                          <span className="top-label">Today</span>
-                          <span className={`top-value ${valueClass(item.current_price_change_percent ?? 0)}`}>
-                            {formatPercent(item.current_price_change_percent)}
-                          </span>
-                        </div>
-                        <div className="top-metric">
-                          <span className="top-label">Buy/sell at</span>
-                          <span className="top-value">{formatPrice(item.candidate.entry_price)}</span>
-                        </div>
-                        <div className="top-metric">
-                          <span className="top-label">Safety exit</span>
-                          <span className="top-value top-value-stop">
-                            {formatPrice(item.candidate.stop_loss)}
-                          </span>
-                        </div>
-                        <div className="top-metric">
-                          <span className="top-label">Profit goal</span>
-                          <span className="top-value top-value-target">
-                            {formatPrice(item.candidate.target)}
-                          </span>
-                        </div>
-                        <div className="top-metric">
-                          <span className="top-label">Strategy confidence</span>
-                          <span
-                            className="top-value top-value-score"
-                            title={item.quality_reason || strategyConfidenceHint()}
-                          >
-                            {strategyConfidenceLabel(item.quality_score)}
-                          </span>
-                        </div>
-                        {item.quantity != null && (
-                          <div className="top-metric">
-                            <span className="top-label">Shares</span>
-                            <span className="top-value">{item.quantity}</span>
-                          </div>
-                        )}
-                        {item.invalidation && (
-                          <p className="top-invalidation">
-                            {item.invalidation_source === 'llm' && (
-                              <span className="ai-polished-badge">AI-polished</span>
-                            )}
-                            {item.invalidation}
-                          </p>
-                        )}
-                        {item.quality_critique && (
-                          <p className="top-critique" title={(item.quality_flags || []).join(', ')}>
-                            {item.quality_critique}
-                          </p>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
               </div>
-            )}
-
-            <div className="confirmed-box">
-              <h3>Ready to trade now</h3>
-              {scanResult.eligible_count === 0 ? (
-                <div className="empty-state">
-                  <strong>No ready ideas</strong>
-                  <span>No buy or sell-short setups matched the rules for this date range.</span>
-                </div>
-              ) : (
-                <>
-                  <div className="table-toolbar">
-                    <p className="field-hint">
-                      Showing {visibleOpportunities.length} of {filteredOpportunities.length} filtered
-                      stocks ({scanResult.opportunities.length} eligible). Sort or filter from the column
-                      headers. Rank is scan-time confidence order.
-                    </p>
-                    <div className="table-toolbar-actions">
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => {
-                          setResultControls(DEFAULT_RESULT_CONTROLS)
-                          setShowAllOpportunities(false)
-                        }}
-                      >
-                        Reset column filters
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => downloadEligibleCsv(scanResult, filteredOpportunities)}
-                      >
-                        Export CSV
-                      </button>
-                    </div>
-                  </div>
-                  {filteredOpportunities.length === 0 ? (
-                    <div className="empty-state">
-                      <strong>No stocks match these filters</strong>
-                      <span>Widen trade type, confidence, or reward-vs-risk in the column headers.</span>
-                    </div>
-                  ) : (
-                  <>
-                  <div className="table-wrap scan-table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>
-                            <SortHeaderButton
-                              label="Rank"
-                              active={resultControls.sortBy === 'rank'}
-                              direction={resultControls.sortDir}
-                              title="Scan-time rank by strategy confidence"
-                              onClick={() => setEligibleSort('rank', 'asc')}
-                            />
-                          </th>
-                          <th>
-                            <SortHeaderButton
-                              label="Stock"
-                              active={resultControls.sortBy === 'symbol'}
-                              direction={resultControls.sortDir}
-                              onClick={() => setEligibleSort('symbol', 'asc')}
-                            />
-                          </th>
-                          <th>
-                            <HeaderFilterSelect
-                              label="Trade type"
-                              value={resultControls.direction}
-                              options={[
-                                { value: 'ALL', label: 'All' },
-                                { value: 'LONG', label: 'Buy' },
-                                { value: 'SHORT', label: 'Sell short' },
-                              ]}
-                              onChange={(value) => {
-                                setShowAllOpportunities(false)
-                                setResultControls((current) => ({
-                                  ...current,
-                                  direction: value as DirectionFilter,
-                                }))
-                              }}
-                            />
-                          </th>
-                          <th>Buy/sell at</th>
-                          <th>Live price</th>
-                          <th>
-                            <SortHeaderButton
-                              label="Today"
-                              active={resultControls.sortBy === 'change'}
-                              direction={resultControls.sortDir}
-                              onClick={() => setEligibleSort('change', 'desc')}
-                            />
-                          </th>
-                          <th>Safety exit</th>
-                          <th>Profit goal</th>
-                          <th>
-                            <HeaderSortFilter
-                              label="Reward vs risk"
-                              value={resultControls.minRr}
-                              placeholder="Min"
-                              min={0}
-                              step={0.1}
-                              sortActive={resultControls.sortBy === 'rr'}
-                              sortDirection={resultControls.sortDir}
-                              onSort={() => setEligibleSort('rr', 'desc')}
-                              onChange={(value) => {
-                                setShowAllOpportunities(false)
-                                setResultControls((current) => ({ ...current, minRr: value }))
-                              }}
-                            />
-                          </th>
-                          <th>
-                            <HeaderSortFilter
-                              label="Strategy confidence"
-                              value={resultControls.minConfidence}
-                              placeholder="Min %"
-                              min={0}
-                              max={100}
-                              step={1}
-                              title={strategyConfidenceHint()}
-                              sortActive={resultControls.sortBy === 'confidence'}
-                              sortDirection={resultControls.sortDir}
-                              onSort={() => setEligibleSort('confidence', 'desc')}
-                              onChange={(value) => {
-                                setShowAllOpportunities(false)
-                                setResultControls((current) => ({
-                                  ...current,
-                                  minConfidence: value,
-                                }))
-                              }}
-                            />
-                          </th>
-                          <th>Shares</th>
-                          <th>Why this idea</th>
-                          <th>How decided</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {visibleOpportunities.map((opportunity) => {
-                          const isShort = opportunity.candidate.direction === 'SHORT'
-                          const deductionOpen = deductionSymbol === opportunity.symbol
-                          return (
-                            <React.Fragment key={opportunity.symbol}>
-                              <tr
-                                className={selectedSymbol === opportunity.symbol ? 'row-selected' : undefined}
-                                onClick={() => openStockDetail(opportunity.symbol, 'eligible')}
-                                onKeyDown={(event) => {
-                                  if (event.key === 'Enter' || event.key === ' ') {
-                                    event.preventDefault()
-                                    openStockDetail(opportunity.symbol, 'eligible')
-                                  }
-                                }}
-                                tabIndex={0}
-                                role="button"
-                                aria-pressed={selectedSymbol === opportunity.symbol}
-                              >
-                                <td className="num-cell">
-                                  <span className="rank-badge">#{opportunity.rank ?? '—'}</span>
-                                </td>
-                                <td className="symbol-cell">
-                                  <button
-                                    type="button"
-                                    className="symbol-link"
-                                    onClick={(event) => {
-                                      event.stopPropagation()
-                                      openStockDetail(opportunity.symbol)
-                                    }}
-                                  >
-                                    {opportunity.symbol}
-                                  </button>
-                                </td>
-                                <td>
-                                  <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                                    {directionLabel(isShort ? 'SHORT' : 'LONG')}
-                                  </span>
-                                </td>
-                                <td className="num-cell">
-                                  {formatPrice(opportunity.candidate.entry_price)}
-                                </td>
-                                <td className="num-cell">
-                                  <LiveValue
-                                    value={opportunity.current_price}
-                                    formatted={formatPrice(opportunity.current_price)}
-                                  />
-                                </td>
-                                <td
-                                  className={`num-cell ${valueClass(
-                                    opportunity.current_price_change_percent ?? 0,
-                                  )}`}
-                                >
-                                  {formatPercent(opportunity.current_price_change_percent)}
-                                </td>
-                                <td className="num-cell">
-                                  {formatPrice(opportunity.candidate.stop_loss)}
-                                </td>
-                                <td className="num-cell">
-                                  {formatPrice(opportunity.candidate.target)}
-                                </td>
-                                <td className="num-cell">
-                                  {formatRatio(opportunity.candidate.risk_reward_ratio)}
-                                </td>
-                                <td
-                                  className="num-cell confidence-cell"
-                                  title={opportunity.quality_reason || strategyConfidenceHint()}
-                                >
-                                  <span className="confidence-pct">
-                                    {strategyConfidenceLabel(opportunity.quality_score)}
-                                  </span>
-                                </td>
-                                <td className="num-cell">{opportunity.quantity ?? '—'}</td>
-                                <td className="why-eligible">
-                                  {opportunity.narrative_source === 'llm' && (
-                                    <span className="ai-polished-badge">AI-polished</span>
-                                  )}
-                                  {opportunity.narrative ?? opportunity.evidence.decision}
-                                  {opportunity.quality_critique && (
-                                    <span className="why-critique">{opportunity.quality_critique}</span>
-                                  )}
-                                </td>
-                                <td className="deduction-cell">
-                                  <button
-                                    type="button"
-                                    className={`ghost-btn deduction-toggle${deductionOpen ? ' is-open' : ''}`}
-                                    aria-expanded={deductionOpen}
-                                    onClick={(event) => {
-                                      event.stopPropagation()
-                                      setDeductionSymbol((current) =>
-                                        current === opportunity.symbol ? null : opportunity.symbol,
-                                      )
-                                    }}
-                                  >
-                                    {deductionOpen ? 'Hide steps' : 'How decided'}
-                                  </button>
-                                </td>
-                              </tr>
-                              {deductionOpen ? (
-                                <tr className="deduction-row">
-                                  <td colSpan={13}>
-                                    <PlanDeductionPanel
-                                      symbol={opportunity.symbol}
-                                      baseUrl={baseUrl}
-                                      steps={deductionStepsForOpportunity(
-                                        opportunity,
-                                        accountEquity,
-                                        riskPercent,
-                                      )}
-                                      onClose={() => setDeductionSymbol(null)}
-                                    />
-                                  </td>
-                                </tr>
-                              ) : null}
-                            </React.Fragment>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {hiddenOpportunityCount > 0 && (
-                    <div className="see-more-row">
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => setShowAllOpportunities((current) => !current)}
-                      >
-                        {showAllOpportunities
-                          ? 'Show less'
-                          : `See more (${hiddenOpportunityCount} more)`}
-                      </button>
-                    </div>
-                  )}
-                  </>
-                  )}
-                </>
-              )}
-            </div>
-
-            {(scanResult.forming?.length ?? 0) > 0 && (
-              <div className="forming-box">
-                <h3>Almost ready (watching)</h3>
-                <p className="field-hint">
-                  These stocks are close, but not confirmed yet — no buy/sell price, safety exit, or profit goal
-                  until the last step completes. Sort or filter from the column headers.
-                </p>
-                <div className="table-toolbar">
-                  <p className="field-hint">
-                    Showing {filteredForming.length} of {scanResult.forming!.length} watching stocks.
-                  </p>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => setFormingControls(DEFAULT_FORMING_CONTROLS)}
-                  >
-                    Reset column filters
-                  </button>
-                </div>
-                {filteredForming.length === 0 ? (
-                  <div className="empty-state">
-                    <strong>No watching stocks match these filters</strong>
-                    <span>Widen trade type or stage in the column headers.</span>
-                  </div>
-                ) : (
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>
-                          <SortHeaderButton
-                            label="Stock"
-                            active={formingControls.sortBy === 'symbol'}
-                            direction={formingControls.sortDir}
-                            onClick={() => setFormingSort('symbol', 'asc')}
-                          />
-                        </th>
-                        <th>
-                          <HeaderFilterSelect
-                            label="Trade type"
-                            value={formingControls.direction}
-                            options={[
-                              { value: 'ALL', label: 'All' },
-                              { value: 'LONG', label: 'Buy' },
-                              { value: 'SHORT', label: 'Sell short' },
-                            ]}
-                            onChange={(value) =>
-                              setFormingControls((current) => ({
-                                ...current,
-                                direction: value as DirectionFilter,
-                              }))
-                            }
-                          />
-                        </th>
-                        <th>
-                          <HeaderFilterSelect
-                            label="Stage"
-                            value={formingControls.stage}
-                            options={[
-                              { value: 'ALL', label: 'All stages' },
-                              { value: 'AWAITING_RETEST', label: 'Waiting retest' },
-                              { value: 'AWAITING_CONFIRMATION', label: 'Waiting confirmation' },
-                            ]}
-                            onChange={(value) =>
-                              setFormingControls((current) => ({
-                                ...current,
-                                stage: value as FormingStageFilter,
-                              }))
-                            }
-                          />
-                        </th>
-                        <th>Live price</th>
-                        <th>
-                          <SortHeaderButton
-                            label="Today"
-                            active={formingControls.sortBy === 'change'}
-                            direction={formingControls.sortDir}
-                            onClick={() => setFormingSort('change', 'desc')}
-                          />
-                        </th>
-                        <th>Key level</th>
-                        <th>
-                          <SortHeaderButton
-                            label="Days left"
-                            active={formingControls.sortBy === 'bars'}
-                            direction={formingControls.sortDir}
-                            onClick={() => setFormingSort('bars', 'asc')}
-                          />
-                        </th>
-                        <th>Why</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredForming.map((item) => {
-                        const isShort = (item.direction ?? 'LONG') === 'SHORT'
-                        return (
-                          <tr
-                            key={`forming-${item.symbol}`}
-                            onClick={() => openStockDetail(item.symbol, 'forming')}
-                            tabIndex={0}
-                            role="button"
-                          >
-                            <td className="symbol-cell">
-                              <button
-                                type="button"
-                                className="symbol-link"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  openStockDetail(item.symbol, 'forming')
-                                }}
-                              >
-                                {item.symbol}
-                              </button>
-                            </td>
-                            <td>
-                              <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                                {directionLabel(item.direction)}
-                              </span>
-                            </td>
-                            <td>{formingStageLabel(item.stage)}</td>
-                            <td className="num-cell">
-                              <LiveValue
-                                value={item.current_price}
-                                formatted={formatPrice(item.current_price)}
-                              />
-                            </td>
-                            <td
-                              className={`num-cell ${valueClass(item.current_price_change_percent ?? 0)}`}
-                            >
-                              {formatPercent(item.current_price_change_percent)}
-                            </td>
-                            <td className="num-cell">{formatPrice(item.resistance)}</td>
-                            <td className="num-cell">{item.bars_remaining}</td>
-                            <td className="why-eligible">{item.narrative ?? item.reason}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                )}
-              </div>
-            )}
-
-            {paperTradingEnabled && (
-            <div className="paper-box">
-              <div className="paper-banner">
-                <strong>{PAPER_CLAIM}</strong>
-                <span>
-                  Waits for live price to reach buy/sell price, then auto-closes at safety exit or profit goal · no
-                  fees modeled
-                </span>
-              </div>
-              {paperNotice && <div className="status ok">{paperNotice}</div>}
-              {paperError && <div className="status error">{paperError}</div>}
-              <div className="paper-capital-strip">
-                <div>
-                  <span>Starting capital</span>
-                  <strong>{formatPrice(paperCapital.starting)}</strong>
-                </div>
-                <div>
-                  <span>Invested (in trades)</span>
-                  <strong>{formatPrice(paperCapital.invested)}</strong>
-                </div>
-                <div className="paper-capital-remaining">
-                  <span>Remaining capital</span>
-                  <strong className={valueClass(paperCapital.remaining - paperCapital.starting)}>
-                    {formatPrice(paperCapital.remaining)}
-                  </strong>
-                </div>
-                <div>
-                  <span>Account value (incl. open P/L)</span>
-                  <strong className={valueClass(paperCapital.accountValue - paperCapital.starting)}>
-                    {formatPrice(paperCapital.accountValue)}
-                  </strong>
-                </div>
-              </div>
-              <div className="result-grid paper-summary-grid">
-                <div>
-                  <strong>Waiting:</strong> {paperBook?.pending_count ?? 0}
-                </div>
-                <div>
-                  <strong>In trade:</strong> {paperBook?.open_count ?? 0}
-                </div>
-                <div>
-                  <strong>Open P/L:</strong>{' '}
-                  <span className={valueClass(paperBook?.total_unrealized ?? 0)}>
-                    {formatPrice(paperBook?.total_unrealized)}
-                  </span>
-                </div>
-                <div>
-                  <strong>Finished:</strong> {paperBook?.closed_count ?? 0}
-                </div>
-                <div>
-                  <strong>Locked-in P/L:</strong>{' '}
-                  <span className={valueClass(paperBook?.total_realized ?? 0)}>
-                    {formatPrice(paperBook?.total_realized)}
-                  </span>
-                </div>
-              </div>
-              <div className="table-toolbar">
-                <h3>Waiting for buy/sell price</h3>
+              <nav className="swing-subnav" aria-label="Swing screens">
+                <button type="button" className="swing-subnav-link active" disabled>
+                  Find setups
+                </button>
                 <button
                   type="button"
-                  className="secondary-button"
+                  className="swing-subnav-link"
                   onClick={() => {
-                    void tickPaperBook()
+                    setActiveView('history')
+                    void refreshScanHistory()
                   }}
                 >
-                  Update prices
+                  Scan history
                 </button>
-              </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Stock</th>
-                      <th>Trade type</th>
-                      <th>Shares</th>
-                      <th>Buy/sell at</th>
-                      <th>Safety exit</th>
-                      <th>Profit goal</th>
-                      <th>Live price</th>
-                      <th>Status</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(paperBook?.trades.filter((t) => t.status === 'PENDING') ?? []).length === 0 ? (
-                      <tr>
-                        <td colSpan={9} className="field-hint">
-                          No watches yet. With practice mode on, a scan adds setups here until live price hits
-                          buy/sell.
-                        </td>
-                      </tr>
-                    ) : (
-                      paperBook!.trades
-                        .filter((t) => t.status === 'PENDING')
-                        .map((trade) => {
-                          const isShort = trade.direction === 'SHORT'
-                          return (
-                            <tr key={`pending-scan-${trade.id}`}>
-                              <td className="symbol-cell">
-                                <button
-                                  type="button"
-                                  className="symbol-link"
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    openStockDetail(trade.symbol)
-                                  }}
-                                >
-                                  {trade.symbol}
-                                </button>
-                              </td>
-                              <td>
-                                <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                                  {directionLabel(isShort ? 'SHORT' : 'LONG')}
-                                </span>
-                              </td>
-                              <td className="num-cell">{trade.quantity}</td>
-                              <td className="num-cell">{formatPrice(trade.entry_price)}</td>
-                              <td className="num-cell top-value-stop">{formatPrice(trade.stop_loss)}</td>
-                              <td className="num-cell top-value-target">{formatPrice(trade.target)}</td>
-                              <td className="num-cell">
-                                <LiveValue
-                                  value={trade.last_mark_price}
-                                  formatted={formatPrice(trade.last_mark_price)}
-                                />
-                              </td>
-                              <td>{paperStatusLabel(trade.status)}</td>
-                              <td>
-                                <button
-                                  type="button"
-                                  className="secondary-button"
-                                  disabled={paperClosingId === trade.id}
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    void closePaperTrade(trade.id)
-                                  }}
-                                >
-                                  {paperClosingId === trade.id ? 'Working…' : 'Cancel watch'}
-                                </button>
-                              </td>
-                            </tr>
-                          )
-                        })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="table-toolbar">
-                <h3>In trade now</h3>
-              </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Stock</th>
-                      <th>Trade type</th>
-                      <th>Shares</th>
-                      <th>Buy/sell at</th>
-                      <th>Safety exit</th>
-                      <th>Profit goal</th>
-                      <th>Live price</th>
-                      <th>Open P/L</th>
-                      <th>Running</th>
-                      <th>Est. profit by</th>
-                      <th>Money at risk</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(paperBook?.trades.filter((t) => t.status === 'OPEN') ?? []).length === 0 ? (
-                      <tr>
-                        <td colSpan={12} className="field-hint">
-                          No open practice trades yet. When practice mode is on, run a scan — trades start only after live price hits buy/sell.
-                        </td>
-                      </tr>
-                    ) : (
-                      paperBook!.trades
-                        .filter((t) => t.status === 'OPEN')
-                        .map((trade) => {
-                          const isShort = trade.direction === 'SHORT'
-                          const outlook = paperOutlookById[trade.id]
-                          return (
-                            <React.Fragment key={trade.id}>
-                            <tr>
-                              <td className="symbol-cell">
-                                <button
-                                  type="button"
-                                  className="symbol-link"
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    openStockDetail(trade.symbol)
-                                  }}
-                                >
-                                  {trade.symbol}
-                                </button>
-                              </td>
-                              <td>
-                                <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                                  {directionLabel(isShort ? 'SHORT' : 'LONG')}
-                                </span>
-                              </td>
-                              <td className="num-cell">{trade.quantity}</td>
-                              <td className="num-cell">{formatPrice(trade.entry_price)}</td>
-                              <td className="num-cell top-value-stop">{formatPrice(trade.stop_loss)}</td>
-                              <td className="num-cell top-value-target">{formatPrice(trade.target)}</td>
-                              <td className="num-cell">
-                                <LiveValue
-                                  value={trade.last_mark_price}
-                                  formatted={formatPrice(trade.last_mark_price)}
-                                />
-                              </td>
-                              <td className={`num-cell ${valueClass(trade.unrealized_pnl ?? 0)}`}>
-                                {formatPrice(trade.unrealized_pnl)}
-                              </td>
-                              <td>
-                                <TradeDurationTimer startedAt={trade.opened_at} label="" />
-                              </td>
-                              <td className="eta-cell">
-                                {outlook?.estimated_reach_at
-                                  ? Number(outlook.estimated_trading_days) === 0
-                                    ? 'Now'
-                                    : `${formatDateTime(outlook.estimated_reach_at)} (~${outlook.estimated_trading_days}d)`
-                                  : 'Analyzing…'}
-                                {outlook && (
-                                  <div className="eta-progress-track" title={`${outlook.progress_pct}% to goal`}>
-                                    <div
-                                      className="eta-progress-fill"
-                                      style={{ width: `${Math.min(100, Math.max(0, Number(outlook.progress_pct) || 0))}%` }}
-                                    />
-                                  </div>
-                                )}
-                              </td>
-                              <td className="num-cell">{formatPrice(trade.risk_amount)}</td>
-                              <td>
-                                <button
-                                  type="button"
-                                  className="secondary-button"
-                                  disabled={paperClosingId === trade.id}
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    void closePaperTrade(trade.id)
-                                  }}
-                                >
-                                  {paperClosingId === trade.id ? 'Working…' : 'Close trade'}
-                                </button>
-                              </td>
-                            </tr>
-                            {outlook && (
-                              <tr className="outlook-summary-row">
-                                <td colSpan={12}>
-                                  <p className="field-hint">{outlook.summary}</p>
-                                </td>
-                              </tr>
-                            )}
-                            </React.Fragment>
-                          )
-                        })
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              </nav>
             </div>
-            )}
-          </section>
+          </header>
+        ) : null}
+
+        {!scanFocusOpen ? (
+        <FindSetupsCriteriaBar
+          universeLabel={SCAN_UNIVERSES.find((item) => item.value === scanUniverse)?.label ?? scanUniverse}
+          filterSummary={
+            scanFilters.asset_class === 'ALL'
+              ? 'Stocks + ETFs'
+              : scanFilters.asset_class === 'STOCK'
+                ? 'Stocks'
+                : 'ETFs'
+          }
+          filterCount={countActiveFilters(scanFilters)}
+          riskPercent={riskPercent}
+          onRiskChange={(value) => {
+            setRiskPercent(value)
+            try {
+              localStorage.setItem(RISK_STORAGE_KEY, JSON.stringify({ equity: accountEquity, riskPercent: value }))
+            } catch {
+              /* ignore */
+            }
+          }}
+          onOpenUniverse={() => setUniverseOpen(true)}
+          onOpenFilters={() => setFiltersOpen(true)}
+          onFindSetups={() => void handleScan()}
+          loading={scanLoading}
+          progress={scanProgress}
+          collapsed={Boolean(scanResult && scanCriteriaCollapsed)}
+          onToggleCollapsed={() => setScanCriteriaCollapsed((c) => !c)}
+          showCollapse={Boolean(scanResult)}
+          advanced={
+            <details className="find-advanced">
+              <summary>More criteria (dates, capital, practice)</summary>
+              <div className="find-advanced-body">
+                <div className="universe-trigger-actions" style={{ marginBottom: '0.75rem' }}>
+                  <button type="button" className="secondary-button" onClick={() => setPresetsOpen(true)}>
+                    Presets
+                  </button>
+                  <button type="button" className="secondary-button" onClick={() => setCoverageOpen(true)}>
+                    Coverage
+                  </button>
+                  <button type="button" className="link-button" onClick={() => setGuidedProOpen(true)}>
+                    Guided vs Pro
+                  </button>
+                </div>
+                <div className="field-row two-col">
+                  <div className="field-group">
+                    <label htmlFor="scan-start">Start date</label>
+                    <input
+                      id="scan-start"
+                      type="date"
+                      value={scanStart}
+                      onChange={(event) => setScanStart(event.target.value)}
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label htmlFor="scan-end">End date</label>
+                    <input
+                      id="scan-end"
+                      type="date"
+                      value={scanEnd}
+                      onChange={(event) => setScanEnd(event.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="field-row two-col">
+                  <div className="field-group">
+                    <label htmlFor="scan-equity">Your capital (₹)</label>
+                    <input
+                      id="scan-equity"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={accountEquity}
+                      onChange={(event) => setAccountEquity(event.target.value)}
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label htmlFor="scan-top-n">Top ideas to highlight</label>
+                    <select id="scan-top-n" value={topN} onChange={(event) => setTopN(event.target.value)}>
+                      <option value="3">Top 3</option>
+                      <option value="5">Top 5</option>
+                      <option value="10">Top 10</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="field-row two-col">
+                  <div className="field-group">
+                    <label htmlFor="scan-min-score">Min strategy confidence %</label>
+                    <input
+                      id="scan-min-score"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={minScore}
+                      onChange={(event) => setMinScore(event.target.value)}
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div className="field-group paper-opt-in">
+                    <label className="checkbox-label" htmlFor="scan-paper-enabled">
+                      <input
+                        id="scan-paper-enabled"
+                        type="checkbox"
+                        checked={paperTradingEnabled}
+                        onChange={(event) => setPaperEnabled(event.target.checked)}
+                      />
+                      <span>Practice trades (optional) — fake money only.</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </details>
+          }
+        />
+        ) : null}
+
+        {scanError && !scanFocusOpen && <div className="status error">{scanError}</div>}
+
+        {scanResult && chartEvidenceOpen && selectedOpportunity ? (
+          <ChartEvidenceDesk
+            opportunity={selectedOpportunity}
+            chartCandles={chartCandles}
+            formatPrice={formatPrice}
+            formatNumber={formatNumber}
+            formatVolume={formatVolume}
+            formatDateTime={formatDateTime}
+            formatBarRef={formatBarRef}
+            coveragePct={(() => {
+              const after = Number(scanResult.filter_coverage?.after_filters ?? scanResult.symbols_scanned)
+              if (!after) return null
+              return Math.max(0, Math.min(100, (100 * Number(scanResult.symbols_scanned || 0)) / after))
+            })()}
+            dataAsOf={scanResult.last_candle_time ?? productStatus?.last_candle_time ?? null}
+            onBack={() => setChartEvidenceOpen(false)}
+            onClose={() => {
+              setChartEvidenceOpen(false)
+              setInspectPlanOpen(false)
+            }}
+            onRefresh={() => void handleScan()}
+            refreshing={scanLoading}
+            onOpenResearch={() => {
+              setChartEvidenceOpen(false)
+              setInspectPlanOpen(false)
+              openStockDetail(selectedOpportunity.symbol, 'eligible')
+            }}
+          />
+        ) : null}
+
+        {scanResult && inspectPlanOpen && !chartEvidenceOpen && selectedOpportunity ? (
+          <InspectPlanDesk
+            opportunity={selectedOpportunity}
+            baseUrl={baseUrl}
+            chartCandles={chartCandles}
+            deductionSteps={inspectDeductionSteps}
+            formatPrice={formatPrice}
+            formatRatio={formatRatio}
+            formatDateTime={formatDateTime}
+            coveragePct={(() => {
+              const after = Number(scanResult.filter_coverage?.after_filters ?? scanResult.symbols_scanned)
+              if (!after) return null
+              return Math.max(0, Math.min(100, (100 * Number(scanResult.symbols_scanned || 0)) / after))
+            })()}
+            dataAsOf={scanResult.last_candle_time ?? productStatus?.last_candle_time ?? null}
+            onClose={() => {
+              setInspectPlanOpen(false)
+              setChartEvidenceOpen(false)
+            }}
+            onRefresh={() => void handleScan()}
+            refreshing={scanLoading}
+            onOpenResearch={() => {
+              setInspectPlanOpen(false)
+              setChartEvidenceOpen(false)
+              openStockDetail(selectedOpportunity.symbol, 'eligible')
+            }}
+            onOpenChartEvidence={() => setChartEvidenceOpen(true)}
+            siblings={showAllOpportunities ? filteredOpportunities : visibleOpportunities}
+            onSelectSibling={(symbol) => {
+              setSelectedSymbol(symbol)
+              setSelectedKind('eligible')
+            }}
+          />
+        ) : null}
+
+        {scanResult && !scanFocusOpen ? (
+          <FindSetupsResultsLayout
+            scanResult={scanResult}
+            topIdeas={topReadyIdeas}
+            rows={showAllOpportunities ? filteredOpportunities : visibleOpportunities}
+            selectedSymbol={selectedSymbol}
+            onSelect={(symbol) => {
+              setSelectedSymbol(symbol)
+              setSelectedKind('eligible')
+            }}
+            onOpenDetail={(symbol) => {
+              setSelectedSymbol(symbol)
+              setSelectedKind('eligible')
+              setInspectPlanOpen(true)
+            }}
+            onViewAll={() => setShowAllOpportunities((v) => !v)}
+            showAll={showAllOpportunities}
+            formatPrice={formatPrice}
+            sortLabel={resultControls.sortBy === 'confidence' ? 'confidence' : resultControls.sortBy}
+            onSortChange={(value) => {
+              const sortBy = (value === 'Score' || value === 'confidence' ? 'confidence' : value) as typeof resultControls.sortBy
+              setResultControls((current) => ({
+                ...current,
+                sortBy: sortBy === 'confidence' || sortBy === 'rank' || sortBy === 'rr' || sortBy === 'symbol' ? sortBy : 'confidence',
+                sortDir: sortBy === 'rank' || sortBy === 'symbol' ? 'asc' : 'desc',
+              }))
+            }}
+            accountEquity={accountEquity}
+            baseUrl={baseUrl}
+            coveragePct={(() => {
+              const after = Number(scanResult.filter_coverage?.after_filters ?? scanResult.symbols_scanned)
+              if (!after) return null
+              return Math.max(0, Math.min(100, (100 * Number(scanResult.symbols_scanned || 0)) / after))
+            })()}
+            dataAsOf={scanResult.last_candle_time ?? productStatus?.last_candle_time ?? null}
+            formatDateTime={formatDateTime}
+            onRefresh={() => void handleScan()}
+            refreshing={scanLoading}
+            onExportCsv={() => downloadEligibleCsv(scanResult, filteredOpportunities)}
+            onOpenCoverage={() => setCoverageOpen(true)}
+            autoRefresh={{
+              enabled: autoRefreshActive,
+              onEnabledChange: setAutoRefreshActive,
+              intervalSec: refreshInterval,
+              onIntervalChange: (next) => {
+                setRefreshInterval(next)
+                setAutoRefreshActive(true)
+              },
+              secondsLeft: autoRefreshSecondsLeft,
+              paused: autoRefreshPaused,
+              pauseReason: autoRefreshPauseReason,
+              refreshing: scanLoading,
+            }}
+          />
+        ) : null}
+
+        {scanResult && !scanFocusOpen && (
+          <>
+            {(scanResult.forming?.length ?? 0) > 0 || (scanResult.forming_count ?? 0) > 0 ? (
+              <FormingWatchlistDesk
+                scanResult={scanResult}
+                rows={filteredForming}
+                selectedSymbol={selectedKind === 'forming' ? selectedSymbol : null}
+                onSelect={(symbol) => {
+                  setSelectedSymbol(symbol)
+                  setSelectedKind('forming')
+                }}
+                onOpenDetail={(symbol) => openStockDetail(symbol, 'forming')}
+                formingControls={formingControls}
+                onFormingControlsChange={setFormingControls}
+                onResetFilters={() => setFormingControls(DEFAULT_FORMING_CONTROLS)}
+                formatPrice={formatPrice}
+                formatNumber={formatNumber}
+                formatPercent={formatPercent}
+                formatDateTime={formatDateTime}
+                accountEquity={accountEquity}
+                baseUrl={baseUrl}
+                coveragePct={(() => {
+                  const after = Number(scanResult.filter_coverage?.after_filters ?? scanResult.symbols_scanned)
+                  if (!after) return null
+                  return Math.max(0, Math.min(100, (100 * Number(scanResult.symbols_scanned || 0)) / after))
+                })()}
+                dataAsOf={scanResult.last_candle_time ?? productStatus?.last_candle_time ?? null}
+                onRefresh={() => void handleScan()}
+                refreshing={scanLoading}
+              />
+            ) : null}
+
+            {paperNotice ? <div className="status ok">{paperNotice}</div> : null}
+            {paperError ? <div className="status error">{paperError}</div> : null}
+            <PracticeFromScanDesk
+              scanResult={scanResult}
+              opportunities={filteredOpportunities}
+              paperTrades={paperBook?.trades ?? []}
+              paperEnabled={paperTradingEnabled}
+              onEnablePaper={() => {
+                setPaperEnabled(true)
+                void refreshPaperBook()
+                void tickPaperBook()
+              }}
+              baseUrl={baseUrl}
+              chartCandles={chartCandles}
+              focusSymbol={selectedKind === 'eligible' ? selectedSymbol : null}
+              onFocusSymbol={(symbol) => {
+                setSelectedSymbol(symbol)
+                setSelectedKind('eligible')
+              }}
+              formatPrice={formatPrice}
+              formatDateTime={formatDateTime}
+              coveragePct={(() => {
+                const after = Number(scanResult.filter_coverage?.after_filters ?? scanResult.symbols_scanned)
+                if (!after) return null
+                return Math.max(0, Math.min(100, (100 * Number(scanResult.symbols_scanned || 0)) / after))
+              })()}
+              dataAsOf={scanResult.last_candle_time ?? productStatus?.last_candle_time ?? null}
+              onRefresh={() => void handleScan()}
+              refreshing={scanLoading}
+              onArmed={(message) => {
+                setPaperEnabled(true)
+                setPaperNotice(message)
+                setPaperError('')
+                void refreshPaperBook()
+                void tickPaperBook()
+              }}
+              onOpenBook={() => {
+                setActiveView('paper')
+                void refreshPaperBook()
+                void tickPaperBook()
+              }}
+              onTick={() => void tickPaperBook()}
+              ticking={false}
+            />
+          </>
         )}
       </section>
+      )}
+
+      {activeView === 'history' && (
+        <section className={`panel scan-panel scan-history-panel ${guidedMode ? 'guided' : 'pro'}`}>
+          <header className="header-block find-setups-header">
+            <div className="swing-screen-head">
+              <div>
+                <p className="eyebrow">Swing</p>
+                <h1>Scan history</h1>
+                <p className="header-copy">
+                  Reopen a past run into Find setups, or export eligible setups as CSV.
+                </p>
+              </div>
+              <nav className="swing-subnav" aria-label="Swing screens">
+                <button type="button" className="swing-subnav-link" onClick={() => setActiveView('scan')}>
+                  Find setups
+                </button>
+                <button type="button" className="swing-subnav-link active" disabled>
+                  Scan history
+                </button>
+              </nav>
+            </div>
+          </header>
+          <ScanHistoryDesk
+            runs={scanHistory}
+            selectedId={historySelectedId}
+            onSelect={setHistorySelectedId}
+            onOpen={(id) => void openScanHistoryRun(id)}
+            onExportCsv={(id) => exportScanHistoryCsv(id)}
+            busyId={historyBusyId}
+            error={historyError}
+            coveragePct={(() => {
+              const selected = scanHistory.find((run) => run.id === historySelectedId) ?? scanHistory[0]
+              return selected ? scanCoveragePct(selected) : null
+            })()}
+            dataAsOf={productStatus?.last_candle_time ?? null}
+            onRefresh={() => void refreshScanHistory()}
+            refreshing={historyRefreshing}
+            formatDateTime={formatDateTime}
+          />
+        </section>
+      )}
+
+      {activeView === 'intraday' && (
+        <IntradayDesk
+          baseUrl={baseUrl}
+          accountEquity={accountEquity}
+          onEquityChange={setAccountEquity}
+        />
       )}
 
       {activeView === 'paper' && (
@@ -2906,7 +2574,7 @@ function App() {
         </section>
       )}
 
-      {selectedSymbol && (
+      {detailDrawerOpen && selectedSymbol && !scanFocusOpen && (
         <StockDetailDrawer
           baseUrl={baseUrl}
           symbol={selectedSymbol}
@@ -2918,7 +2586,7 @@ function App() {
           confirmationMatchesScanEnd={(opportunity) =>
             confirmationMatchesScanEnd(opportunity as Opportunity)
           }
-          onClose={() => setSelectedSymbol(null)}
+          onClose={() => setDetailDrawerOpen(false)}
           formatters={{
             formatPrice,
             formatNumber,
@@ -2933,364 +2601,132 @@ function App() {
       )}
 
       {activeView === 'research' && (
-      <section className="panel">
-        <header className="header-block">
-          <p className="eyebrow">Stock research</p>
-          <h1>Look up one stock</h1>
-          <p className="header-copy">Check one stock’s plan now, or test how the rules would have worked in the past with your capital settings.</p>
-        </header>
-
-        <form className="strategy-form" onSubmit={handleSubmit}>
-          <div className="field-group">
-            <label htmlFor="symbol">Stock symbol</label>
-            <input
-              id="symbol"
-              type="text"
-              value={symbol}
-              onChange={(event) => setSymbol(event.target.value)}
-              placeholder="e.g. ZYDUSLIFE"
-            />
-          </div>
-
-          <div className="field-row">
-            <div className="field-group">
-              <label htmlFor="timeframe">Timeframe</label>
-              <select id="timeframe" value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>
-                <option value="1d">1d</option>
-                <option value="4h">4h</option>
-                <option value="1h">1h</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="field-row two-col">
-            <div className="field-group">
-              <label htmlFor="start">Start date</label>
-              <input id="start" type="date" value={start} onChange={(event) => setStart(event.target.value)} />
-            </div>
-            <div className="field-group">
-              <label htmlFor="end">End date</label>
-              <input id="end" type="date" value={end} onChange={(event) => setEnd(event.target.value)} />
-            </div>
-          </div>
-
-          <div className="field-row two-col">
-            <div className="field-group">
-              <label htmlFor="account-equity">Your capital (₹)</label>
-              <input
-                id="account-equity"
-                type="number"
-                min="0"
-                step="0.01"
-                value={accountEquity}
-                onChange={(event) => setAccountEquity(event.target.value)}
-              />
-            </div>
-            <div className="field-group">
-              <label htmlFor="risk-percent">Max loss per trade (%)</label>
-              <input
-                id="risk-percent"
-                type="number"
-                min="0"
-                step="0.01"
-                value={riskPercent}
-                onChange={(event) => setRiskPercent(event.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="field-row two-col">
-            <div className="field-group">
-              <label htmlFor="slippage-per-share">Slippage per share</label>
-              <input
-                id="slippage-per-share"
-                type="number"
-                min="0"
-                step="0.01"
-                value={slippagePerShare}
-                onChange={(event) => setSlippagePerShare(event.target.value)}
-              />
-            </div>
-            <div className="field-group">
-              <label htmlFor="cost-per-trade">Round-trip transaction cost</label>
-              <input
-                id="cost-per-trade"
-                type="number"
-                min="0"
-                step="0.01"
-                value={costPerTrade}
-                onChange={(event) => setCostPerTrade(event.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="actions">
-            <button type="submit" className="primary-button" disabled={loading}>
-              {loading ? 'Checking…' : 'Check this stock'}
-            </button>
-            <button type="button" className="secondary-button" onClick={handleBacktest} disabled={backtestLoading}>
-              {backtestLoading ? 'Testing history…' : 'Test on past data'}
-            </button>
-          </div>
-          {researchQuote && (
-            <p className="field-hint">
-              Current price:{' '}
-              <LiveValue
-                value={researchQuote.current_price}
-                formatted={formatPrice(researchQuote.current_price)}
-              />{' '}
-              ({formatPercent(researchQuote.current_price_change_percent)})
-            </p>
-          )}
-          {symbol.trim() && (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => openStockDetail(symbol)}
-            >
-              Open stock details for {symbol.trim().toUpperCase()}
-            </button>
-          )}
-        </form>
-
-        {error && <div className="status error">{error}</div>}
-        {backtestError && <div className="status error">{backtestError}</div>}
-
-        {result && (
-          <section className="result-card">
-            <h2>Result</h2>
-            <div className="result-grid">
-              <div>
-                <strong>Has setup:</strong> {String(result.has_setup)}
-              </div>
-              <div>
-                <strong>Status:</strong> {result.status}
-              </div>
-              {result.reason ? (
-                <div>
-                  <strong>Reason:</strong> {result.reason}
-                </div>
-              ) : null}
-            </div>
-
-            {result.candidate && (
-              <div className="section-box">
-                <h3>Candidate</h3>
-                <dl>
-                  <div>
-                    <dt>Stock</dt>
-                    <dd className="plain-value">{result.candidate.symbol}</dd>
-                  </div>
-                  <div>
-                    <dt>Timeframe</dt>
-                    <dd>{result.candidate.timeframe}</dd>
-                  </div>
-                  <div>
-                    <dt>Trade type</dt>
-                    <dd>
-                      <span
-                        className={`direction-pill ${
-                          result.candidate?.direction === 'LONG' ? 'long' : 'short'
-                        }`}
-                      >
-                        {directionLabel(result.candidate?.direction)}
-                      </span>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Buy/sell at</dt>
-                    <dd>{formatPrice(result.candidate.entry_price)}</dd>
-                  </div>
-                  <div>
-                    <dt>Safety exit</dt>
-                    <dd>{formatPrice(result.candidate.stop_loss)}</dd>
-                  </div>
-                  <div>
-                    <dt>Profit goal</dt>
-                    <dd>{formatPrice(result.candidate.target)}</dd>
-                  </div>
-                  <div>
-                    <dt>Risk per share</dt>
-                    <dd>{formatPrice(result.candidate.risk_per_share)}</dd>
-                  </div>
-                  <div>
-                    <dt>Reward</dt>
-                    <dd>{formatPrice(result.candidate.reward)}</dd>
-                  </div>
-                  <div>
-                    <dt>Risk/reward</dt>
-                    <dd>{formatRatio(result.candidate.risk_reward_ratio)}</dd>
-                  </div>
-                  <div>
-                    <dt>Setup</dt>
-                    <dd className="plain-value">{result.candidate.setup_name}</dd>
-                  </div>
-                </dl>
-              </div>
-            )}
-
-            {result.evidence && (
-              <div className="section-box">
-                <h3>Evidence</h3>
-                <dl>
-                  <div>
-                    <dt>
-                      {result.candidate?.direction === 'SHORT' ||
-                      result.evidence.structure_label === 'support'
-                        ? 'Floor (support)'
-                        : 'Ceiling (resistance)'}
-                    </dt>
-                    <dd>{formatPrice(result.evidence.resistance)}</dd>
-                  </div>
-                  <div>
-                    <dt>Breakout</dt>
-                    <dd className="bar-ref">
-                      <span>{formatBarRef(result.evidence.breakout_candle_index, result.evidence.breakout_candle_time).bar}</span>
-                      <small>{formatBarRef(result.evidence.breakout_candle_index, result.evidence.breakout_candle_time).when}</small>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Retest</dt>
-                    <dd className="bar-ref">
-                      <span>{formatBarRef(result.evidence.retest_candle_index, result.evidence.retest_candle_time).bar}</span>
-                      <small>{formatBarRef(result.evidence.retest_candle_index, result.evidence.retest_candle_time).when}</small>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Confirmation</dt>
-                    <dd className="bar-ref">
-                      <span>{formatBarRef(result.evidence.confirmation_candle_index, result.evidence.confirmation_candle_time).bar}</span>
-                      <small>{formatBarRef(result.evidence.confirmation_candle_index, result.evidence.confirmation_candle_time).when}</small>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>ATR</dt>
-                    <dd>{formatNumber(result.evidence.atr_value, 2)}</dd>
-                  </div>
-                  <div>
-                    <dt>Volume SMA</dt>
-                    <dd>{formatVolume(result.evidence.volume_sma_value)}</dd>
-                  </div>
-                  <div>
-                    <dt>Breakout volume</dt>
-                    <dd>{formatVolume(result.evidence.breakout_volume)}</dd>
-                  </div>
-                  <div>
-                    <dt>
-                      {result.candidate?.direction === 'SHORT' ? 'Retest high' : 'Retest low'}
-                    </dt>
-                    <dd>{formatPrice(result.evidence.retest_low)}</dd>
-                  </div>
-                  <div>
-                    <dt>Confirmation volume</dt>
-                    <dd>{formatVolume(result.evidence.confirmation_volume)}</dd>
-                  </div>
-                  <div>
-                    <dt>Decision</dt>
-                    <dd className="evidence-decision">{result.evidence.decision}</dd>
-                  </div>
-                </dl>
-              </div>
-            )}
-          </section>
-        )}
-
-        {backtestResult && (
-          <section className="result-card">
-            <h2>Past-data test results</h2>
-            {backtestResult.interpretation && (
-              <p className="backtest-interpretation">
-                {backtestResult.interpretation}
-                {backtestResult.interpretation_provider === 'llm' && (
-                  <span className="ai-polished-badge">AI-polished</span>
-                )}
-              </p>
-            )}
-            <div className="metric-grid">
-              <div className="metric-card">
-                <span>Total Trades</span>
-                <strong>{backtestResult.metrics.total_trades}</strong>
-              </div>
-              <div className="metric-card">
-                <span>Winning Trades</span>
-                <strong>{backtestResult.metrics.winning_trades}</strong>
-              </div>
-              <div className="metric-card">
-                <span>Losing Trades</span>
-                <strong>{backtestResult.metrics.losing_trades}</strong>
-              </div>
-              <div className="metric-card">
-                <span>Win Rate</span>
-                <strong>{formatPercent(backtestResult.metrics.win_rate)}</strong>
-              </div>
-              <div className="metric-card">
-                <span>Total P&amp;L</span>
-                <strong className={valueClass(backtestResult.metrics.total_pnl)}>
-                  {formatPrice(backtestResult.metrics.total_pnl)}
-                </strong>
-              </div>
-              <div className="metric-card">
-                <span>Average P&amp;L</span>
-                <strong className={valueClass(backtestResult.metrics.average_pnl)}>
-                  {formatPrice(backtestResult.metrics.average_pnl)}
-                </strong>
-              </div>
-              <div className="metric-card">
-                <span>Total R</span>
-                <strong>{formatNumber(backtestResult.metrics.total_r, 2)}</strong>
-              </div>
-              <div className="metric-card">
-                <span>Average R</span>
-                <strong>{formatNumber(backtestResult.metrics.average_r, 2)}</strong>
-              </div>
-              <div className="metric-card">
-                <span>Maximum Drawdown</span>
-                <strong className="value-neutral">{formatPrice(backtestResult.metrics.maximum_drawdown)}</strong>
-              </div>
-            </div>
-            {backtestResult.trades.length === 0 ? (
-              <div className="empty-state">
-                <strong>Test complete</strong>
-                <span>No practice trades were generated for this history and capital settings.</span>
-              </div>
-            ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Opened</th>
-                      <th>Closed</th>
-                      <th>Shares</th>
-                      <th>Buy/sell price</th>
-                      <th>Exit price</th>
-                      <th>Money at risk</th>
-                      <th>P/L</th>
-                      <th>R multiples</th>
-                      <th>Why closed</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {backtestResult.trades.map((trade, index) => (
-                      <tr key={`${trade.entry_time}-${index}`}>
-                        <td>{formatDateTime(trade.entry_time)}</td>
-                        <td>{formatDateTime(trade.exit_time)}</td>
-                        <td className="num-cell">{formatVolume(trade.quantity)}</td>
-                        <td className="num-cell">{formatPrice(trade.entry_price)}</td>
-                        <td className="num-cell">{formatPrice(trade.exit_price)}</td>
-                        <td className="num-cell">{formatPrice(trade.risk_amount)}</td>
-                        <td className={`num-cell ${valueClass(trade.pnl)}`}>{formatPrice(trade.pnl)}</td>
-                        <td className={`num-cell ${valueClass(trade.pnl)}`}>{tradeR(trade)}</td>
-                        <td>{trade.exit_reason}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        )}
-      </section>
+        <ResearchDesk baseUrl={baseUrl} />
       )}
+
+      {activeView === 'practice' && <PracticeBook baseUrl={baseUrl} />}
+
+      <CapitalRisk
+        open={capitalRiskOpen}
+        onClose={() => setCapitalRiskOpen(false)}
+        accountEquity={accountEquity}
+        riskPercent={riskPercent}
+        onEquityChange={setAccountEquity}
+        onRiskChange={setRiskPercent}
+        dataLive={Boolean(productStatus?.live_ready)}
+        lastCandleTime={
+          productStatus?.last_candle_time
+            ? formatDateTime(productStatus.last_candle_time)
+            : null
+        }
+      />
+
+      <UniversePicker
+        open={universeOpen}
+        onClose={() => setUniverseOpen(false)}
+        baseUrl={baseUrl}
+        value={scanUniverse}
+        onChange={(next) => {
+          setScanUniverse(next)
+          try {
+            localStorage.setItem(UNIVERSE_STORAGE_KEY, next)
+          } catch {
+            /* ignore */
+          }
+          setScanFilters((prev) => {
+            const updated = { ...prev, asset_class: assetClassForUniverse(next) }
+            persistScanFilters(updated)
+            return updated
+          })
+        }}
+      />
+
+      <FilterBuilder
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        baseUrl={baseUrl}
+        value={scanFilters}
+        onChange={(next) => {
+          setScanFilters(next)
+          persistScanFilters(next)
+        }}
+        universe={scanUniverse}
+        onUniverseChange={(next) => {
+          const u = next as ScanUniverse
+          setScanUniverse(u)
+          try {
+            localStorage.setItem(UNIVERSE_STORAGE_KEY, u)
+          } catch {
+            /* ignore */
+          }
+        }}
+        universeOptions={SCAN_UNIVERSES}
+        strategyLabel="BreakoutRetest"
+        onManagePresets={() => {
+          setFiltersOpen(false)
+          setPresetsOpen(true)
+        }}
+      />
+
+      <FilterPresets
+        open={presetsOpen}
+        onClose={() => setPresetsOpen(false)}
+        baseUrl={baseUrl}
+        universe={scanUniverse}
+        value={scanFilters}
+        onChange={(next) => {
+          setScanFilters(next)
+          persistScanFilters(next)
+        }}
+        onEdit={() => {
+          setPresetsOpen(false)
+          setFiltersOpen(true)
+        }}
+      />
+
+      <CoverageDrawer
+        open={coverageOpen}
+        onClose={() => setCoverageOpen(false)}
+        baseUrl={baseUrl}
+        universe={scanUniverse}
+        filters={scanFilters}
+        scanIssues={scanResult?.issues ?? null}
+        dataAsOf={productStatus?.last_candle_time ?? scanResult?.last_candle_time ?? null}
+        formatDateTime={formatDateTime}
+      />
+
+      <GuidedProMode
+        open={guidedProOpen}
+        onClose={() => setGuidedProOpen(false)}
+        guidedMode={guidedMode}
+        onSelectGuided={() => {
+          persistGuidedMode(true)
+          setGuidedProOpen(false)
+        }}
+        onSelectPro={() => {
+          persistGuidedMode(false)
+          setGuidedProOpen(false)
+        }}
+        onFindSetups={() => {
+          persistGuidedMode(true)
+          setGuidedProOpen(false)
+          setActiveView('scan')
+          setShowHowItWorks(true)
+        }}
+        onShowHowItWorks={() => {
+          persistGuidedMode(true)
+          setGuidedProOpen(false)
+          setActiveView('scan')
+          setShowHowItWorks(true)
+        }}
+        dataLive={Boolean(productStatus?.live_ready)}
+        lastCandleTime={
+          productStatus?.last_candle_time
+            ? formatDateTime(productStatus.last_candle_time)
+            : null
+        }
+      />
+
       <p className="disclaimer">
         Educational decision support only. TradePilot does not place broker orders and is not investment advice.
         Live prices and candles require a configured Upstox connection.

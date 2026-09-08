@@ -65,46 +65,73 @@ class PaperTradeService:
         """
         opportunities = getattr(scan_payload, "opportunities", None) or []
         scan_run_id = getattr(scan_payload, "scan_run_id", None)
+        items: list[dict[str, Any]] = []
+        for item in opportunities:
+            quantity = getattr(item, "quantity", None)
+            candidate = getattr(item, "candidate", None)
+            if candidate is None:
+                continue
+            items.append(
+                {
+                    "symbol": getattr(item, "symbol", ""),
+                    "direction": getattr(candidate, "direction", "LONG"),
+                    "entry_price": candidate.entry_price,
+                    "stop_loss": candidate.stop_loss,
+                    "target": candidate.target,
+                    "quantity": quantity,
+                    "risk_amount": getattr(item, "risk_amount", None),
+                    "setup_name": getattr(candidate, "setup_name", None),
+                    "quality_score": getattr(item, "quality_score", None),
+                    "scan_run_id": scan_run_id,
+                }
+            )
+        return await self.open_from_items(items)
+
+    async def open_from_items(self, items: list[dict[str, Any]]) -> OpenFromScanResult:
+        """Create PENDING watches for explicit practice-arm selections."""
         active_symbols = await self.repository.list_active_symbols()
         opened = 0
         skipped_qty = 0
         skipped_open = 0
         now = datetime.now(timezone.utc)
 
-        for item in opportunities:
-            quantity = getattr(item, "quantity", None)
+        for item in items:
+            quantity = item.get("quantity")
             if quantity is None or int(quantity) <= 0:
                 skipped_qty += 1
                 continue
-            symbol = str(getattr(item, "symbol", "")).upper().strip()
+            symbol = str(item.get("symbol", "")).upper().strip()
             if not symbol:
                 skipped_qty += 1
                 continue
             if symbol in active_symbols:
                 skipped_open += 1
                 continue
-            candidate = getattr(item, "candidate", None)
-            if candidate is None:
+            direction = str(item.get("direction") or "LONG").upper()
+            if direction not in {"LONG", "SHORT"}:
+                direction = "LONG"
+            try:
+                entry = Decimal(str(item["entry_price"]))
+                stop = Decimal(str(item["stop_loss"]))
+                target = Decimal(str(item["target"]))
+            except Exception:
                 skipped_qty += 1
                 continue
-            direction = getattr(candidate, "direction", "LONG")
+            risk_raw = item.get("risk_amount")
+            quality_raw = item.get("quality_score")
             trade = PaperTrade(
                 symbol=symbol,
                 direction=direction,
-                entry_price=Decimal(str(candidate.entry_price)),
-                stop_loss=Decimal(str(candidate.stop_loss)),
-                target=Decimal(str(candidate.target)),
+                entry_price=entry,
+                stop_loss=stop,
+                target=target,
                 quantity=int(quantity),
-                risk_amount=None
-                if getattr(item, "risk_amount", None) is None
-                else Decimal(str(item.risk_amount)),
+                risk_amount=None if risk_raw is None else Decimal(str(risk_raw)),
                 status="PENDING",
                 opened_at=now,
-                scan_run_id=scan_run_id,
-                setup_name=getattr(candidate, "setup_name", None),
-                quality_score=None
-                if getattr(item, "quality_score", None) is None
-                else Decimal(str(item.quality_score)),
+                scan_run_id=item.get("scan_run_id"),
+                setup_name=item.get("setup_name"),
+                quality_score=None if quality_raw is None else Decimal(str(quality_raw)),
                 last_mark_price=None,
                 unrealized_pnl=None,
                 updated_at=now,

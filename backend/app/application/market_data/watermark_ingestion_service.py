@@ -1,8 +1,8 @@
 """Per-symbol watermark (incremental) market-data ingestion.
 
-For each symbol, fetch only from the day after the latest persisted 1d candle
-through ``end``. Symbols with no history use a lookback fallback. Already-current
-symbols are skipped (not failures).
+For ``1d``, fetch from the day after the latest persisted candle through ``end``.
+For ``1m`` / ``5m``, fetch from the next bar after the latest timestamp (not day+1).
+Symbols with no history use a lookback fallback. Already-current symbols are skipped.
 """
 from __future__ import annotations
 
@@ -15,6 +15,11 @@ from app.application.market_data.market_data_ingestion_service import MarketData
 from app.domain.universe import StockUniverse
 from app.infrastructure.database.repositories.candle_repository import CandleRepository
 from app.infrastructure.database.repositories.instrument_repository import InstrumentRepository
+
+_MINUTE_BAR = {
+    "1m": timedelta(minutes=1),
+    "5m": timedelta(minutes=5),
+}
 
 
 @dataclass(frozen=True)
@@ -66,6 +71,7 @@ def compute_watermark_window(
     *,
     end: datetime,
     lookback_days: int = DEFAULT_DEMO_SEED_LOOKBACK_DAYS,
+    timeframe: str = "1d",
 ) -> tuple[datetime, datetime] | None:
     """Return (start, end) to fetch, or None when the symbol is already current."""
     if end.tzinfo is None:
@@ -73,15 +79,20 @@ def compute_watermark_window(
     else:
         end = end.astimezone(timezone.utc)
 
+    bar = _MINUTE_BAR.get(timeframe)
+
     if latest_ts is None:
         start = end - timedelta(days=lookback_days)
     else:
         latest = latest_ts if latest_ts.tzinfo else latest_ts.replace(tzinfo=timezone.utc)
         latest = latest.astimezone(timezone.utc)
-        latest_day = latest.date()
-        start = datetime(latest_day.year, latest_day.month, latest_day.day, tzinfo=timezone.utc) + timedelta(
-            days=1
-        )
+        if bar is not None:
+            start = latest + bar
+        else:
+            latest_day = latest.date()
+            start = datetime(latest_day.year, latest_day.month, latest_day.day, tzinfo=timezone.utc) + timedelta(
+                days=1
+            )
 
     if start > end:
         return None
@@ -89,7 +100,7 @@ def compute_watermark_window(
 
 
 class WatermarkIngestionService:
-    """Incremental ingest from each symbol's last persisted 1d candle."""
+    """Incremental ingest from each symbol's last persisted candle for a timeframe."""
 
     def __init__(
         self,
@@ -121,6 +132,7 @@ class WatermarkIngestionService:
                     latest_ts,
                     end=end,
                     lookback_days=self.lookback_days,
+                    timeframe=timeframe,
                 )
                 if window is None:
                     results.append(

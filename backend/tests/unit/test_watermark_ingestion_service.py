@@ -92,6 +92,25 @@ def test_compute_window_no_history_uses_lookback():
     assert DEFAULT_DEMO_SEED_LOOKBACK_DAYS == 270
 
 
+def test_compute_window_1m_advances_by_one_minute():
+    latest = datetime(2026, 9, 4, 10, 15, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 4, 10, 30, tzinfo=timezone.utc)
+    window = compute_watermark_window(latest, end=end, timeframe="1m")
+    assert window == (datetime(2026, 9, 4, 10, 16, tzinfo=timezone.utc), end)
+
+
+def test_compute_window_1m_already_current_skips():
+    ts = datetime(2026, 9, 4, 10, 30, tzinfo=timezone.utc)
+    assert compute_watermark_window(ts, end=ts, timeframe="1m") is None
+
+
+def test_compute_window_5m_advances_by_five_minutes():
+    latest = datetime(2026, 9, 4, 10, 15, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 4, 11, 0, tzinfo=timezone.utc)
+    window = compute_watermark_window(latest, end=end, timeframe="5m")
+    assert window == (datetime(2026, 9, 4, 10, 20, tzinfo=timezone.utc), end)
+
+
 @pytest.mark.asyncio
 async def test_ingest_symbols_yesterday_fetches_today_only():
     instruments = FakeInstrumentRepo()

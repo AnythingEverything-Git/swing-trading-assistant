@@ -67,6 +67,7 @@ def _job_parameters(payload: OpportunityScanRequest, *, universe_name: str, univ
         "account_equity": str(payload.account_equity) if payload.account_equity is not None else None,
         "risk_percent": str(payload.risk_percent),
         "enable_paper_trading": payload.enable_paper_trading,
+        "filters": payload.filters,
     }
 
 
@@ -381,6 +382,30 @@ async def list_scan_runs(
     for run in runs:
         parameters = run.parameters or {}
         metadata = run.metadata or {}
+        payload = run.result_payload or {}
+        coverage_raw = metadata.get("filter_coverage")
+        if not isinstance(coverage_raw, dict):
+            coverage_raw = payload.get("filter_coverage") if isinstance(payload, dict) else None
+        filter_coverage = None
+        if isinstance(coverage_raw, dict):
+            filter_coverage = {
+                "universe_total": coverage_raw.get("universe_total"),
+                "after_filters": coverage_raw.get("after_filters"),
+                "input_count": coverage_raw.get("input_count"),
+                "output_count": coverage_raw.get("output_count"),
+                "dropped": coverage_raw.get("dropped"),
+            }
+        eligible_count = metadata.get("eligible_count")
+        if eligible_count is None:
+            eligible_count = run.result_count
+        top_count = metadata.get("top_count")
+        if top_count is None and isinstance(payload, dict):
+            top = payload.get("top")
+            if isinstance(top, list):
+                top_count = len(top)
+        symbols_scanned = metadata.get("symbols_scanned")
+        if symbols_scanned is None and isinstance(payload, dict):
+            symbols_scanned = payload.get("symbols_scanned")
         summaries.append(
             ScanRunSummaryResponse(
                 id=run.id,
@@ -389,9 +414,12 @@ async def list_scan_runs(
                 universe_name=parameters.get("universe_name"),
                 universe_version=run.universe_version,
                 result_count=run.result_count,
-                symbols_scanned=metadata.get("symbols_scanned"),
+                symbols_scanned=symbols_scanned,
                 data_source=parameters.get("data_source") or metadata.get("data_source"),
                 status=run.status,
+                eligible_count=eligible_count,
+                top_count=top_count,
+                filter_coverage=filter_coverage,
             )
         )
     return summaries
