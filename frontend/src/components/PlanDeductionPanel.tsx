@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { DeductionStep } from '../planDeduction'
 
 type Props = {
   symbol: string
   steps: DeductionStep[]
   baseUrl: string
-  onClose?: () => void
-  /** Wireframe-style tile: shorter intro, denser steps. */
+  onClose: () => void
+  /** @deprecated Modal always shows full steps; kept for call-site compatibility. */
   compact?: boolean
 }
 
@@ -16,8 +17,25 @@ type RephraseState = {
   detail?: string | null
 }
 
-export function PlanDeductionPanel({ symbol, steps, baseUrl, onClose, compact = false }: Props) {
+/** UC-E4 / Inspect — Strategy Steps modal (engine facts; AI may polish wording only). */
+export function PlanDeductionPanel({ symbol, steps, baseUrl, onClose }: Props) {
   const [view, setView] = useState<RephraseState>({ steps, provider: 'loading' })
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   useEffect(() => {
     let cancelled = false
@@ -50,7 +68,6 @@ export function PlanDeductionPanel({ symbol, steps, baseUrl, onClose, compact = 
         }
         if (cancelled) return
         const next = Array.isArray(payload.steps) && payload.steps.length === steps.length ? payload.steps : steps
-        // Lock titles/values to the rules-built source even if the API echoed them.
         const locked = next.map((step, index) => ({
           id: steps[index].id,
           title: steps[index].title,
@@ -74,16 +91,22 @@ export function PlanDeductionPanel({ symbol, steps, baseUrl, onClose, compact = 
     }
   }, [baseUrl, steps, symbol])
 
-  return (
+  return createPortal(
     <div
-      className={`plan-deduction${compact ? ' is-compact' : ''}`}
-      role="region"
-      aria-label={`How decided ${symbol}`}
+      className="strategy-steps-overlay"
+      role="presentation"
+      onClick={onClose}
     >
-      {!compact ? (
+      <div
+        className="strategy-steps-modal plan-deduction"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="strategy-steps-title"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="plan-deduction-head">
           <div>
-            <h4>How decided · {symbol}</h4>
+            <h4 id="strategy-steps-title">Strategy Steps · {symbol}</h4>
             <p>
               Numbers and conclusions come only from strategy rules. AI may polish wording — it cannot change
               levels, risk math, or the trade plan.
@@ -96,52 +119,28 @@ export function PlanDeductionPanel({ symbol, steps, baseUrl, onClose, compact = 
                   : 'Showing strategy wording (AI polish unavailable or unchanged)'}
             </p>
           </div>
-          {onClose ? (
-            <button type="button" className="ghost-btn" onClick={onClose} aria-label="Close">
-              ×
-            </button>
-          ) : null}
+          <button type="button" className="ghost-btn capital-risk-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
         </div>
-      ) : (
-        <p className="plan-deduction-compact-meta" aria-live="polite">
-          {view.provider === 'loading'
-            ? 'Polishing wording…'
-            : view.provider === 'gemini'
-              ? 'Facts locked · wording polished'
-              : 'Facts locked to strategy rules'}
-        </p>
-      )}
-      <ol className="plan-deduction-steps">
-        {view.steps.map((step, index) => (
-          <li key={step.id} className="plan-deduction-step">
-            <div className="plan-deduction-step-top">
-              <strong>
-                {compact ? (
-                  <>
-                    <span className="plan-deduction-index">{index + 1}</span>
-                    {step.title.replace(/^\d+\.\s*/, '')}
-                  </>
-                ) : (
-                  step.title
-                )}
-              </strong>
-              <span className="plan-deduction-value">{step.value}</span>
-            </div>
-            {compact ? (
+        <ol className="plan-deduction-steps">
+          {view.steps.map((step) => (
+            <li key={step.id} className="plan-deduction-step">
+              <div className="plan-deduction-step-top">
+                <strong>{step.title}</strong>
+                <span className="plan-deduction-value">{step.value}</span>
+              </div>
               <p className="plan-deduction-summary">{step.summary}</p>
-            ) : (
-              <>
-                <p className="plan-deduction-summary">{step.summary}</p>
-                <ul>
-                  {step.details.map((line, detailIndex) => (
-                    <li key={`${step.id}-${detailIndex}`}>{line}</li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </li>
-        ))}
-      </ol>
-    </div>
+              <ul>
+                {step.details.map((line, detailIndex) => (
+                  <li key={`${step.id}-${detailIndex}`}>{line}</li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>,
+    document.body,
   )
 }

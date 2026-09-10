@@ -1,0 +1,13 @@
+.dockerignore
+.git
+.venv
+venv
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc
+.pytest_cache
+docs/wireframes
+.env
+.env.local
+frontend/.env.local

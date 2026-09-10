@@ -712,7 +712,7 @@ export function StockDetailDrawer({
           {activeTab === 'overview' && overview && (
             <div className="detail-stack">
               {groundedInsight && (
-                <section className="detail-block grounded-insight-card">
+                <section className="detail-block grounded-insight-card ai-prose">
                   <h3>
                     {groundedInsight.title}
                     {groundedInsight.provider === 'gemini' || groundedInsight.provider === 'llm' ? (

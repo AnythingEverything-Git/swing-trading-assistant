@@ -1,0 +1,17 @@
+# Local / laptop Compose overlay — demo + development (never use on the VPS).
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# AWS release: use docker-compose.yml alone with /opt/tradepilot/.env (production + upstox).
+
+services:
+  api:
+    environment:
+      ENVIRONMENT: development
+      MARKET_DATA_SOURCE: demo
+      MARKET_DATA_REFRESH_ENABLED: "false"
+      INTRADAY_1M_REFRESH_ENABLED: "false"
+      MARKET_DATA_REFRESH_UNIVERSE: NIFTY_50
+      INTRADAY_1M_REFRESH_UNIVERSE: NIFTY_50
+      INTRADAY_1M_REFRESH_LIMIT: "50"
+      FRONTEND_BASE_URL: http://127.0.0.1:5173

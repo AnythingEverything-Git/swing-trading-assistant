@@ -120,3 +120,33 @@ export function readDeepLinkParams(search = window.location.search): {
     symbol: params.get('symbol'),
   }
 }
+
+export async function sendBriefEmail(
+  baseUrl: string,
+  body: { mode: 'morning' | 'eod'; scan_run_id?: number },
+): Promise<{
+  email_sent: boolean
+  detail: string
+  subject?: string | null
+  recipients?: string[]
+  scan_run_id?: number | null
+  provider?: string | null
+}> {
+  const response = await fetch(`${baseUrl}/api/v1/alerts/brief/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error(detailFromErrorPayload(payload, 'Failed to send brief email'))
+  }
+  return payload as {
+    email_sent: boolean
+    detail: string
+    subject?: string | null
+    recipients?: string[]
+    scan_run_id?: number | null
+    provider?: string | null
+  }
+}

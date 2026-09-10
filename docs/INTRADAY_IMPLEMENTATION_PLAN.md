@@ -111,7 +111,7 @@ backend/app/domain/intraday/
 | Task | Status |
 |------|--------|
 | H1 Nav **Intraday** desk | ✅ |
-| H2 Session run → ledger / fills / closes + recent list | ✅ beginner labels, Top ideas, How decided, CSV, universe presets |
+| H2 Session run → ledger / fills / closes + recent list | ✅ beginner labels, Top ideas, Strategy Steps, CSV, universe presets |
 | H3 Charts 1m/5m OR levels | ✅ 1m + 5m evidence chart |
 | G1–G2 Practice | ✅ + live LTP tick + divergence |
 | J2 Walk-forward + MFE/MAE | ✅ CLI + engine |

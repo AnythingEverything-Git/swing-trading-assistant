@@ -25,6 +25,7 @@ class SetupFingerprint:
     entry: Decimal | None = None
     stop: Decimal | None = None
     target: Decimal | None = None
+    setup_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -76,9 +77,45 @@ def fingerprint_from_opportunity_payload(
             entry=entry,
             stop=Decimal(str(candidate.get("stop_loss"))),
             target=Decimal(str(candidate.get("target"))),
+            setup_name=str(candidate.get("setup_name") or item.get("setup_name") or "BreakoutRetest"),
         )
     except Exception:
         return None
+
+
+def fingerprint_from_strategy_result(
+    symbol: str,
+    *,
+    direction: str,
+    confirmation_time: datetime,
+    entry: Decimal,
+    stop: Decimal,
+    target: Decimal,
+    risk_reward_ratio: Decimal,
+    atr_value: Decimal | None,
+    setup_name: str | None = None,
+    quality_score: Decimal | None = None,
+    volume_thrust: Decimal | None = None,
+    retest_tightness: Decimal | None = None,
+    risk_percent: Decimal | None = None,
+) -> SetupFingerprint:
+    atr = atr_value or Decimal("0")
+    atr_pct = (atr / entry * Decimal("100")) if entry else Decimal("0")
+    return SetupFingerprint(
+        symbol=symbol.upper(),
+        direction=direction.upper(),
+        confirmation_time=confirmation_time,
+        quality_score=quality_score or Decimal("0"),
+        volume_thrust=volume_thrust or Decimal("1"),
+        retest_tightness=retest_tightness or Decimal("1"),
+        risk_percent=risk_percent or Decimal("0"),
+        atr_percent=atr_pct.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+        risk_reward_ratio=risk_reward_ratio,
+        entry=entry,
+        stop=stop,
+        target=target,
+        setup_name=setup_name or "BreakoutRetest",
+    )
 
 
 def fingerprint_distance(a: SetupFingerprint, b: SetupFingerprint) -> Decimal:

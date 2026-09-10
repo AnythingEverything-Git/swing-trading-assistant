@@ -56,7 +56,7 @@ Shared chrome: TradePilot · Swing · Intraday · Research · Practice · Accoun
 | [uc-e1-morning-board.png](./uc-e1-morning-board.png) | UC-E1 Morning board |
 | [uc-e2-pre-or-watchlist.png](./uc-e2-pre-or-watchlist.png) | UC-E2 Pre-09:20 eligibility |
 | [uc-e3-session-ledger.png](./uc-e3-session-ledger.png) | UC-E3 Session ledger |
-| [uc-e4-or-evidence.png](./uc-e4-or-evidence.png) | UC-E4 OR evidence + How decided |
+| [uc-e4-or-evidence.png](./uc-e4-or-evidence.png) | UC-E4 OR evidence + Strategy Steps |
 | [uc-e5-practice-fills.png](./uc-e5-practice-fills.png) | UC-E5/E6 Practice fills vs model |
 | [uc-e7-session-csv.png](./uc-e7-session-csv.png) | UC-E7 CSV & recent sessions |
 

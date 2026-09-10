@@ -157,7 +157,12 @@ export function OrbChart({ candles, levels }: { candles: ChartCandle[]; levels: 
   }
 
   return (
-    <div className="setup-chart orb-chart" role="img" aria-label="Opening range breakout chart">
+    <div
+      className="setup-chart orb-chart"
+      role="img"
+      aria-label="Opening range breakout chart"
+      style={{ ['--setup-chart-height' as string]: '320px' }}
+    >
       <div className="setup-chart-host" ref={hostRef} />
     </div>
   )

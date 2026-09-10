@@ -79,6 +79,32 @@ class TechnicalSnapshot:
     indicators: tuple[IndicatorReading, ...]
     pivots: PivotLevels | None
     volume_vs_sma: Decimal | None
+    support: Decimal | None = None
+    resistance: Decimal | None = None
+    trendline: Decimal | None = None
+    atr: Decimal | None = None
+    swing_fit: str = "—"
+    swing_eligible: bool = False
+
+
+def _swing_fit_from_indicators(indicators: Sequence[IndicatorReading]) -> tuple[str, bool]:
+    """Coarse swing fit badge from indicator consensus (engine evaluate still owns levels)."""
+    if not indicators:
+        return "—", False
+    bullish = 0
+    bearish = 0
+    for item in indicators:
+        signal = (item.signal or "").lower()
+        if signal in {"bullish", "oversold", "high"}:
+            bullish += 1
+        elif signal in {"bearish", "overbought", "low"}:
+            bearish += 1
+    edge = abs(bullish - bearish)
+    if edge >= 3:
+        return "High", True
+    if edge >= 2:
+        return "Moderate", bullish > bearish
+    return "Low", False
 
 
 def classic_pivots(candle: Candle) -> PivotLevels:
@@ -202,6 +228,7 @@ def build_technical_snapshot(symbol: str, timeframe: str, candles: Sequence[Cand
     )
 
     pivots = classic_pivots(candles[-2]) if len(candles) >= 2 else classic_pivots(last)
+    swing_fit, swing_eligible = _swing_fit_from_indicators(indicators)
     return TechnicalSnapshot(
         symbol=symbol,
         timeframe=timeframe,
@@ -209,6 +236,12 @@ def build_technical_snapshot(symbol: str, timeframe: str, candles: Sequence[Cand
         indicators=indicators,
         pivots=pivots,
         volume_vs_sma=volume_ratio,
+        support=pivots.support_1,
+        resistance=pivots.resistance_1,
+        trendline=_q(ema20_last),
+        atr=_q(atr_last),
+        swing_fit=swing_fit,
+        swing_eligible=swing_eligible,
     )
 
 

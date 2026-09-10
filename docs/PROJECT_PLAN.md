@@ -242,7 +242,8 @@ Detail drawer tabs → /api/v1/research/{symbol}/… (+ optional Gemini insight)
 9. Capital strip: starting / invested / remaining / account value (remaining updates when trades close).
 10. Open trades show **running timer** and **estimated profit-by date** from candle drift + ATR outlook (`GET /api/v1/paper/outlook`).
 
-Operator walkthrough: [RELEASE_SMOKE.md](RELEASE_SMOKE.md).
+Operator walkthrough: [RELEASE_SMOKE.md](RELEASE_SMOKE.md).  
+Personal live ops (no demo): [LIVE_OPS.md](LIVE_OPS.md) · [OPS_SCHEDULERS.md](OPS_SCHEDULERS.md) · **always-on VPS:** [ops/vps/README.md](../ops/vps/README.md).
 
 ---
 
@@ -267,11 +268,11 @@ Track against [`TRADEPILOT_PRODUCT_USE_CASES.md`](./TRADEPILOT_PRODUCT_USE_CASES
 | C5 | Practice from scan (`POST /paper/arm`) | ✅ |
 | C6 | Scan history (dedicated Swing screen) | ✅ |
 | C7 | Auto-refresh bar + countdown | ✅ |
-| D1+ | Research symbol workspace (first-class) | 🔄 drawer today · next wireframe pass |
-| E* | Intraday desk polish vs wireframes | 🔄 product live · wireframe alignment ongoing |
-| F* | Copilot / coach surfaces | 🔄 APIs + partial UI |
+| D1+ | Research symbol workspace (first-class) | ✅ UC-D1 Symbol Workspace desk |
+| E* | Intraday desk polish vs wireframes | ✅ UC-E0–E7 wireframe parity |
+| F* | Copilot / coach surfaces | ⏸ UI removed for now (APIs retained) |
 
-**Next UI pass:** UC-D1 Symbol workspace (and remaining D/F sellable surfaces), then deepen Intraday E-series wireframe parity.
+**Next UI pass:** Copilot F1/F6 still deferred; F2 panel · F5 Brief · F7 glossary · F8 interpreter · F9 Risk · F10 Compare shipped without chat.
 
 ---
 
@@ -418,8 +419,8 @@ Implementation plan: [`INTRADAY_IMPLEMENTATION_PLAN.md`](./INTRADAY_IMPLEMENTATI
 | P11.4 | Practice from scan (`/paper/arm`) | ✅ UC-C5 |
 | P11.5 | Scan history dedicated screen + CSV | ✅ UC-C6 |
 | P11.6 | Auto-refresh bar + countdown + pause rules | ✅ UC-C7 |
-| P11.7 | Research workspace D-series wireframe parity | 🔄 next |
-| P11.8 | Copilot / coach F-series surfaces | 🔄 next |
+| P11.7 | Research workspace D-series wireframe parity | ✅ UC-D1–D7 complete |
+| P11.8 | Copilot / coach F-series surfaces | ⏸ UI removed for now |
 
 Swing `1d` BreakoutRetest desk remains default and unchanged.
 
@@ -455,7 +456,7 @@ P11 Sellable wireframe UI (A–C7)          ✅ through UC-C7; D/F next
 | P8 | Done |
 | P9 | Done |
 | P10 | In progress — product + NSE master + PIT eligibility done; cert NO_GO until multi-year 1m |
-| P11 | Done through UC-C7 — Research D-series + Copilot F-series next |
+| P11 | Done through UC-C7 + D1–D7 + E0–E7 — Copilot UI deferred |
 
 ---
 

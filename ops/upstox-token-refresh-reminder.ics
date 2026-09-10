@@ -1,0 +1,36 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//TradePilot//Live Ops//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+BEGIN:VTIMEZONE
+TZID:Asia/Kolkata
+X-LIC-LOCATION:Asia/Kolkata
+BEGIN:STANDARD
+TZOFFSETFROM:+0530
+TZOFFSETTO:+0530
+TZNAME:IST
+DTSTART:19700101T000000
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:tradepilot-upstox-token-refresh@swing-trading-assistant
+DTSTAMP:20260909T123000Z
+DTSTART;TZID=Asia/Kolkata:20260910T083000
+DTEND;TZID=Asia/Kolkata:20260910T084000
+RRULE:FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR
+SUMMARY:TradePilot — refresh Upstox token if needed
+DESCRIPTION:1) Check UI Live banner /api/v1/product/status live_ready\n2) If not live or 401s: mint new UPSTOX_ACCESS_TOKEN\n3) Paste into repo .env\n4) Restart API (python run_api.py --host 127.0.0.1 --port 8001)\nSee docs/LIVE_OPS.md
+STATUS:CONFIRMED
+END:VEVENT
+BEGIN:VEVENT
+UID:tradepilot-market-hours-api@swing-trading-assistant
+DTSTAMP:20260909T123000Z
+DTSTART;TZID=Asia/Kolkata:20260910T084500
+DTEND;TZID=Asia/Kolkata:20260910T085500
+RRULE:FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR
+SUMMARY:TradePilot — start API for market hours
+DESCRIPTION:Start Postgres + API before open. Leave API up through 16:15 IST for 1m loop + 1d NSE_ALL watermark.\nSee docs/LIVE_OPS.md
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR

@@ -59,7 +59,6 @@ flowchart TB
   Home --> Intraday[Intraday_Desk]
   Home --> Research[Research_FA_TA]
   Home --> Book[Practice_Book]
-  Home --> AI[AI_Copilot]
   Home --> Settings[Settings_Filters_Alerts]
   Swing --> Find[Find_Setups]
   Swing --> History[Scan_History]
@@ -237,11 +236,11 @@ flowchart LR
 
 #### UC-C2 — Inspect eligible plan
 **Goal:** Understand one setup completely.  
-**Status:** [Today] InspectPlanDesk — Setup details · How decided · Price action · coverage footer  
+**Status:** [Today] InspectPlanDesk — Setup details · Strategy Steps · Price action · coverage footer  
 **Wireframe asset:** [./wireframes/uc-c2-inspect-plan.png](./wireframes/uc-c2-inspect-plan.png)
 
 
-**Flow:** Open plan from Top ideas / Results → Entry/SL/Target/R:R/qty → How decided steps → chart markers → Full research drawer optional.  
+**Flow:** Open plan from Top ideas / Results → Entry/SL/Target/R:R/qty → Strategy Steps → chart markers → Full research drawer optional.  
 **Acceptance:** Levels match scan evidence; qty from capital+risk %; chart shows entry/stop/target lines + B/R/C markers. · Chart evidence → UC-C3.
 
 ---
@@ -300,11 +299,14 @@ flowchart LR
 
 #### UC-D1 — Symbol workspace hub
 **Goal:** FA + TA for any NSE symbol matching search/filters.  
-**Status:** [Today] drawer tabs · [Target] first-class Research desk  
+**Status:** [Today] First-class Symbol Workspace desk · tabs · chart + Evaluate/Backtest · FA snapshot · grounded insight  
 
 **Wireframe asset:** [uc-d1-symbol-workspace.png](./wireframes/uc-d1-symbol-workspace.png)
 
-**Tabs:** Overview · Technical · Fundamentals · News & Events · F&O · Similar  
+**Tabs:** Overview · Technical · Fundamentals · News & Events · F&O · Similar · Evaluate
+
+**Flow:** Search NSE symbol → Load → Overview chart with Entry/Stop/Target when evaluate finds a setup → FA snapshot + technical fit + grounded insight.  
+**API:** research overview/technical/news/fno/similar/insight · candles · `POST /strategy/evaluate` · `POST /backtest/run`  
 
 ```mermaid
 flowchart TB
@@ -318,7 +320,7 @@ flowchart TB
 
 #### UC-D2 — Technical tab
 **Goal:** Structure, S/R, ATR context, setup fit (swing and/or ORB eligibility snapshot).  
-**Status:** [Today] technical service · [Target] dual-strategy fit badges  
+**Status:** [Today] Technical tab · Price Chart (S/R + EMA trendline) · Technical Panel (ATR, swing fit, eligible, ORB snapshot/armed) · Evaluate/Backtest  
 **Wireframe asset:** [./wireframes/uc-d2-technical-tab.png](./wireframes/uc-d2-technical-tab.png)
 
 
@@ -326,7 +328,7 @@ flowchart TB
 
 #### UC-D3 — Fundamentals / overview
 **Goal:** Business snapshot + caution flags (not a full DCF).  
-**Status:** [Today] overview · [Target] sellable FA pack (sector, quality flags, blackout)  
+**Status:** [Today] Fundamentals tab · business snapshot (sector, quality flags, caution) · FA proxy metrics table · Evaluate/Backtest  
 **Wireframe asset:** [./wireframes/uc-d3-fundamentals.png](./wireframes/uc-d3-fundamentals.png)
 
 
@@ -334,21 +336,21 @@ flowchart TB
 
 #### UC-D4 — News & events / CA calendar
 **Goal:** Avoid trading through dangerous events.  
-**Status:** [Today] news tab · [Target] CA block wired to eligibility  
+**Status:** [Today] News Events tab · news list · corporate-actions calendar · trading caution · Eligibility/Filters handoff  
 **Wireframe asset:** [./wireframes/uc-d4-news-events.png](./wireframes/uc-d4-news-events.png)
 
 
 ---
 
 #### UC-D5 — F&O context
-**Status:** [Today] F&O tab when data available  
+**Status:** [Today] F&O Context tab · chain / Unavailable · premium · OI change · PCR · wall levels  
 **Wireframe asset:** [./wireframes/uc-d5-fno-context.png](./wireframes/uc-d5-fno-context.png)
 
 
 ---
 
 #### UC-D6 — Similar setups / peers
-**Status:** [Today] similar setups  
+**Status:** [Today] Similar tab · peer cards · Entry/Stop/score · setup family · Compare · grounded-only note  
 **Wireframe asset:** [./wireframes/uc-d6-similar-peers.png](./wireframes/uc-d6-similar-peers.png)
 
 
@@ -356,7 +358,7 @@ flowchart TB
 
 #### UC-D7 — Single-symbol evaluate + backtest
 **Goal:** Run strategy on one name; interpret metrics with grounded AI.  
-**Status:** [Today] research evaluate/backtest path  
+**Status:** [Today] Evaluate tab · strategy/date controls · chart + Entry/SL/Target · Results (win/trades/Avg R/Max DD) · Backtest interpreter  
 **Wireframe asset:** [./wireframes/uc-d7-evaluate-backtest.png](./wireframes/uc-d7-evaluate-backtest.png)
 
 
@@ -368,9 +370,13 @@ flowchart TB
 
 **Desk overview wireframe:** [uc-e0-intraday-desk-overview.png](./wireframes/uc-e0-intraday-desk-overview.png)
 
+#### UC-E0 — Intraday desk overview
+**Goal:** One desk composition — toolbar → morning/eligibility board → outcome chips → ready table → ledger/fills/practice → recent sessions.  
+**Status:** [Today] First-class Intraday desk · Morning board / Run session CTAs · Filters · Coverage · More · footer disclaimer  
+
 #### UC-E1 — Morning board (one-click)
 **Goal:** Before/during session, see eligible NSE names; **stocks and ETFs ranked separately**.  
-**Status:** [Today] morning board + auto-refresh  
+**Status:** [Today] Morning board · phase pill · dual Top-N tables · auto-refresh · Strategy Steps (board facts) · blocked sample / hint  
 
 **Wireframe asset:** [uc-e1-morning-board.png](./wireframes/uc-e1-morning-board.png)
 
@@ -381,7 +387,7 @@ flowchart TB
 
 #### UC-E2 — Pre-09:20 eligibility watchlist
 **Goal:** ADV / surveillance / CA / short flags before OR completes.  
-**Status:** [Today] phase-aware board  
+**Status:** [Today] Phase-aware Eligibility watchlist · ADV band · Surveillance · CA label · Short-allow · OK / Pending OR / Blocked · provisional note  
 
 **Wireframe asset:** [./wireframes/uc-e2-pre-or-watchlist.png](./wireframes/uc-e2-pre-or-watchlist.png)
 
@@ -389,40 +395,40 @@ flowchart TB
 
 #### UC-E3 — Run session / ledger
 **Goal:** Full day ORB simulation or live path ledger.  
-**Status:** [Today]  
+**Status:** [Today] Outcome chips · KPI strip · Ready to trade · Symbol ledger · fills (time/side/fill id) · finished · Pro reason mix  
 
 **Wireframe asset:** [uc-e3-session-ledger.png](./wireframes/uc-e3-session-ledger.png)
 
 **Outcome chips:** ALL · TRADED · ARMED · BLOCKED · SKIPPED  
 **Pro:** reason codes + coverage % + reason mix.  
-**UI:** Swing-style ready table (rank badge · direction pill · How decided) + symbol ledger / fills / finished trades.
+**UI:** Swing-style ready table (rank badge · direction pill · Strategy Steps) + symbol ledger / fills / finished trades.
 
 ---
 
 #### UC-E4 — OR evidence chart (1m / 5m)
-**Status:** [Today] OrbChart + PlanDeductionPanel  
+**Status:** [Today] OrbChart + PlanDeductionPanel modal · 1m/5m · OR facts · Strategy Steps without session  
 
 **Wireframe asset:** [uc-e4-or-evidence.png](./wireframes/uc-e4-or-evidence.png)
 
 ---
 
 #### UC-E5 — Practice seed / LTP tick / 15:10
-**Status:** [Today]  
-**Note:** V1 has **no profit target**—stop or 15:10 flatten only.
+**Status:** [Today] Seed · Tick LTP · Flatten 15:10 · duration timer on open rows · no profit target  
 
 **Wireframe asset:** [uc-e5-practice-fills.png](./wireframes/uc-e5-practice-fills.png)
 
 ---
 
 #### UC-E6 — Practice vs model + reconcile
-**Status:** [Today] divergence · reconcile halt stub  
+**Status:** [Today] Divergence table · `GET .../practice/reconcile` · halt disables seed/tick  
 
 **Wireframe:** covered with UC-E5 ([uc-e5-practice-fills.png](./wireframes/uc-e5-practice-fills.png))
 
 ---
 
 #### UC-E7 — CSV & recent sessions
-**Status:** [Today]  
+**Status:** [Today] Recent sessions table · Open · Export CSV · selected session Export  
+
 **Wireframe asset:** [./wireframes/uc-e7-session-csv.png](./wireframes/uc-e7-session-csv.png)
 
 
@@ -445,14 +451,23 @@ flowchart TB
 | Compare two names | Yes — grounded fields | Fabricate peer metrics |
 
 #### UC-F1 — Explain this setup
-**Status:** [Today] narrative · [Target] Copilot rail everywhere  
+**Goal:** Grounded explanation of one engine setup (Entry/SL/Target + why eligible).  
+**Status:** [Paused] Copilot UI / AI chat removed from product shell for now (backend ask API retained)  
 **Wireframe asset:** [./wireframes/uc-f1-explain-setup.png](./wireframes/uc-f1-explain-setup.png)
 
+**Flow:** Select setup from Find Setups (or picker) → Copilot explains from engine evidence only → Quick actions or free-form ask (refuse invented prices).  
+**API:** `POST /api/v1/ai/ask` (grounded refusals) · scan narrative / evidence fields  
 
+---
 #### UC-F2 — Invalidation in plain English
-**Status:** [Today]  
+**Goal:** Explain why a setup is blocked or how it invalidates — plain English + checklist; never override CONFIG_V1.  
+**Status:** [Today] Find Setups invalidation panel (engine facts only · no chat)  
 **Wireframe asset:** [./wireframes/uc-f2-invalidation.png](./wireframes/uc-f2-invalidation.png)
 
+**Flow:** Select setup → structured invalidation panel from engine facts only.  
+**API:** scan `invalidation` / `quality_reason` (no Copilot chat)
+
+---
 
 #### UC-F3 — Plan deduction steps
 **Status:** [Today] PlanDeductionPanel  
@@ -465,12 +480,12 @@ flowchart TB
 **Wireframe asset:** [./wireframes/uc-f4-data-quality.png](./wireframes/uc-f4-data-quality.png)
 
 #### UC-F5 — Morning / EOD brief
-**Status:** [Today] email/scripts · [Target] in-app brief center  
+**Status:** [Today] in-app Brief center (template from latest scan · Copy / SES Send email)  
 
 **Wireframe asset:** [./wireframes/uc-f5-brief-center.png](./wireframes/uc-f5-brief-center.png)
 
 #### UC-F6 — Ask TradePilot (scoped Q&A)
-**Status:** [Target]  
+**Status:** [Paused] Copilot deferred  
 
 **Wireframe asset:** [uc-f6-ai-copilot.png](./wireframes/uc-f6-ai-copilot.png)
 
@@ -484,22 +499,22 @@ flowchart LR
 **Acceptance:** If user asks for a price level not in evidence → refuse and point to engine.
 
 #### UC-F7 — Beginner coach mode
-**Status:** [Today] terminology · [Target] hover glossary + coach prompts  
+**Status:** [Today] Home Guided glossary tips (RVOL / safety exit / intraday exits)  
 **Wireframe asset:** [./wireframes/uc-f7-beginner-coach.png](./wireframes/uc-f7-beginner-coach.png)
 
 
 #### UC-F8 — Backtest interpreter
-**Status:** [Today] narrative path  
+**Status:** [Today] Research Evaluate interpreter (templated metrics · refuse retune V1)  
 
 **Wireframe asset:** [./wireframes/uc-f8-backtest-interpreter.png](./wireframes/uc-f8-backtest-interpreter.png)
 
 #### UC-F9 — Risk coach
-**Status:** [Target]  
+**Status:** [Today] Account → Risk + Capital modal sizing math  
 
 **Wireframe asset:** [./wireframes/uc-f9-risk-coach.png](./wireframes/uc-f9-risk-coach.png)
 
 #### UC-F10 — Compare two names
-**Status:** [Target]  
+**Status:** [Today] Compare desk + Research Compare tab (grounded fields only)  
 
 **Wireframe asset:** [./wireframes/uc-f10-compare-names.png](./wireframes/uc-f10-compare-names.png)
 
@@ -509,35 +524,35 @@ flowchart LR
 
 #### UC-G1 — Unified practice book
 **Goal:** One place for swing + intraday practice.  
-**Status:** [Today] separate views · [Target] unified book  
+**Status:** [Today] unified Practice book (Swing/Intraday tabs, stats, claim, detail + pause timer)
 
 **Wireframe asset:** [uc-g1-practice-book.png](./wireframes/uc-g1-practice-book.png)
 
 ---
 
 #### UC-G2 — Alerts preferences
-**Status:** [Today] browser notify + SES ops · [Target] settings UI for email cadence  
+**Status:** [Today] Account → Alerts (browser/email/SES/morning/EOD + frequency + preview)  
 **Wireframe asset:** [./wireframes/uc-g2-alerts.png](./wireframes/uc-g2-alerts.png)
 
 
 ---
 
 #### UC-G3 — Theme & refresh intervals
-**Status:** [Today] theme + intervals  
+**Status:** [Today] Account → Appearance (Light/Dark/System + swing/intraday/practice refresh)  
 **Wireframe asset:** [./wireframes/uc-g3-theme-refresh.png](./wireframes/uc-g3-theme-refresh.png)
 
 
 ---
 
 #### UC-G4 — Export / audit trail
-**Status:** [Today] CSV · [Target] signed audit of scans/sessions for sellable SKU  
+**Status:** [Today] Account → Export (scan/session/practice audit table + CSV + audit pack)  
 **Wireframe asset:** [./wireframes/uc-g4-export-audit.png](./wireframes/uc-g4-export-audit.png)
 
 
 ---
 
 #### UC-G5 — Account login & plans *(sellable shell)*
-**Status:** [Target] wireframe-only until auth ships  
+**Status:** [Today] Account → Plans (stub login + Free/Pro/Desk selection; auth still stub)  
 **Wireframe asset:** [./wireframes/uc-g5-account-plans.png](./wireframes/uc-g5-account-plans.png)
 
 
@@ -550,7 +565,7 @@ flowchart TB
 ---
 
 #### UC-G6 — Broker connect / paper-only modes
-**Status:** [Target] disclaimer-first; paper default  
+**Status:** [Today] Account → Broker (paper default; connect stub + ack gate)  
 **Wireframe asset:** [./wireframes/uc-g6-broker-connect.png](./wireframes/uc-g6-broker-connect.png)
 
 
@@ -563,7 +578,7 @@ flowchart TB
 ### Journey J1 — Beginner morning (Guided)
 1. Home → set capital  
 2. Filters preset *Liquid large-cap*  
-3. Swing Find setups → open Top idea → How decided → optional Practice  
+3. Swing Find setups → open Top idea → Strategy Steps → optional Practice  
 4. Optional AI: “Explain this setup”
 
 ### Journey J2 — Intraday pro open
@@ -621,7 +636,7 @@ flowchart TB
 | C Swing | Nifty scan desk | NSE_ALL + filters |
 | D Research | Drawer | First-class FA+TA workspace |
 | E Intraday | ORB desk | Same + filter parity |
-| F AI | Narratives / briefs | Copilot + Ask TradePilot |
+| F AI | Copilot UI paused | Copilot F-series when re-enabled |
 | G Product shell | Partial | Unified book + auth wireframes |
 
 ---

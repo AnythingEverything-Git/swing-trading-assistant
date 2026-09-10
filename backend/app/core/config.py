@@ -41,6 +41,7 @@ Process environment variables still take precedence over the `.env` file.
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -105,6 +106,38 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+
+def _database_host(database_url: str) -> str:
+    """Best-effort host from a SQLAlchemy URL (handles postgresql+psycopg://)."""
+    raw = (database_url or "").strip()
+    if not raw:
+        return ""
+    # urlparse needs a standard scheme; strip SQLAlchemy driver suffix.
+    normalized = raw.replace("postgresql+psycopg", "postgresql", 1)
+    return (urlparse(normalized).hostname or "").lower()
+
+
+def validate_runtime_settings(settings: Settings) -> None:
+    """Refuse unsafe environment mixes (production must be live; local DB stays local)."""
+    env = (settings.environment or "").strip().lower()
+    source = (settings.market_data_source or "").strip().lower()
+
+    if env == "production" and source == "demo":
+        raise RuntimeError(
+            "ENVIRONMENT=production forbids MARKET_DATA_SOURCE=demo. "
+            "AWS release must use MARKET_DATA_SOURCE=upstox with UPSTOX_ACCESS_TOKEN."
+        )
+
+    if env == "development":
+        host = _database_host(settings.database_url)
+        allowed = {"localhost", "127.0.0.1", "postgres", ""}
+        if host and host not in allowed:
+            raise RuntimeError(
+                f"ENVIRONMENT=development refuses DATABASE_URL host {host!r}. "
+                "Use localhost/127.0.0.1 (or compose service 'postgres'). "
+                "Do not point the local API at the AWS database."
+            )
 
 
 def get_settings() -> Settings:

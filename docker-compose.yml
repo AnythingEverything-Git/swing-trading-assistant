@@ -1,15 +1,62 @@
-version: '3.8'
+# TradePilot always-on stack (Postgres + API + production UI).
+# Local or Linux VPS. See ops/vps/README.md for provision + cron.
+# Production UI: http://<EIP>/  (nginx proxies /api to the API service)
+
 services:
   postgres:
     image: postgres:15
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: swingdb
+    # Bind to localhost only — do not expose Postgres to the public internet on a VPS.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d swingdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # In-compose DB host (overrides laptop localhost DATABASE_URL from .env)
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/swingdb
+      MARKET_DATA_SOURCE: ${MARKET_DATA_SOURCE:-upstox}
+      MARKET_DATA_REFRESH_ENABLED: ${MARKET_DATA_REFRESH_ENABLED:-true}
+      MARKET_DATA_REFRESH_TIME: ${MARKET_DATA_REFRESH_TIME:-16:15}
+      MARKET_DATA_REFRESH_UNIVERSE: ${MARKET_DATA_REFRESH_UNIVERSE:-NSE_ALL}
+      MARKET_DATA_REFRESH_RUN_ON_STARTUP: ${MARKET_DATA_REFRESH_RUN_ON_STARTUP:-false}
+      INTRADAY_1M_REFRESH_ENABLED: ${INTRADAY_1M_REFRESH_ENABLED:-true}
+      INTRADAY_1M_REFRESH_INTERVAL_SEC: ${INTRADAY_1M_REFRESH_INTERVAL_SEC:-600}
+      INTRADAY_1M_REFRESH_UNIVERSE: ${INTRADAY_1M_REFRESH_UNIVERSE:-NSE_ALL}
+      INTRADAY_1M_REFRESH_LIMIT: ${INTRADAY_1M_REFRESH_LIMIT:-3000}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://127.0.0.1}
+    ports:
+      - "${API_PORT:-8001}:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Persist / update universe JSON without rebuild
+      - ./backend/app/infrastructure/universe/data:/app/backend/app/infrastructure/universe/data
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      - api
 
 volumes:
   postgres_data:

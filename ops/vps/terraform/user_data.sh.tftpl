@@ -1,0 +1,48 @@
+#!/bin/bash
+set -euxo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+
+# Directories used by ops/vps cron wrappers
+mkdir -p /opt/tradepilot /var/log/tradepilot
+chown ubuntu:ubuntu /opt/tradepilot /var/log/tradepilot
+
+apt-get update -y
+apt-get upgrade -y
+apt-get install -y ca-certificates curl gnupg git
+
+# Swap helps Free Tier t3.micro (1 GB RAM) survive Docker + Postgres + API
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# Docker Engine + Compose plugin (official convenience script is fine for a single personal box)
+curl -fsSL https://get.docker.com | sh
+usermod -aG docker ubuntu
+
+systemctl enable docker
+systemctl start docker
+
+# Optional: clone app repo on first boot (still need .env with secrets manually)
+GIT_REPO_URL="${git_repo_url}"
+GIT_REF="${git_ref}"
+
+if [ -n "$GIT_REPO_URL" ]; then
+  if [ ! -d /opt/tradepilot/.git ]; then
+    sudo -u ubuntu git clone --branch "$GIT_REF" --depth 1 "$GIT_REPO_URL" /opt/tradepilot
+  fi
+  chmod +x /opt/tradepilot/ops/vps/*.sh || true
+fi
+
+cat >/etc/motd <<'EOF'
+TradePilot always-on host (Free Tier–oriented)
+- App dir: /opt/tradepilot
+- Logs:    /var/log/tradepilot
+- Next:    create .env, docker compose up -d, see ops/vps/README.md
+EOF
+
+touch /var/lib/cloud/instance/tradepilot-bootstrap-done

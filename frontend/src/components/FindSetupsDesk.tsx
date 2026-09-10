@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { FormingSetup, Opportunity, OpportunityScanResponse } from '../scan/types'
+import { useMemo, useState, type ReactNode } from 'react'
+import type { Opportunity, OpportunityScanResponse } from '../scan/types'
 import { strategyConfidencePercent } from '../scan/resultControls'
 import { directionLabel } from '../terminology'
 import type { UniverseFilterState } from './FilterBuilder'
 import { LiveValue } from './LiveValue'
 import { AutoRefreshBar } from './AutoRefreshBar'
+import { InvalidationPanel } from './InvalidationPanel'
 
 export function countActiveFilters(f: UniverseFilterState): number {
   let n = 0
@@ -50,112 +51,6 @@ export function whyEligibleChecklist(item: Opportunity | null): WhyItem[] {
       label: volOk ? 'Volume confirmation on key bars' : 'Volume confirmation weak or missing',
     },
   ]
-}
-
-type AskProps = {
-  baseUrl: string
-  selected: Opportunity | null
-  forming?: FormingSetup | null
-  accountEquity: string
-}
-
-export function AskTradePilotPanel({ baseUrl, selected, forming = null, accountEquity }: AskProps) {
-  const [question, setQuestion] = useState('')
-  const [answer, setAnswer] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const contextSymbol = selected?.symbol || forming?.symbol || null
-
-  useEffect(() => {
-    setAnswer('')
-    setError('')
-  }, [contextSymbol])
-
-  async function handleAsk() {
-    const q = question.trim()
-    if (!q) return
-    setLoading(true)
-    setError('')
-    try {
-      const res = await fetch(`${baseUrl}/api/v1/ai/ask`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: q,
-          context: {
-            symbol: contextSymbol,
-            account_equity: accountEquity,
-            quantity: selected?.quantity,
-            risk_amount: selected?.risk_amount,
-            reason: selected?.narrative || selected?.quality_reason || forming?.narrative || forming?.reason,
-            evidence: selected
-              ? {
-                  entry: selected.candidate.entry_price,
-                  stop: selected.candidate.stop_loss,
-                  target: selected.candidate.target,
-                  quantity: selected.quantity,
-                  risk_amount: selected.risk_amount,
-                  decision: selected.evidence.decision,
-                  reason: selected.narrative || selected.quality_reason,
-                }
-              : forming
-                ? {
-                    stage: forming.stage,
-                    resistance: forming.resistance,
-                    bars_remaining: forming.bars_remaining,
-                    decision: forming.stage,
-                    reason: forming.narrative || forming.reason,
-                    note: 'Forming only — not eligible; no Entry/Stop/Target yet.',
-                  }
-                : {},
-          },
-        }),
-      })
-      if (!res.ok) throw new Error('Ask failed')
-      const data = (await res.json()) as { answer?: string }
-      setAnswer(data.answer || 'No answer returned.')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ask failed')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <section className="find-ask-panel" aria-label="Ask TradePilot">
-      <h3>
-        <span className="find-ico find-ico-bot" aria-hidden="true" />
-        Ask TradePilot
-      </h3>
-      <textarea
-        value={question}
-        maxLength={300}
-        rows={4}
-        placeholder="Ask anything about this setup or market..."
-        onChange={(e) => setQuestion(e.target.value)}
-      />
-      <div className="find-ask-actions">
-        <span className="find-ask-count">
-          {question.length} / 300
-        </span>
-        <button
-          type="button"
-          className="primary-button find-ask-btn"
-          disabled={loading || !question.trim()}
-          onClick={() => void handleAsk()}
-        >
-          <span className="find-ico find-ico-send" aria-hidden="true" />
-          {loading ? 'Asking…' : 'Ask'}
-        </button>
-      </div>
-      {error ? <p className="status error">{error}</p> : null}
-      {answer ? <p className="find-ask-answer">{answer}</p> : null}
-      <p className="field-hint find-ask-disclaimer">
-        <span className="find-ico find-ico-info" aria-hidden="true" />
-        AI insights are for educational purposes only.
-      </p>
-    </section>
-  )
 }
 
 type CriteriaProps = {
@@ -295,8 +190,6 @@ type ResultsProps = {
   formatPrice: (value: string | number | null | undefined) => string
   sortLabel: string
   onSortChange: (value: string) => void
-  accountEquity: string
-  baseUrl: string
   coveragePct: number | null
   dataAsOf: string | null
   formatDateTime: (value: string | null | undefined) => string
@@ -329,8 +222,6 @@ export function FindSetupsResultsLayout({
   formatPrice,
   sortLabel,
   onSortChange,
-  accountEquity,
-  baseUrl,
   coveragePct,
   dataAsOf,
   formatDateTime,
@@ -448,6 +339,24 @@ export function FindSetupsResultsLayout({
             Invalidation: {selected.invalidation}
           </p>
         ) : null}
+        <InvalidationPanel
+          className="find-invalidation-panel"
+          facts={
+            selected
+              ? {
+                  symbol: selected.symbol,
+                  invalidation: selected.invalidation,
+                  detail: selected.quality_reason || selected.narrative,
+                  checklist: selected.invalidation
+                    ? [
+                        selected.invalidation,
+                        selected.quality_reason || 'Quality critique from engine scan',
+                      ].filter(Boolean) as string[]
+                    : null,
+                }
+              : null
+          }
+        />
         {selected ? (
           <p className="field-hint find-live">
             <span className="find-ico find-ico-pulse" aria-hidden="true" />
@@ -565,8 +474,6 @@ export function FindSetupsResultsLayout({
           </table>
         </div>
       </section>
-
-      <AskTradePilotPanel baseUrl={baseUrl} selected={selected} accountEquity={accountEquity} />
 
       <footer className="find-setups-footer">
         <div className="find-coverage">

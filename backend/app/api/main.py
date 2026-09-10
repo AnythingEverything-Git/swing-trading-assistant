@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .schemas import HealthCheck
-from ..core.config import get_settings
+from ..core.config import get_settings, validate_runtime_settings
 from ..infrastructure.database import session as db_session
 from ..infrastructure.market_data.factory import UpstoxProviderFactory
 from ..infrastructure.market_data.demo_provider import DemoMarketDataProvider
@@ -21,6 +21,7 @@ from ..infrastructure.market_data.source import live_ready, normalize_market_dat
 from ..application.market_data.refresh_scheduler import refresh_scheduler_loop, scheduler_should_run
 from .routes import (
     ai_copilot,
+    alerts,
     backtest,
     intraday,
     market_data,
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
         if not db_url:
             # Fail fast if DB not configured
             raise RuntimeError("Database not configured in Settings")
+        validate_runtime_settings(settings)
 
         engine = db_session.create_engine(db_url)
         sessionmaker = db_session.create_sessionmaker(engine)
@@ -153,6 +155,7 @@ def create_app() -> FastAPI:
     app.include_router(strategy.router)
     app.include_router(backtest.router)
     app.include_router(scan.router)
+    app.include_router(alerts.router)
     app.include_router(universe_filters.router)
     app.include_router(intraday.router)
     app.include_router(ai_copilot.router)

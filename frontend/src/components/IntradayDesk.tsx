@@ -3,6 +3,7 @@ import { PlanDeductionPanel } from './PlanDeductionPanel'
 import { OrbChart } from './OrbChart'
 import { FilterBuilder, DEFAULT_FILTERS, filtersToPayload, type UniverseFilterState } from './FilterBuilder'
 import { CoverageDrawer } from './CoverageDrawer'
+import { TradeDurationTimer } from './TradeDurationTimer'
 import {
   ensure1mActiveSet,
   fetchMorningBoard,
@@ -10,6 +11,8 @@ import {
   getIntradaySessionChart,
   getPracticeDivergence,
   listIntradayPractice,
+  listIntradaySessions,
+  reconcilePractice,
   runIntradaySession,
   runMorningIntradaySession,
   seedIntradayPractice,
@@ -20,11 +23,12 @@ import {
   type IntradayPracticeTrade,
   type IntradayRankedRow,
   type IntradaySessionResponse,
+  type IntradaySessionSummary,
   type IntradaySymbolResult,
   type IntradayUniverse,
   type MorningBoardResponse,
 } from '../intraday/api'
-import { buildOrbDeductionSteps } from '../intraday/planDeduction'
+import { buildOrbBoardDeductionSteps, buildOrbDeductionSteps } from '../intraday/planDeduction'
 import {
   directionLabel,
   exitReasonLabel,
@@ -38,6 +42,34 @@ type Props = {
   baseUrl: string
   accountEquity: string
   onEquityChange?: (value: string) => void
+  preferredBoardRefreshSec?: number
+}
+
+function todayIsoDate(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function isPreOrPhase(phase: MorningBoardResponse['phase'] | undefined): boolean {
+  return phase === 'PRE_OPEN' || phase === 'OR_BUILDING'
+}
+
+function eligibilityStatusLabel(status?: string | null): string {
+  switch (status) {
+    case 'ADV_OK':
+    case 'WATCHLIST':
+      return 'OK'
+    case 'LOW_ADV':
+      return 'Pending OR'
+    case 'SURVEILLANCE_BLOCKED':
+    case 'CORPORATE_ACTION_BLOCK':
+      return 'Blocked'
+    default:
+      return status || '—'
+  }
 }
 
 type OutcomeFilter = 'ALL' | 'TRADED' | 'ARMED' | 'BLOCKED' | 'SKIPPED'
@@ -191,20 +223,25 @@ function MorningRankTable({
   title,
   rows,
   empty,
+  mode,
   onExplain,
 }: {
   title: string
   rows: IntradayRankedRow[]
   empty: string
+  mode: 'rank' | 'eligibility'
   onExplain?: (symbol: string) => void
 }) {
+  const eligibility = mode === 'eligibility'
   return (
     <div className="confirmed-box intraday-table-box">
       <div className="table-toolbar">
         <div>
           <h3>{title}</h3>
           <p className="field-hint">
-            Showing {rows.length} ranked {title.toLowerCase()}. Rank is RVOL order for this session.
+            {eligibility
+              ? `Showing ${rows.length} ${title.toLowerCase()} · ADV / flags before OR closes`
+              : `Showing ${rows.length} ranked ${title.toLowerCase()}. Rank is RVOL order for this session.`}
           </p>
         </div>
       </div>
@@ -219,13 +256,25 @@ function MorningRankTable({
             <thead>
               <tr>
                 <th>Rank</th>
-                <th>Stock</th>
-                <th>Trade type</th>
-                <th>RVOL5</th>
-                <th>OR high</th>
-                <th>OR low</th>
-                <th>Status</th>
-                {onExplain ? <th>How decided</th> : null}
+                <th>{title === 'ETFs' ? 'ETF' : 'Stock'}</th>
+                {eligibility ? (
+                  <>
+                    <th>ADV</th>
+                    <th>Surveillance</th>
+                    <th>CA</th>
+                    <th>Short-allow</th>
+                    <th>Status</th>
+                  </>
+                ) : (
+                  <>
+                    <th>Trade type</th>
+                    <th>RVOL5</th>
+                    <th>OR high</th>
+                    <th>OR low</th>
+                    <th>Status</th>
+                    {onExplain ? <th>Strategy Steps</th> : null}
+                  </>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -245,38 +294,72 @@ function MorningRankTable({
                         <span className="symbol-link">{row.symbol}</span>
                       )}
                     </td>
-                    <td>
-                      {row.direction ? (
-                        <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                          {directionLabel(row.direction)}
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    <td className="num-cell">
-                      {row.rvol5 != null ? Number(row.rvol5).toFixed(2) : '—'}
-                    </td>
-                    <td className="num-cell">{row.or_high ? formatInr(row.or_high) : '—'}</td>
-                    <td className="num-cell">{row.or_low ? formatInr(row.or_low) : '—'}</td>
-                    <td>
-                      <span
-                        className={reasonTone(row.status === 'RANKED' ? 'RANKED_ARMED' : row.status || 'NO_SETUP')}
-                      >
-                        {row.status || '—'}
-                      </span>
-                    </td>
-                    {onExplain ? (
-                      <td className="deduction-cell">
-                        <button
-                          type="button"
-                          className="ghost-btn deduction-toggle"
-                          onClick={() => onExplain(row.symbol)}
-                        >
-                          How decided
-                        </button>
-                      </td>
-                    ) : null}
+                    {eligibility ? (
+                      <>
+                        <td>{row.adv_band || (row.adv_ok ? 'OK' : 'Low')}</td>
+                        <td className="num-cell" aria-label={row.surveillance_blocked ? 'Blocked' : 'Clear'}>
+                          <span className={`elig-check ${row.surveillance_blocked ? 'is-blocked' : 'is-ok'}`}>
+                            {row.surveillance_blocked ? '⚠' : '☐'}
+                          </span>
+                        </td>
+                        <td>
+                          {row.corporate_action_label ||
+                            (row.corporate_action_blocked ? 'Blocked' : 'None')}
+                        </td>
+                        <td>{row.short_allowed === false ? 'No' : 'Yes'}</td>
+                        <td>
+                          <span
+                            className={`elig-status ${
+                              eligibilityStatusLabel(row.status) === 'Blocked'
+                                ? 'is-blocked'
+                                : eligibilityStatusLabel(row.status) === 'Pending OR'
+                                  ? 'is-pending'
+                                  : 'is-ok'
+                            }`}
+                          >
+                            <span className="elig-flag" aria-hidden="true" />
+                            {eligibilityStatusLabel(row.status)}
+                          </span>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td>
+                          {row.direction ? (
+                            <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
+                              {directionLabel(row.direction)}
+                            </span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="num-cell">
+                          {row.rvol5 != null ? Number(row.rvol5).toFixed(2) : '—'}
+                        </td>
+                        <td className="num-cell">{row.or_high ? formatInr(row.or_high) : '—'}</td>
+                        <td className="num-cell">{row.or_low ? formatInr(row.or_low) : '—'}</td>
+                        <td>
+                          <span
+                            className={reasonTone(
+                              row.status === 'RANKED' ? 'RANKED_ARMED' : row.status || 'NO_SETUP',
+                            )}
+                          >
+                            {row.status || '—'}
+                          </span>
+                        </td>
+                        {onExplain ? (
+                          <td className="deduction-cell">
+                            <button
+                              type="button"
+                              className="ghost-btn deduction-toggle"
+                              onClick={() => onExplain(row.symbol)}
+                            >
+                              Strategy Steps
+                            </button>
+                          </td>
+                        ) : null}
+                      </>
+                    )}
                   </tr>
                 )
               })}
@@ -288,11 +371,16 @@ function MorningRankTable({
   )
 }
 
-export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) {
+export function IntradayDesk({
+  baseUrl,
+  accountEquity,
+  onEquityChange,
+  preferredBoardRefreshSec = 30,
+}: Props) {
   const [universe, setUniverse] = useState<IntradayUniverse>('DEMO_SAMPLE')
   const [boardFilters, setBoardFilters] = useState<UniverseFilterState>(DEFAULT_FILTERS)
   const [symbolsText, setSymbolsText] = useState(DEMO_SAMPLE)
-  const [sessionDate, setSessionDate] = useState('2026-09-07')
+  const [sessionDate, setSessionDate] = useState(todayIsoDate)
   const [source, setSource] = useState<'demo' | 'persisted'>('demo')
   const [showHow, setShowHow] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
@@ -311,6 +399,8 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
   const [practiceBusy, setPracticeBusy] = useState(false)
   const [chartTf, setChartTf] = useState<'1m' | '5m'>('1m')
   const [divergence, setDivergence] = useState<Awaited<ReturnType<typeof getPracticeDivergence>> | null>(null)
+  const [reconcile, setReconcile] = useState<Awaited<ReturnType<typeof reconcilePractice>> | null>(null)
+  const [tradingHalted, setTradingHalted] = useState(false)
   const [morningBoard, setMorningBoard] = useState<MorningBoardResponse | null>(null)
   const [boardLoading, setBoardLoading] = useState(false)
   const [boardAutoRefresh, setBoardAutoRefresh] = useState(true)
@@ -318,7 +408,26 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
   const [ledgerOpen, setLedgerOpen] = useState(true)
   const [fillsOpen, setFillsOpen] = useState(true)
   const [finishedOpen, setFinishedOpen] = useState(true)
+  const [recentSessions, setRecentSessions] = useState<IntradaySessionSummary[]>([])
+  const [recentLoading, setRecentLoading] = useState(false)
   const boardBusyRef = useRef(false)
+
+  async function loadRecentSessions() {
+    setRecentLoading(true)
+    try {
+      const { sessions } = await listIntradaySessions(baseUrl, 12)
+      setRecentSessions(sessions)
+    } catch {
+      setRecentSessions([])
+    } finally {
+      setRecentLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadRecentSessions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseUrl])
 
   useEffect(() => {
     if (!session?.id) {
@@ -344,7 +453,7 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
   }, [baseUrl, session?.id])
 
   async function handleSeedPractice() {
-    if (!session?.id) return
+    if (!session?.id || tradingHalted) return
     setPracticeBusy(true)
     setError('')
     try {
@@ -377,7 +486,7 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
       await tickIntradayPractice(baseUrl, session.id, {
         marks,
         force_eod: forceEod,
-        use_live_quotes: liveQuotes && !forceEod,
+        use_live_quotes: liveQuotes,
       })
       const listed = await listIntradayPractice(baseUrl, session.id)
       setPractice(listed.trades)
@@ -394,11 +503,45 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
     setPracticeBusy(true)
     setError('')
     try {
-      setDivergence(await getPracticeDivergence(baseUrl, session.id))
+      const [div, rec] = await Promise.all([
+        getPracticeDivergence(baseUrl, session.id),
+        reconcilePractice(baseUrl, session.id),
+      ])
+      setDivergence(div)
+      setReconcile(rec)
+      setTradingHalted(Boolean(rec.trading_halted))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Divergence check failed')
+      setError(err instanceof Error ? err.message : 'Reconcile failed')
     } finally {
       setPracticeBusy(false)
+    }
+  }
+
+  async function handleOpenSession(sessionId: string) {
+    setLoading(true)
+    setError('')
+    setExplainSymbol(null)
+    setDivergence(null)
+    setReconcile(null)
+    setTradingHalted(false)
+    try {
+      const next = await getIntradaySession(baseUrl, sessionId)
+      setSession(next)
+      setSessionDate(next.session_date)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to open session')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleExportSessionById(sessionId: string) {
+    setError('')
+    try {
+      const next = await getIntradaySession(baseUrl, sessionId)
+      downloadSessionCsv(next)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Export failed')
     }
   }
 
@@ -467,19 +610,32 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
 
   useEffect(() => {
     if (!boardAutoRefresh || !morningBoard) return
-    const ms = Math.max(10, morningBoard.auto_refresh_seconds || 30) * 1000
+    const ms =
+      Math.max(10, preferredBoardRefreshSec || morningBoard.auto_refresh_seconds || 30) * 1000
     const timer = window.setInterval(() => {
       void loadMorningBoard({ quiet: true })
     }, ms)
     return () => window.clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh cadence from board; reload uses latest closures
-  }, [boardAutoRefresh, morningBoard?.auto_refresh_seconds, sessionDate, source, baseUrl, accountEquity, universe, boardFilters])
+  }, [
+    boardAutoRefresh,
+    preferredBoardRefreshSec,
+    morningBoard?.auto_refresh_seconds,
+    sessionDate,
+    source,
+    baseUrl,
+    accountEquity,
+    universe,
+    boardFilters,
+  ])
 
   async function handleMorning() {
     setLoading(true)
     setError('')
     setExplainSymbol(null)
     setDivergence(null)
+    setReconcile(null)
+    setTradingHalted(false)
     try {
       await loadMorningBoard()
       const customSymbols =
@@ -504,6 +660,7 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
         setPractice(result.practice.trades)
         setPracticeClaim(result.practice.claim)
       }
+      void loadRecentSessions()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Morning run failed')
     } finally {
@@ -515,6 +672,9 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
     setLoading(true)
     setError('')
     setExplainSymbol(null)
+    setDivergence(null)
+    setReconcile(null)
+    setTradingHalted(false)
     try {
       const customSymbols =
         universe === 'CUSTOM'
@@ -534,6 +694,7 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
         source,
       })
       setSession(result)
+      void loadRecentSessions()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Session failed')
       setSession(null)
@@ -601,19 +762,52 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
   const closedPnl = session?.closed_trades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0) ?? 0
   const riskBudget = formatInr((Number(accountEquity) * ORB_V1_RULES.riskPerTradePct) / 100)
 
+  const boardExplainRow = useMemo(() => {
+    if (!morningBoard || !explainSymbol) return null
+    const pool = [
+      ...morningBoard.ranked_stocks,
+      ...morningBoard.ranked_etfs,
+      ...(morningBoard.eligible_stocks || []),
+      ...(morningBoard.eligible_etfs || []),
+    ]
+    return pool.find((r) => r.symbol === explainSymbol) ?? null
+  }, [morningBoard, explainSymbol])
+
   const explainRow: IntradaySymbolResult | null =
     session && explainSymbol
       ? (session.symbol_results.find((r) => r.symbol === explainSymbol) ?? null)
       : null
-  const explainSteps =
-    explainRow &&
-    buildOrbDeductionSteps({
-      row: explainRow,
-      fill: fillsBySymbol.get(explainRow.symbol),
-      closed: closedBySymbol.get(explainRow.symbol),
-      accountEquity,
-      formatPrice: formatInr,
-    })
+  const explainSteps = explainRow
+    ? buildOrbDeductionSteps({
+        row: explainRow,
+        fill: fillsBySymbol.get(explainRow.symbol),
+        closed: closedBySymbol.get(explainRow.symbol),
+        accountEquity,
+        formatPrice: formatInr,
+      })
+    : boardExplainRow
+      ? buildOrbBoardDeductionSteps({ row: boardExplainRow, formatPrice: formatInr })
+      : null
+
+  const preOr = isPreOrPhase(morningBoard?.phase)
+  const boardStockRows = morningBoard
+    ? preOr
+      ? morningBoard.ranked_stocks
+      : morningBoard.ranked_stocks
+    : []
+  const boardEtfRows = morningBoard
+    ? preOr
+      ? morningBoard.ranked_etfs
+      : morningBoard.ranked_etfs
+    : []
+
+  const reasonMix = useMemo(() => {
+    const countsMap = session?.reason_counts
+    if (!countsMap) return []
+    return Object.entries(countsMap)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+  }, [session?.reason_counts])
 
   const universeLabel = UNIVERSE_OPTIONS.find((opt) => opt.value === universe)?.label ?? universe
   const coverageLabel =
@@ -786,13 +980,11 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
         <section className="intraday-section intraday-morning-section">
           <div className="intraday-section-head">
             <div>
-              <h2>Morning board</h2>
+              <h2>{preOr ? 'Eligibility watchlist' : 'Morning board'}</h2>
               <p className="intraday-phase-line">
                 Phase:{' '}
                 <span className="phase-pill">{morningBoard.phase_label || morningBoard.phase}</span>
-                {morningBoard.phase_label?.toLowerCase().includes('or') || morningBoard.phase ? (
-                  <span className="field-hint"> · OR window {ORB_V1_RULES.orWindow}</span>
-                ) : null}
+                {!preOr ? <span className="field-hint"> · OR window {ORB_V1_RULES.orWindow}</span> : null}
               </p>
             </div>
             <div className="intraday-section-tools">
@@ -816,21 +1008,42 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
               <span className="universe-chip">ETFs {morningBoard.universe_etfs}</span>
             </div>
           </div>
-          <p className="intraday-board-caption">Stocks vs ETFs ranked separately · Rank is RVOL5 order</p>
+          <p className="intraday-board-caption">
+            {preOr
+              ? 'Pre-OR · ADV / surveillance / CA / short-allow · ranks provisional'
+              : 'Stocks vs ETFs ranked separately · Rank is RVOL5 order'}
+          </p>
+          {morningBoard.hint ? <p className="field-hint">{morningBoard.hint}</p> : null}
           <div className="intraday-board-grid">
             <MorningRankTable
               title="Stocks"
-              rows={morningBoard.ranked_stocks}
-              empty="No ranked stocks"
+              rows={boardStockRows}
+              empty={preOr ? 'No eligibility rows' : 'No ranked stocks'}
+              mode={preOr ? 'eligibility' : 'rank'}
               onExplain={setExplainSymbol}
             />
             <MorningRankTable
               title="ETFs"
-              rows={morningBoard.ranked_etfs}
-              empty="No ranked ETFs"
+              rows={boardEtfRows}
+              empty={preOr ? 'No eligibility rows' : 'No ranked ETFs'}
+              mode={preOr ? 'eligibility' : 'rank'}
               onExplain={setExplainSymbol}
             />
           </div>
+          {preOr ? (
+            <p className="intraday-provisional-note">Note: OR not complete yet — ranks provisional.</p>
+          ) : null}
+          {morningBoard.blocked_sample && morningBoard.blocked_sample.length > 0 ? (
+            <div className="intraday-blocked-sample">
+              <p className="field-hint">
+                Blocked sample:{' '}
+                {morningBoard.blocked_sample
+                  .slice(0, 6)
+                  .map((b) => `${b.symbol} (${b.reason})`)
+                  .join(' · ')}
+              </p>
+            </div>
+          ) : null}
         </section>
       )}
 
@@ -903,6 +1116,17 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
             </div>
           </div>
 
+          {reasonMix.length > 0 ? (
+            <div className="intraday-reason-mix" aria-label="Reason mix">
+              <span className="intraday-reason-mix-label">Reason mix</span>
+              {reasonMix.map(([code, n]) => (
+                <span key={code} className="reason-mix-chip">
+                  {orbReasonLabel(code)} <strong>{n}</strong>
+                </span>
+              ))}
+            </div>
+          ) : null}
+
           {highlightRows.length > 0 && (
             <div className="confirmed-box intraday-table-box">
               <div className="table-toolbar">
@@ -926,7 +1150,7 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                       <th>Shares</th>
                       <th>₹ at risk</th>
                       <th>Why this idea</th>
-                      <th>How decided</th>
+                      <th>Strategy Steps</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -984,7 +1208,7 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                                 setExplainSymbol((current) => (current === row.symbol ? null : row.symbol))
                               }
                             >
-                              {open ? 'Hide steps' : 'How decided'}
+                              {open ? 'Close' : 'Strategy Steps'}
                             </button>
                           </td>
                         </tr>
@@ -1052,12 +1276,6 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                   V1 flattens by {ORB_V1_RULES.flatten} · no profit target
                 </p>
               </div>
-              <PlanDeductionPanel
-                symbol={explainRow.symbol}
-                steps={explainSteps}
-                baseUrl={baseUrl}
-                onClose={() => setExplainSymbol(null)}
-              />
             </div>
           )}
 
@@ -1105,7 +1323,7 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                             <th>RVOL5</th>
                             <th>Outcome</th>
                             <th>Why this idea</th>
-                            <th>How decided</th>
+                            <th>Strategy Steps</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1156,7 +1374,7 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                                       )
                                     }
                                   >
-                                    {open ? 'Hide steps' : 'How decided'}
+                                    {open ? 'Close' : 'Strategy Steps'}
                                   </button>
                                 </td>
                               </tr>
@@ -1222,25 +1440,26 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                     <table>
                       <thead>
                         <tr>
-                          <th>Rank</th>
+                          <th>Time</th>
                           <th>Stock</th>
-                          <th>Trade type</th>
-                          <th>Buy/sell at</th>
+                          <th>Side</th>
+                          <th>Price</th>
+                          <th>Size</th>
                           <th>Safety exit</th>
-                          <th>Shares</th>
                           <th>₹ at risk</th>
-                          <th>How decided</th>
+                          <th>Fill ID</th>
+                          <th>Strategy Steps</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {session.fills.map((fill) => {
+                        {session.fills.map((fill, index) => {
                           const isShort = fill.direction === 'SHORT'
                           const open = explainSymbol === fill.symbol
+                          const fillId = `F${String(index + 1).padStart(5, '0')}`
+                          const fillTime = (fill.trigger_bar_open || '').replace('T', ' ').slice(11, 19)
                           return (
                             <tr key={`${fill.symbol}-${fill.trigger_bar_open}`}>
-                              <td className="num-cell">
-                                <span className="rank-badge">#{fill.rank}</span>
-                              </td>
+                              <td className="muted-cell">{fillTime || '—'}</td>
                               <td className="symbol-cell">
                                 <button
                                   type="button"
@@ -1256,9 +1475,10 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                                 </span>
                               </td>
                               <td className="num-cell">{formatInr(fill.entry)}</td>
-                              <td className="num-cell">{formatInr(fill.stop)}</td>
                               <td className="num-cell">{fill.quantity}</td>
+                              <td className="num-cell">{formatInr(fill.stop)}</td>
                               <td className="num-cell">{formatInr(fill.risk_amount)}</td>
+                              <td className="muted-cell">{fillId}</td>
                               <td className="deduction-cell">
                                 <button
                                   type="button"
@@ -1269,7 +1489,7 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                                     )
                                   }
                                 >
-                                  {open ? 'Hide steps' : 'How decided'}
+                                  {open ? 'Close' : 'Strategy Steps'}
                                 </button>
                               </td>
                             </tr>
@@ -1376,13 +1596,14 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                     {divergence
                       ? ` · divergence gap ${formatInr(divergence.pnl_gap_sum)} · matched ${divergence.matched_closed}/${divergence.total_model_closed}`
                       : ''}
+                    {tradingHalted ? ' · trading halt On' : ''}
                   </p>
                 </div>
                 <div className="table-toolbar-actions">
                   <button
                     type="button"
                     className="primary-button"
-                    disabled={practiceBusy || session.fills.length === 0}
+                    disabled={practiceBusy || session.fills.length === 0 || tradingHalted}
                     onClick={() => void handleSeedPractice()}
                   >
                     {practiceBusy ? 'Working…' : 'Seed practice'}
@@ -1390,7 +1611,7 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                   <button
                     type="button"
                     className="secondary-button"
-                    disabled={practiceBusy || practice.every((t) => t.status !== 'OPEN')}
+                    disabled={practiceBusy || tradingHalted || practice.every((t) => t.status !== 'OPEN')}
                     onClick={() => void handlePracticeTick(false, true)}
                   >
                     Tick LTP
@@ -1413,6 +1634,12 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                   </button>
                 </div>
               </div>
+              {tradingHalted ? (
+                <div className="status error">
+                  Practice reconcile halted paper trading for this session — fix orphan/qty/entry drift, then
+                  re-reconcile.
+                </div>
+              ) : null}
               {practice.length === 0 ? (
                 <div className="empty-state">
                   <strong>No practice rows yet</strong>
@@ -1431,6 +1658,7 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                         <th>Shares</th>
                         <th>Live mark</th>
                         <th>P/L</th>
+                        <th>Duration</th>
                         <th>How ended</th>
                       </tr>
                     </thead>
@@ -1464,6 +1692,13 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                             <td className={`num-cell ${pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}`}>
                               {formatInr(pnl)}
                             </td>
+                            <td>
+                              {trade.status === 'OPEN' && trade.opened_at ? (
+                                <TradeDurationTimer startedAt={trade.opened_at} label="" />
+                              ) : (
+                                '—'
+                              )}
+                            </td>
                             <td>{trade.exit_reason ? exitReasonLabel(trade.exit_reason) : '—'}</td>
                           </tr>
                         )
@@ -1472,12 +1707,44 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
                   </table>
                 </div>
               )}
-              {divergence && (
-                <div className="intraday-reconcile-strip">
-                  Practice vs model · matched closed {divergence.matched_closed}/
-                  {divergence.total_model_closed} · halt stub Off
+              {divergence?.rows?.length ? (
+                <div className="table-wrap scan-table-wrap intraday-divergence-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Symbol</th>
+                        <th>Practice</th>
+                        <th>Model</th>
+                        <th>Practice P/L</th>
+                        <th>Model P/L</th>
+                        <th>Gap</th>
+                        <th>Exit match</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {divergence.rows.map((row) => (
+                        <tr key={row.symbol}>
+                          <td className="symbol-cell">{row.symbol}</td>
+                          <td>{row.practice_status}</td>
+                          <td>{row.model_status}</td>
+                          <td className="num-cell">{formatInr(row.practice_pnl)}</td>
+                          <td className="num-cell">{formatInr(row.model_pnl)}</td>
+                          <td className="num-cell">{formatInr(row.pnl_gap)}</td>
+                          <td>{row.exit_match ? 'Yes' : 'No'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              )}
+              ) : null}
+              {reconcile || divergence ? (
+                <div className="intraday-reconcile-strip">
+                  Practice vs model · matched closed {divergence?.matched_closed ?? '—'}/
+                  {divergence?.total_model_closed ?? '—'} · halt{' '}
+                  {tradingHalted ? 'On' : 'Off'}
+                  {reconcile?.issue_count != null ? ` · issues ${reconcile.issue_count}` : ''}
+                </div>
+              ) : null}
               <div className="intraday-claim-banner">
                 <span className="claim-shield" aria-hidden />
                 <span>{practiceClaim || orbPaperClaim()}</span>
@@ -1486,6 +1753,85 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
           )}
         </section>
       )}
+
+      <section className="intraday-section intraday-recent-section" aria-label="Recent sessions">
+        <div className="intraday-section-head">
+          <div>
+            <h2>Recent sessions</h2>
+            <p className="field-hint">Open a prior run or export an audit-friendly CSV.</p>
+          </div>
+          <div className="intraday-section-tools">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={recentLoading}
+              onClick={() => void loadRecentSessions()}
+            >
+              {recentLoading ? 'Loading…' : 'Refresh list'}
+            </button>
+          </div>
+        </div>
+        <div className="confirmed-box intraday-table-box">
+          {recentSessions.length === 0 ? (
+            <div className="empty-state">
+              <strong>No sessions yet</strong>
+              <span>Run a session to populate recent history.</span>
+            </div>
+          ) : (
+            <div className="table-wrap scan-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Source</th>
+                    <th className="num-cell">Fills</th>
+                    <th className="num-cell">Closed P/L</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentSessions.map((row) => (
+                    <tr key={row.id} className={session?.id === row.id ? 'recent-session-row is-active' : 'recent-session-row'}>
+                      <td>{row.session_date}</td>
+                      <td>{row.data_source}</td>
+                      <td className="num-cell">{row.fill_count}</td>
+                      <td className="num-cell">{formatInr(row.realized_pnl)}</td>
+                      <td>
+                        <div className="recent-session-actions">
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            disabled={loading}
+                            onClick={() => void handleOpenSession(row.id)}
+                          >
+                            Open
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => void handleExportSessionById(row.id)}
+                          >
+                            Export CSV
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        {session ? (
+          <div className="intraday-selected-session">
+            <h3>Selected session detail</h3>
+            <button type="button" className="primary-button" onClick={() => downloadSessionCsv(session)}>
+              Export session CSV
+            </button>
+            <p className="field-hint">Audit-friendly ledger export · {session.id.slice(0, 8)}…</p>
+          </div>
+        ) : null}
+      </section>
 
       <CoverageDrawer
         open={coverageOpen}
@@ -1503,6 +1849,15 @@ export function IntradayDesk({ baseUrl, accountEquity, onEquityChange }: Props) 
           }
         }}
       />
+
+      {explainSymbol && explainSteps ? (
+        <PlanDeductionPanel
+          symbol={explainSymbol}
+          steps={explainSteps}
+          baseUrl={baseUrl}
+          onClose={() => setExplainSymbol(null)}
+        />
+      ) : null}
 
       <footer className="intraday-desk-footer">
         <span className="claim-shield" aria-hidden />

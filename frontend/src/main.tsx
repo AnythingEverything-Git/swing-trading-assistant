@@ -19,6 +19,9 @@ import { IntradayDesk } from './components/IntradayDesk'
 import { HomeHub } from './components/HomeHub'
 import { PracticeBook } from './components/PracticeBook'
 import { ResearchDesk } from './components/ResearchDesk'
+import { AccountShell } from './components/AccountShell'
+import { BriefCenter } from './components/BriefCenter'
+import { CompareNamesDesk } from './components/CompareNamesDesk'
 import { CapitalRisk } from './components/CapitalRisk'
 import { GuidedProMode } from './components/GuidedProMode'
 import { DataReadinessBanner } from './components/DataReadinessBanner'
@@ -72,12 +75,13 @@ import {
   strategyConfidenceLabel,
 } from './terminology'
 
-type ThemeMode = 'light' | 'dark'
+type ThemeMode = 'light' | 'dark' | 'system'
 
 const THEME_STORAGE_KEY = 'tradepilot-theme'
 const RISK_STORAGE_KEY = 'tradepilot-risk-profile'
 const PAPER_ENABLED_KEY = 'tradepilot-paper-enabled'
 const AUTO_REFRESH_STORAGE_KEY = 'tradepilot-auto-refresh'
+const REFRESH_PREFS_KEY = 'tradepilot-refresh-prefs'
 
 function readStoredRisk(): { equity: string; riskPercent: string } {
   try {
@@ -93,10 +97,40 @@ function readStoredRisk(): { equity: string; riskPercent: string } {
   }
 }
 
+function resolveTheme(mode: ThemeMode): 'light' | 'dark' {
+  if (mode === 'light' || mode === 'dark') return mode
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
 function readStoredTheme(): ThemeMode {
   const stored = localStorage.getItem(THEME_STORAGE_KEY)
-  if (stored === 'light' || stored === 'dark') return stored
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  if (stored === 'light' || stored === 'dark' || stored === 'system') return stored
+  return 'system'
+}
+
+function readRefreshPrefs(): {
+  swingRefreshSec: string
+  intradayRefreshSec: string
+  practiceTickMode: string
+} {
+  try {
+    const raw = localStorage.getItem(REFRESH_PREFS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<{
+        swingRefreshSec: string
+        intradayRefreshSec: string
+        practiceTickMode: string
+      }>
+      return {
+        swingRefreshSec: parsed.swingRefreshSec || '300',
+        intradayRefreshSec: parsed.intradayRefreshSec || '30',
+        practiceTickMode: parsed.practiceTickMode || 'manual',
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return { swingRefreshSec: '300', intradayRefreshSec: '30', practiceTickMode: 'manual' }
 }
 
 function formatPrice(value: string | number | null | undefined): string {
@@ -495,7 +529,7 @@ function deductionStepsForOpportunity(
   })
 }
 
-type AppView = 'home' | 'scan' | 'history' | 'research' | 'paper' | 'intraday' | 'practice' | 'account'
+type AppView = 'home' | 'scan' | 'history' | 'research' | 'paper' | 'intraday' | 'practice' | 'account' | 'brief' | 'compare'
 
 const SCAN_UNIVERSES: { value: ScanUniverse; label: string }[] = [
   { value: 'NSE_ALL', label: 'NSE all (cash + ETFs)' },
@@ -547,8 +581,12 @@ function assetClassForUniverse(universe: ScanUniverse): UniverseFilterState['ass
 
 function App() {
   const storedRisk = readStoredRisk()
+  const storedRefresh = readRefreshPrefs()
   const [theme, setTheme] = useState<ThemeMode>(() => readStoredTheme())
   const [activeView, setActiveView] = useState<AppView>('home')
+  const [swingRefreshSec, setSwingRefreshSec] = useState(storedRefresh.swingRefreshSec)
+  const [intradayRefreshSec, setIntradayRefreshSec] = useState(storedRefresh.intradayRefreshSec)
+  const [practiceTickMode, setPracticeTickMode] = useState(storedRefresh.practiceTickMode)
   const [scanUniverse, setScanUniverse] = useState<ScanUniverse>(() => readStoredUniverse())
   const [guidedMode, setGuidedMode] = useState(() => {
     try {
@@ -588,7 +626,6 @@ function App() {
   const [paperBook, setPaperBook] = useState<PaperBook | null>(null)
   const [paperError, setPaperError] = useState('')
   const [paperNotice, setPaperNotice] = useState('')
-  const [paperClosingId, setPaperClosingId] = useState<number | null>(null)
   const [entryAlerts, setEntryAlerts] = useState<PaperTrade[]>([])
   const [paperOutlookById, setPaperOutlookById] = useState<Record<number, PaperOutlookItem>>({})
   const [paperTradingEnabled, setPaperTradingEnabled] = useState(() => {
@@ -646,7 +683,13 @@ function App() {
 
   const OPPORTUNITY_PAGE_SIZE = 10
 
-  const baseUrl = useMemo(() => import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000', [])
+  const baseUrl = useMemo(() => {
+    const raw = import.meta.env.VITE_API_BASE_URL as string | undefined
+    // Production nginx: empty string → same-origin `/api/...`
+    if (raw === '' || raw === '/') return ''
+    if (raw == null || raw === undefined) return 'http://127.0.0.1:8001'
+    return String(raw).replace(/\/$/, '')
+  }, [])
 
   const paperCapital = useMemo(
     () => computePaperCapital(paperBook?.trades ?? [], Number(accountEquity) || 0),
@@ -667,8 +710,16 @@ function App() {
   const scanFocusOpen = inspectPlanOpen || chartEvidenceOpen
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme)
+    const apply = () => {
+      document.documentElement.setAttribute('data-theme', resolveTheme(theme))
+    }
+    apply()
     localStorage.setItem(THEME_STORAGE_KEY, theme)
+    if (theme !== 'system') return
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = () => apply()
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
   }, [theme])
 
   function persistGuidedMode(next: boolean) {
@@ -834,9 +885,11 @@ function App() {
     if (view === 'history') setActiveView('history')
     if (view === 'intraday') setActiveView('intraday')
     if (view === 'research') setActiveView('research')
-    if (view === 'paper') setActiveView('paper')
+    if (view === 'paper') setActiveView('practice')
     if (view === 'practice') setActiveView('practice')
-    if (view === 'account') setCapitalRiskOpen(true)
+    if (view === 'brief') setActiveView('brief')
+    if (view === 'compare') setActiveView('compare')
+    if (view === 'account') setActiveView('account')
     if (runId == null) return
     let cancelled = false
     const loadDeepLink = async () => {
@@ -1300,27 +1353,6 @@ function App() {
 
   const dismissAllEntryAlerts = () => setEntryAlerts([])
 
-  const closePaperTrade = async (tradeId: number) => {
-    setPaperClosingId(tradeId)
-    try {
-      const response = await fetch(`${baseUrl}/api/v1/paper/trades/${tradeId}/close`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      if (!response.ok) {
-        const detail = await response.json().catch(() => ({}))
-        throw new Error(detail.detail || 'Close failed')
-      }
-      setPaperNotice('Practice trade updated — remaining capital refreshed below')
-      await refreshPaperBook()
-    } catch (caught) {
-      setPaperError(caught instanceof Error ? caught.message : 'Close failed')
-    } finally {
-      setPaperClosingId(null)
-    }
-  }
-
   const setPaperEnabled = (enabled: boolean) => {
     setPaperTradingEnabled(enabled)
     try {
@@ -1448,11 +1480,28 @@ function App() {
     if (!paperTradingEnabled) return
     // Poll on every view so entry fills raise alerts and the live strip stays current.
     void tickPaperBook()
+    if (practiceTickMode === 'manual') return
+    const ms = Math.max(5, Number(practiceTickMode) || 15) * 1000
     const timer = window.setInterval(() => {
       void tickPaperBook()
-    }, 15000)
+    }, ms)
     return () => window.clearInterval(timer)
-  }, [paperTradingEnabled, tickPaperBook])
+  }, [paperTradingEnabled, tickPaperBook, practiceTickMode])
+
+  useEffect(() => {
+    setRefreshInterval(swingRefreshSec)
+  }, [swingRefreshSec])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        REFRESH_PREFS_KEY,
+        JSON.stringify({ swingRefreshSec, intradayRefreshSec, practiceTickMode }),
+      )
+    } catch {
+      /* ignore */
+    }
+  }, [swingRefreshSec, intradayRefreshSec, practiceTickMode])
 
   // Auto-refresh scan: countdown, pause when criteria / inspect open or off Swing
   useEffect(() => {
@@ -1585,6 +1634,13 @@ function App() {
           </button>
           <button
             type="button"
+            className={`menu-link ${activeView === 'brief' ? 'active' : ''}`}
+            onClick={() => setActiveView('brief')}
+          >
+            Brief
+          </button>
+          <button
+            type="button"
             className={`menu-link ${activeView === 'practice' || activeView === 'paper' ? 'active' : ''}`}
             onClick={() => setActiveView('practice')}
           >
@@ -1592,8 +1648,8 @@ function App() {
           </button>
           <button
             type="button"
-            className={`menu-link ${capitalRiskOpen ? 'active' : ''}`}
-            onClick={() => setCapitalRiskOpen(true)}
+            className={`menu-link ${activeView === 'account' ? 'active' : ''}`}
+            onClick={() => setActiveView('account')}
           >
             Account
           </button>
@@ -1644,12 +1700,16 @@ function App() {
           <button
             type="button"
             className="theme-toggle"
-            onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
-            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            onClick={() =>
+              setTheme((current) =>
+                current === 'light' ? 'dark' : current === 'dark' ? 'system' : 'light',
+              )
+            }
+            aria-label={`Theme: ${theme}. Click to change.`}
+            title={`Theme: ${theme}`}
           >
             <span className="theme-toggle-icon" aria-hidden="true">
-              {theme === 'dark' ? '○' : '●'}
+              {resolveTheme(theme) === 'dark' ? '○' : '●'}
             </span>
           </button>
         </div>
@@ -1736,7 +1796,7 @@ function App() {
               type="button"
               className="secondary-button"
               onClick={() => {
-                setActiveView('paper')
+                setActiveView('practice')
                 void refreshPaperBook()
                 void tickPaperBook()
               }}
@@ -1819,12 +1879,34 @@ function App() {
           onOpenSwing={() => setActiveView('scan')}
           onOpenIntraday={() => setActiveView('intraday')}
           onOpenResearch={() => setActiveView('research')}
+          onOpenBrief={() => setActiveView('brief')}
+          onOpenCompare={() => setActiveView('compare')}
+          guidedMode={guidedMode}
           dataLive={Boolean(productStatus?.live_ready)}
           lastCandleTime={
             productStatus?.last_candle_time
               ? formatDateTime(productStatus.last_candle_time)
               : null
           }
+        />
+      )}
+
+      {activeView === 'brief' && (
+        <BriefCenter
+          baseUrl={baseUrl}
+          formatPrice={formatPrice}
+          onOpenSwing={() => setActiveView('scan')}
+        />
+      )}
+
+      {activeView === 'compare' && (
+        <CompareNamesDesk
+          baseUrl={baseUrl}
+          formatPrice={formatPrice}
+          onOpenResearch={(sym) => {
+            setSelectedSymbol(sym)
+            setActiveView('research')
+          }}
         />
       )}
 
@@ -2006,7 +2088,11 @@ function App() {
             onOpenResearch={() => {
               setChartEvidenceOpen(false)
               setInspectPlanOpen(false)
-              openStockDetail(selectedOpportunity.symbol, 'eligible')
+              if (selectedOpportunity?.symbol) {
+                setSelectedSymbol(selectedOpportunity.symbol)
+                setSelectedKind('eligible')
+              }
+              setActiveView('research')
             }}
           />
         ) : null}
@@ -2035,7 +2121,9 @@ function App() {
             onOpenResearch={() => {
               setInspectPlanOpen(false)
               setChartEvidenceOpen(false)
-              openStockDetail(selectedOpportunity.symbol, 'eligible')
+              setSelectedSymbol(selectedOpportunity.symbol)
+              setSelectedKind('eligible')
+              setActiveView('research')
             }}
             onOpenChartEvidence={() => setChartEvidenceOpen(true)}
             siblings={showAllOpportunities ? filteredOpportunities : visibleOpportunities}
@@ -2073,8 +2161,6 @@ function App() {
                 sortDir: sortBy === 'rank' || sortBy === 'symbol' ? 'asc' : 'desc',
               }))
             }}
-            accountEquity={accountEquity}
-            baseUrl={baseUrl}
             coveragePct={(() => {
               const after = Number(scanResult.filter_coverage?.after_filters ?? scanResult.symbols_scanned)
               if (!after) return null
@@ -2092,6 +2178,7 @@ function App() {
               intervalSec: refreshInterval,
               onIntervalChange: (next) => {
                 setRefreshInterval(next)
+                setSwingRefreshSec(next)
                 setAutoRefreshActive(true)
               },
               secondsLeft: autoRefreshSecondsLeft,
@@ -2121,8 +2208,6 @@ function App() {
                 formatNumber={formatNumber}
                 formatPercent={formatPercent}
                 formatDateTime={formatDateTime}
-                accountEquity={accountEquity}
-                baseUrl={baseUrl}
                 coveragePct={(() => {
                   const after = Number(scanResult.filter_coverage?.after_filters ?? scanResult.symbols_scanned)
                   if (!after) return null
@@ -2171,7 +2256,7 @@ function App() {
                 void tickPaperBook()
               }}
               onOpenBook={() => {
-                setActiveView('paper')
+                setActiveView('practice')
                 void refreshPaperBook()
                 void tickPaperBook()
               }}
@@ -2229,349 +2314,8 @@ function App() {
           baseUrl={baseUrl}
           accountEquity={accountEquity}
           onEquityChange={setAccountEquity}
+          preferredBoardRefreshSec={Number(intradayRefreshSec) || 30}
         />
-      )}
-
-      {activeView === 'paper' && (
-        <section className="panel">
-          <header className="header-block">
-            <p className="eyebrow">Practice trades</p>
-            <h1>Your practice book</h1>
-            <p className="header-copy">
-              Optional practice mode: after a scan, we watch for the buy/sell price, then exit at the safety exit
-              or profit goal. Live prices refresh about every 15 seconds. Nothing is sent to a real broker.
-            </p>
-          </header>
-
-          <div className="field-group paper-opt-in">
-            <label className="checkbox-label" htmlFor="paper-view-enabled">
-              <input
-                id="paper-view-enabled"
-                type="checkbox"
-                checked={paperTradingEnabled}
-                onChange={(event) => {
-                  setPaperEnabled(event.target.checked)
-                  if (event.target.checked) {
-                    void refreshPaperBook()
-                    void tickPaperBook()
-                  }
-                }}
-              />
-              <span>Turn on practice trades (optional)</span>
-            </label>
-            <p className="field-hint">
-              When on, each scan can watch ready setups. A trade starts only when live price reaches the buy/sell
-              price, and finishes at the safety exit or profit goal.
-            </p>
-          </div>
-          {!paperTradingEnabled ? (
-            <div className="empty-state">
-              <strong>Practice trading is off</strong>
-              <span>Enable the switch above if you want fake trades after a scan. No real money is used.</span>
-            </div>
-          ) : (
-          <>
-          <div className="paper-banner">
-            <strong>{PAPER_CLAIM}</strong>
-            <span>
-              Starts only when live price reaches buy/sell price · closes automatically at safety exit or profit
-              goal
-            </span>
-          </div>
-          {paperNotice && <div className="status ok">{paperNotice}</div>}
-          {paperError && <div className="status error">{paperError}</div>}
-          <div className="paper-capital-strip">
-            <div>
-              <span>Starting capital</span>
-              <strong>{formatPrice(paperCapital.starting)}</strong>
-              <em className="field-hint">From “Your capital” on Find setups</em>
-            </div>
-            <div>
-              <span>Invested (in trades)</span>
-              <strong>{formatPrice(paperCapital.invested)}</strong>
-              <em className="field-hint">Buy/sell price × shares for open trades</em>
-            </div>
-            <div className="paper-capital-remaining">
-              <span>Remaining capital</span>
-              <strong className={valueClass(paperCapital.remaining - paperCapital.starting)}>
-                {formatPrice(paperCapital.remaining)}
-              </strong>
-              <em className="field-hint">Updates when a trade finishes</em>
-            </div>
-            <div>
-              <span>Account value</span>
-              <strong className={valueClass(paperCapital.accountValue - paperCapital.starting)}>
-                {formatPrice(paperCapital.accountValue)}
-              </strong>
-              <em className="field-hint">Remaining + invested + open P/L</em>
-            </div>
-          </div>
-          <div className="field-row two-col paper-capital-edit">
-            <div className="field-group">
-              <label htmlFor="paper-starting-capital">Practice starting capital (₹)</label>
-              <input
-                id="paper-starting-capital"
-                type="number"
-                min="0"
-                step="0.01"
-                value={accountEquity}
-                onChange={(event) => setAccountEquity(event.target.value)}
-              />
-              <p className="field-hint">
-                Same starting capital as Find setups. Remaining cash = starting + locked-in P/L − amount in open
-                trades.
-              </p>
-            </div>
-          </div>
-          <div className="metric-grid metric-grid-five">
-            <div className="metric-card">
-              <span>Waiting for price</span>
-              <strong>{paperBook?.pending_count ?? 0}</strong>
-            </div>
-            <div className="metric-card metric-accent">
-              <span>In trade</span>
-              <strong>{paperBook?.open_count ?? 0}</strong>
-            </div>
-            <div className="metric-card">
-              <span>Open P/L</span>
-              <strong className={valueClass(paperBook?.total_unrealized ?? 0)}>
-                {formatPrice(paperBook?.total_unrealized)}
-              </strong>
-            </div>
-            <div className="metric-card">
-              <span>Finished</span>
-              <strong>{paperBook?.closed_count ?? 0}</strong>
-            </div>
-            <div className="metric-card">
-              <span>Locked-in P/L</span>
-              <strong className={valueClass(paperBook?.total_realized ?? 0)}>
-                {formatPrice(paperBook?.total_realized)}
-              </strong>
-            </div>
-          </div>
-          <div className="table-toolbar">
-            <h3>Waiting for buy/sell price</h3>
-            <button type="button" className="secondary-button" onClick={() => void tickPaperBook()}>
-              Update prices
-            </button>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Stock</th>
-                  <th>Trade type</th>
-                  <th>Shares</th>
-                  <th>Buy/sell at</th>
-                  <th>Safety exit</th>
-                  <th>Profit goal</th>
-                  <th>Live price</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {(paperBook?.trades.filter((t) => t.status === 'PENDING') ?? []).map((trade) => {
-                  const isShort = trade.direction === 'SHORT'
-                  return (
-                    <tr key={`paper-pending-${trade.id}`}>
-                      <td className="symbol-cell">
-                        <button
-                          type="button"
-                          className="symbol-link"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            openStockDetail(trade.symbol)
-                          }}
-                        >
-                          {trade.symbol}
-                        </button>
-                      </td>
-                      <td>
-                        <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                          {directionLabel(isShort ? 'SHORT' : 'LONG')}
-                        </span>
-                      </td>
-                      <td className="num-cell">{trade.quantity}</td>
-                      <td className="num-cell">{formatPrice(trade.entry_price)}</td>
-                      <td className="num-cell">{formatPrice(trade.stop_loss)}</td>
-                      <td className="num-cell">{formatPrice(trade.target)}</td>
-                      <td className="num-cell">
-                        <LiveValue
-                          value={trade.last_mark_price}
-                          formatted={formatPrice(trade.last_mark_price)}
-                        />
-                      </td>
-                      <td>{paperStatusLabel(trade.status)}</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          disabled={paperClosingId === trade.id}
-                          onClick={() => void closePaperTrade(trade.id)}
-                        >
-                          Cancel watch
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-          <div className="table-toolbar">
-            <h3>In trade now</h3>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Stock</th>
-                  <th>Trade type</th>
-                  <th>Shares</th>
-                  <th>Buy/sell at</th>
-                  <th>Safety exit</th>
-                  <th>Profit goal</th>
-                  <th>Live price</th>
-                  <th>Open P/L</th>
-                  <th>Running</th>
-                  <th>Est. profit by</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {(paperBook?.trades.filter((t) => t.status === 'OPEN') ?? []).map((trade) => {
-                  const isShort = trade.direction === 'SHORT'
-                  const outlook = paperOutlookById[trade.id]
-                  return (
-                    <React.Fragment key={`paper-open-${trade.id}`}>
-                    <tr>
-                      <td className="symbol-cell">
-                        <button
-                          type="button"
-                          className="symbol-link"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            openStockDetail(trade.symbol)
-                          }}
-                        >
-                          {trade.symbol}
-                        </button>
-                      </td>
-                      <td>
-                        <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                          {directionLabel(isShort ? 'SHORT' : 'LONG')}
-                        </span>
-                      </td>
-                      <td className="num-cell">{trade.quantity}</td>
-                      <td className="num-cell">{formatPrice(trade.entry_price)}</td>
-                      <td className="num-cell">{formatPrice(trade.stop_loss)}</td>
-                      <td className="num-cell">{formatPrice(trade.target)}</td>
-                      <td className="num-cell">
-                        <LiveValue
-                          value={trade.last_mark_price}
-                          formatted={formatPrice(trade.last_mark_price)}
-                        />
-                      </td>
-                      <td className={`num-cell ${valueClass(trade.unrealized_pnl ?? 0)}`}>
-                        {formatPrice(trade.unrealized_pnl)}
-                      </td>
-                      <td>
-                        <TradeDurationTimer startedAt={trade.opened_at} label="" />
-                      </td>
-                      <td className="eta-cell">
-                        {outlook?.estimated_reach_at
-                          ? Number(outlook.estimated_trading_days) === 0
-                            ? 'Now'
-                            : `${formatDateTime(outlook.estimated_reach_at)} (~${outlook.estimated_trading_days}d)`
-                          : 'Analyzing…'}
-                        {outlook && (
-                          <div className="eta-progress-track" title={`${outlook.progress_pct}% to goal`}>
-                            <div
-                              className="eta-progress-fill"
-                              style={{ width: `${Math.min(100, Math.max(0, Number(outlook.progress_pct) || 0))}%` }}
-                            />
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          disabled={paperClosingId === trade.id}
-                          onClick={() => void closePaperTrade(trade.id)}
-                        >
-                          Close trade
-                        </button>
-                      </td>
-                    </tr>
-                    {outlook && (
-                      <tr className="outlook-summary-row">
-                        <td colSpan={11}>
-                          <p className="field-hint">{outlook.summary}</p>
-                        </td>
-                      </tr>
-                    )}
-                    </React.Fragment>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-          <h3>Finished practice trades</h3>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Stock</th>
-                  <th>Trade type</th>
-                  <th>Shares</th>
-                  <th>Buy/sell at</th>
-                  <th>Exit price</th>
-                  <th>Why closed</th>
-                  <th>Locked-in P/L</th>
-                  <th>Closed on</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(paperBook?.trades.filter((t) => t.status === 'CLOSED') ?? []).map((trade) => {
-                  const isShort = trade.direction === 'SHORT'
-                  return (
-                    <tr key={`paper-closed-${trade.id}`}>
-                      <td className="symbol-cell">
-                        <button
-                          type="button"
-                          className="symbol-link"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            openStockDetail(trade.symbol)
-                          }}
-                        >
-                          {trade.symbol}
-                        </button>
-                      </td>
-                      <td>
-                        <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                          {directionLabel(isShort ? 'SHORT' : 'LONG')}
-                        </span>
-                      </td>
-                      <td className="num-cell">{trade.quantity}</td>
-                      <td className="num-cell">{formatPrice(trade.entry_price)}</td>
-                      <td className="num-cell">{formatPrice(trade.exit_price)}</td>
-                      <td>{exitReasonLabel(trade.exit_reason)}</td>
-                      <td className={`num-cell ${valueClass(trade.realized_pnl ?? 0)}`}>
-                        {formatPrice(trade.realized_pnl)}
-                      </td>
-                      <td>{trade.closed_at ? formatDateTime(trade.closed_at) : '—'}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-          </>
-          )}
-        </section>
       )}
 
       {detailDrawerOpen && selectedSymbol && !scanFocusOpen && (
@@ -2601,10 +2345,64 @@ function App() {
       )}
 
       {activeView === 'research' && (
-        <ResearchDesk baseUrl={baseUrl} />
+        <ResearchDesk
+          baseUrl={baseUrl}
+          initialSymbol={selectedSymbol}
+          accountEquity={accountEquity}
+          riskPercent={riskPercent}
+          formatPrice={formatPrice}
+          formatNumber={formatNumber}
+          formatPercent={formatPercent}
+          formatVolume={formatVolume}
+          formatDateTime={formatDateTime}
+          valueClass={valueClass}
+          onOpenEligibility={() => setActiveView('intraday')}
+          onOpenFilters={() => {
+            setActiveView('scan')
+            setFiltersOpen(true)
+          }}
+        />
       )}
 
-      {activeView === 'practice' && <PracticeBook baseUrl={baseUrl} />}
+      {activeView === 'practice' && (
+        <PracticeBook
+          baseUrl={baseUrl}
+          accountEquity={accountEquity}
+          paperTradingEnabled={paperTradingEnabled}
+          onEnablePaper={() => {
+            setPaperEnabled(true)
+            void refreshPaperBook()
+            void tickPaperBook()
+          }}
+          onTradesChanged={refreshPaperBook}
+          onOpenSwing={() => setActiveView('scan')}
+          onOpenIntraday={() => setActiveView('intraday')}
+        />
+      )}
+
+      {activeView === 'account' && (
+        <AccountShell
+          baseUrl={baseUrl}
+          theme={theme}
+          onThemeChange={setTheme}
+          accountEquity={accountEquity}
+          riskPercent={riskPercent}
+          onEquityChange={setAccountEquity}
+          onRiskChange={setRiskPercent}
+          paperTradingEnabled={paperTradingEnabled}
+          onPaperEnabledChange={setPaperEnabled}
+          onOpenCapital={() => setCapitalRiskOpen(true)}
+          swingRefreshSec={swingRefreshSec}
+          intradayRefreshSec={intradayRefreshSec}
+          practiceTickMode={practiceTickMode}
+          onSaveRefresh={({ swingRefreshSec: swing, intradayRefreshSec: intra, practiceTickMode: practice }) => {
+            setSwingRefreshSec(swing)
+            setIntradayRefreshSec(intra)
+            setPracticeTickMode(practice)
+            setRefreshInterval(swing)
+          }}
+        />
+      )}
 
       <CapitalRisk
         open={capitalRiskOpen}

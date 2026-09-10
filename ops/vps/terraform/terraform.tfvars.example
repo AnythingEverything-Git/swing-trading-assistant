@@ -1,0 +1,25 @@
+# Free Tier–oriented defaults (do not commit real IPs if sensitive).
+
+aws_region   = "ap-south-1"
+project_name = "tradepilot"
+
+# Free Tier eligible in most regions (750 hrs/mo while account is eligible)
+instance_type  = "t3.micro"
+# Free Tier EBS allowance is typically 30 GB total across the account
+root_volume_gb = 30
+
+# Must already exist in ap-south-1 (EC2 → Key pairs)
+key_name = "tradepilot-mumbai"
+
+# Restrict SSH + direct API (:8001) to your home public IP /32
+ssh_ingress_cidr = "203.0.113.10/32"
+api_ingress_cidr = "203.0.113.10/32"
+# Public UI on :80 (also exposes /api via nginx proxy)
+web_ingress_cidr = "0.0.0.0/0"
+
+# EIP is free while attached to a running instance; unpaid if left idle
+create_elastic_ip = true
+
+# Optional: public HTTPS clone URL. Leave "" and scp/rsync instead.
+git_repo_url = ""
+git_ref      = "main"

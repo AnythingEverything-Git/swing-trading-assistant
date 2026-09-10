@@ -12,4 +12,6 @@ build/
 *.pyd
 env/
 /.env
+frontend/.env.local
+frontend/.env.production.local
 node_modules/

@@ -20,7 +20,12 @@ export type IntradayRankedRow = {
   or_low?: string | null
   or_expansion_pct?: string | null
   adv_value?: string | null
+  adv_band?: string | null
   short_allowed?: boolean
+  surveillance_blocked?: boolean
+  corporate_action_blocked?: boolean
+  corporate_action_label?: string | null
+  adv_ok?: boolean
   status?: string
   detail?: string | null
 }
@@ -467,4 +472,43 @@ export async function getPracticeDivergence(baseUrl: string, sessionId: string) 
     }>
     note: string
   }
+}
+
+export async function reconcilePractice(baseUrl: string, sessionId: string) {
+  const response = await fetch(`${baseUrl}/api/v1/intraday/sessions/${sessionId}/practice/reconcile`)
+  if (!response.ok) {
+    let detail = 'Reconcile failed'
+    try {
+      detail = detailFromErrorPayload(await response.json(), detail)
+    } catch {
+      detail = response.statusText || detail
+    }
+    throw new Error(detail)
+  }
+  return (await response.json()) as {
+    session_id?: string
+    trading_halted: boolean
+    issue_count: number
+    issues: Array<{ symbol: string; code: string; detail: string }>
+    note?: string
+    claim?: string
+  }
+}
+
+export async function closePracticeTrade(baseUrl: string, tradeId: number, price: string) {
+  const response = await fetch(`${baseUrl}/api/v1/intraday/practice/${tradeId}/close`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ price }),
+  })
+  if (!response.ok) {
+    let detail = 'Close practice failed'
+    try {
+      detail = detailFromErrorPayload(await response.json(), detail)
+    } catch {
+      detail = response.statusText || detail
+    }
+    throw new Error(detail)
+  }
+  return (await response.json()) as IntradayPracticeTrade
 }

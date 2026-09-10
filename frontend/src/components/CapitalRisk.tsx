@@ -103,41 +103,44 @@ export function CapitalRisk({
       >
         <form className="capital-risk-card" onSubmit={handleSave}>
           <div className="capital-risk-modal-head">
-            <h1 id="capital-risk-title">Your capital &amp; risk</h1>
+            <h1 id="capital-risk-title">Risk coach</h1>
             <button type="button" className="ghost-btn capital-risk-close" onClick={onClose} aria-label="Close">
               ×
             </button>
           </div>
+          <p className="field-hint capital-risk-rec">Recommended: Risk 0.5–1% of capital per trade</p>
 
-          <label className="field capital-risk-field" htmlFor="capital-equity">
-            <span>Account capital</span>
-            <input
-              id="capital-equity"
-              type="number"
-              min="0"
-              step="1000"
-              value={draftEquity}
-              onChange={(e) => setDraftEquity(e.target.value)}
-              autoFocus
-            />
-            <strong className="capital-risk-display">{formatInr(Number(draftEquity))}</strong>
-          </label>
-
-          <label className="field capital-risk-field" htmlFor="capital-risk">
-            <span>Risk per trade</span>
-            <div className="capital-risk-pct-row">
+          <div className="capital-risk-fields">
+            <label className="field capital-risk-field" htmlFor="capital-equity">
+              <span>Account capital</span>
               <input
-                id="capital-risk"
+                id="capital-equity"
                 type="number"
-                min="0.1"
-                max="100"
-                step="0.1"
-                value={draftRisk}
-                onChange={(e) => setDraftRisk(e.target.value)}
+                min="0"
+                step="1000"
+                value={draftEquity}
+                onChange={(e) => setDraftEquity(e.target.value)}
+                autoFocus
               />
-              <span className="capital-risk-pct-suffix">%</span>
-            </div>
-          </label>
+              <strong className="capital-risk-display">{formatInr(Number(draftEquity))}</strong>
+            </label>
+
+            <label className="field capital-risk-field" htmlFor="capital-risk">
+              <span>Risk per trade</span>
+              <div className="capital-risk-pct-row">
+                <input
+                  id="capital-risk"
+                  type="number"
+                  min="0.1"
+                  max="100"
+                  step="0.1"
+                  value={draftRisk}
+                  onChange={(e) => setDraftRisk(e.target.value)}
+                />
+                <span className="capital-risk-pct-suffix">%</span>
+              </div>
+            </label>
+          </div>
 
           <div className="capital-risk-example" role="status">
             {preview ? (
@@ -153,7 +156,7 @@ export function CapitalRisk({
 
           <div className="capital-risk-actions">
             <button type="submit" className="primary-button">
-              Save
+              Save capital
             </button>
             <p className="capital-risk-note">Engine owns Entry/SL — risk % only sizes qty.</p>
             {savedFlash ? <span className="capital-risk-saved">Saved to workspace</span> : null}

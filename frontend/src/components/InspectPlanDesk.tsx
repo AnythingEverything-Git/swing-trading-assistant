@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { Opportunity } from '../scan/types'
 import { strategyConfidencePercent } from '../scan/resultControls'
 import { directionLabel } from '../terminology'
@@ -44,6 +44,7 @@ export function InspectPlanDesk({
   siblings,
   onSelectSibling,
 }: Props) {
+  const [stepsOpen, setStepsOpen] = useState(false)
   const isShort = opportunity.candidate.direction === 'SHORT'
   const score = strategyConfidencePercent(opportunity.quality_score)
   const structureIsFloor = isShort
@@ -179,13 +180,22 @@ export function InspectPlanDesk({
         </article>
 
         <article className="inspect-tile inspect-how">
-          <h3 className="inspect-tile-label">How decided</h3>
-          <PlanDeductionPanel
-            symbol={opportunity.symbol}
-            steps={deductionSteps}
-            baseUrl={baseUrl}
-            compact
-          />
+          <h3 className="inspect-tile-label">Strategy Steps</h3>
+          <p className="field-hint inspect-how-copy">
+            Walk through how Entry, Stop, and Target were derived from strategy rules — AI may polish wording
+            only.
+          </p>
+          <button type="button" className="secondary-button" onClick={() => setStepsOpen(true)}>
+            View Strategy Steps
+          </button>
+          {stepsOpen ? (
+            <PlanDeductionPanel
+              symbol={opportunity.symbol}
+              steps={deductionSteps}
+              baseUrl={baseUrl}
+              onClose={() => setStepsOpen(false)}
+            />
+          ) : null}
         </article>
 
         <article className="inspect-tile inspect-price">

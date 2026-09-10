@@ -12,7 +12,12 @@ from app.application.intraday.session_service import (
 from app.application.market_data.query_service import MarketDataQueryService
 from app.domain.intraday.asset_class import morning_universe_symbols
 from app.domain.intraday.config_v1 import DEFAULT_CONFIG_V1, IntradayConfigV1
-from app.domain.intraday.eligibility import eligibility_flags, is_short_allowed, is_surveillance_blocked
+from app.domain.intraday.eligibility import (
+    corporate_action_label,
+    eligibility_flags,
+    is_short_allowed,
+    is_surveillance_blocked,
+)
 from app.domain.intraday.engine import screen_symbol
 from app.domain.intraday.rank import rank_candidates_split
 from app.domain.intraday.session_calendar import IST, combine_ist
@@ -80,6 +85,15 @@ def _eligibility_row(
     detail: str | None = None,
 ) -> dict[str, Any]:
     flags = eligibility_flags(symbol, session_date)
+    if adv_value >= config.min_adv_inr * 2:
+        adv_band = "High"
+    elif adv_value >= config.min_adv_inr:
+        adv_band = "Medium"
+    elif adv_value > 0:
+        adv_band = "Low"
+    else:
+        adv_band = "—"
+    ca_label = corporate_action_label(symbol, session_date)
     return {
         "rank": None,
         "symbol": symbol,
@@ -90,9 +104,11 @@ def _eligibility_row(
         "or_low": None,
         "or_expansion_pct": None,
         "adv_value": str(adv_value),
+        "adv_band": adv_band,
         "short_allowed": flags["short_allowed"],
         "surveillance_blocked": flags["surveillance_blocked"],
         "corporate_action_blocked": flags["corporate_action_blocked"],
+        "corporate_action_label": ca_label,
         "adv_ok": adv_value >= config.min_adv_inr,
         "status": reason,
         "detail": detail,

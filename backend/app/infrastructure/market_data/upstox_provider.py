@@ -437,12 +437,22 @@ class UpstoxMarketDataProvider(MarketDataProvider):
                     "expiry": item.get("expiry"),
                     "call_ltp": _num(call_md, "ltp"),
                     "call_oi": _num(call_md, "oi"),
+                    "call_oi_change": None,
                     "call_iv": _num(call_g, "iv"),
                     "put_ltp": _num(put_md, "ltp"),
                     "put_oi": _num(put_md, "oi"),
+                    "put_oi_change": None,
                     "put_iv": _num(put_g, "iv"),
                 }
             )
+            call_oi = rows[-1]["call_oi"]
+            put_oi = rows[-1]["put_oi"]
+            call_prev = _num(call_md, "prev_oi")
+            put_prev = _num(put_md, "prev_oi")
+            if call_oi is not None and call_prev is not None:
+                rows[-1]["call_oi_change"] = call_oi - call_prev
+            if put_oi is not None and put_prev is not None:
+                rows[-1]["put_oi_change"] = put_oi - put_prev
 
         rows = [row for row in rows if row.get("strike") is not None]
         rows.sort(key=lambda row: row["strike"])

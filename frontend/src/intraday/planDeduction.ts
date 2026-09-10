@@ -2,7 +2,7 @@
 
 import { directionLabel, ORB_V1_RULES } from '../terminology'
 import type { DeductionStep } from '../planDeduction'
-import type { IntradayClosedTrade, IntradayFill, IntradaySymbolResult } from './api'
+import type { IntradayClosedTrade, IntradayFill, IntradayRankedRow, IntradaySymbolResult } from './api'
 
 type FormatPrice = (value: string | number | null | undefined) => string
 
@@ -114,4 +114,74 @@ export function buildOrbDeductionSteps(input: {
   ]
 
   return steps
+}
+
+export function buildOrbBoardDeductionSteps(input: {
+  row: IntradayRankedRow
+  formatPrice: FormatPrice
+}): DeductionStep[] {
+  const { row, formatPrice } = input
+  const isEligibility =
+    row.status === 'ADV_OK' ||
+    row.status === 'WATCHLIST' ||
+    row.status === 'LOW_ADV' ||
+    row.status === 'SURVEILLANCE_BLOCKED' ||
+    row.status === 'CORPORATE_ACTION_BLOCK' ||
+    (row.rvol5 == null && (row.adv_value != null || row.adv_band != null))
+
+  if (isEligibility) {
+    return [
+      {
+        id: 'phase',
+        title: 'Pre-OR eligibility',
+        value: row.status || 'WATCHLIST',
+        summary: 'Before 09:20 the board shows liquidity and caution flags only — OR ranks are not final.',
+        details: [
+          `ADV band: ${row.adv_band || '—'}`,
+          row.adv_value != null ? `ADV (≈): ${formatPrice(row.adv_value)}` : 'ADV pending 1d seed',
+          row.detail || 'Full RVOL ranking starts when the opening range closes.',
+        ],
+      },
+      {
+        id: 'flags',
+        title: 'Caution flags',
+        value: row.surveillance_blocked || row.corporate_action_blocked ? 'Blocked / caution' : 'Clear',
+        summary: 'Surveillance and corporate-action blocks come from the eligibility files — not the LLM.',
+        details: [
+          `Surveillance: ${row.surveillance_blocked ? 'Yes' : 'No'}`,
+          `Corporate action: ${row.corporate_action_label || (row.corporate_action_blocked ? 'Blocked' : 'None')}`,
+          `Short-allow: ${row.short_allowed === false ? 'No' : 'Yes'}`,
+        ],
+      },
+    ]
+  }
+
+  const side = row.direction ?? 'LONG'
+  const rvol = row.rvol5 != null ? Number(row.rvol5).toFixed(2) : '—'
+  return [
+    {
+      id: 'direction',
+      title: 'Trade type',
+      value: directionLabel(side),
+      summary:
+        side === 'SHORT'
+          ? 'Opening range closed nearer the low → rules look for a breakdown short.'
+          : 'Opening range closed nearer the high → rules look for a breakout long.',
+      details: [
+        `OR high: ${row.or_high != null ? formatPrice(row.or_high) : '—'}`,
+        `OR low: ${row.or_low != null ? formatPrice(row.or_low) : '—'}`,
+        `Opening range window: ${ORB_V1_RULES.orWindow}.`,
+      ],
+    },
+    {
+      id: 'screen',
+      title: 'Relative volume screen',
+      value: row.rank != null ? `Rank #${row.rank} · RVOL5 ${rvol}` : `RVOL5 ${rvol}`,
+      summary: 'Morning board ranks stocks and ETFs in separate Top-N pools by RVOL5.',
+      details: [
+        `Status: ${row.status || 'RANKED'}`,
+        row.detail || 'Numbers come from the ORB engine — AI only rephrases.',
+      ],
+    },
+  ]
 }

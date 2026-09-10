@@ -199,13 +199,19 @@ async def test_backtest_closes_open_trade_at_end_of_data():
 
 
 @pytest.mark.asyncio
-async def test_backtest_skips_setup_confirmed_on_final_candle():
+async def test_backtest_marks_setup_confirmed_on_final_candle_to_market():
+    """Latest-bar confirmations still produce a trade via END_OF_DATA exit."""
     candles = make_candles(["90", "95", "100"])
     result = await BacktestService(CandleProvider(candles), SignalStrategy()).run(
         "TST", "1d", candles[0].timestamp, candles[-1].timestamp, Decimal("1000"), Decimal("1")
     )
 
-    assert result.trades == ()
+    assert len(result.trades) == 1
+    trade = result.trades[0]
+    assert trade.exit_reason.value == "END_OF_DATA"
+    assert trade.entry_time == candles[-1].timestamp
+    assert trade.exit_time == candles[-1].timestamp
+    assert trade.exit_price == candles[-1].close
 
 
 @pytest.mark.asyncio

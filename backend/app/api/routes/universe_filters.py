@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,45 @@ _REASON_COPY: dict[str, tuple[str, str]] = {
 @router.get("/supported")
 async def supported_universes() -> dict:
     return {"universes": list(SUPPORTED_UNIVERSE_NAMES), "default": "NSE_ALL"}
+
+
+@router.get("/symbols")
+async def search_universe_symbols(
+    q: str = Query(default=""),
+    limit: int = Query(default=20, ge=1, le=50),
+    universe: str = Query(default="NSE_ALL"),
+) -> dict:
+    """Prefix/contains autocomplete over a packaged NSE universe."""
+    query = (q or "").strip().upper()
+    universe_name = (universe or "NSE_ALL").strip().upper()
+    if universe_name not in SUPPORTED_UNIVERSE_NAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"universe must be one of: {', '.join(SUPPORTED_UNIVERSE_NAMES)}",
+        )
+    try:
+        snap = get_universe(universe_name).get_snapshot()
+    except Exception as exc:  # pragma: no cover - file/config errors
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    symbols = list(snap.symbols)
+    if query:
+        starts = [s for s in symbols if s.startswith(query)]
+        contains = [s for s in symbols if query in s and not s.startswith(query)]
+        ranked = starts + contains
+    else:
+        ranked = symbols
+
+    matches = ranked[:limit]
+    return {
+        "universe": snap.name,
+        "universe_version": snap.version,
+        "query": query,
+        "count": len(matches),
+        "symbols": [
+            {"symbol": sym, "asset_class": classify_asset_class(sym)} for sym in matches
+        ],
+    }
 
 
 @router.get("/presets")

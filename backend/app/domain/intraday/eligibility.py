@@ -157,6 +157,16 @@ def is_corporate_action_blocked(
     block_sessions: int = 1,
 ) -> bool:
     """True if symbol has an ex-date on session_date or within prior ``block_sessions-1`` weekdays."""
+    return corporate_action_label(symbol, session_date, block_sessions=block_sessions) is not None
+
+
+def corporate_action_label(
+    symbol: str,
+    session_date: date,
+    *,
+    block_sessions: int = 1,
+) -> str | None:
+    """Return CA type label when the symbol is blocked for the session, else None."""
     sym = symbol.strip().upper()
     if block_sessions < 1:
         block_sessions = 1
@@ -169,11 +179,10 @@ def is_corporate_action_blocked(
         except (KeyError, ValueError):
             continue
         sessions = int(item.get("block_sessions") or block_sessions)
-        # Block on ex_date and the previous ``sessions-1`` calendar weekdays approximation.
+        blocked = False
         if ex == session_date:
-            return True
-        if sessions > 1 and window_start <= ex < session_date:
-            # Count weekdays between ex and session
+            blocked = True
+        elif sessions > 1 and window_start <= ex < session_date:
             gap = 0
             cur = ex
             while cur < session_date:
@@ -183,8 +192,11 @@ def is_corporate_action_blocked(
                 if gap >= sessions:
                     break
             if 0 < gap < sessions:
-                return True
-    return False
+                blocked = True
+        if blocked:
+            label = str(item.get("type") or item.get("action") or "CA").strip()
+            return label or "CA"
+    return None
 
 
 def eligibility_flags(symbol: str, session_date: date) -> dict[str, bool]:
@@ -211,5 +223,6 @@ __all__ = [
     "is_surveillance_blocked",
     "is_short_allowed",
     "is_corporate_action_blocked",
+    "corporate_action_label",
     "eligibility_flags",
 ]

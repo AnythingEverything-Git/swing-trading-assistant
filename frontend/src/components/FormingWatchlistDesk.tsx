@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import type { FormingSetup, OpportunityScanResponse } from '../scan/types'
 import type { DirectionFilter, FormingControls, FormingStageFilter } from '../scan/resultControls'
 import { formingStageLabel, directionLabel } from '../terminology'
-import { AskTradePilotPanel } from './FindSetupsDesk'
 import { LiveValue } from './LiveValue'
 
 export const DEFAULT_FORMING_PAGE_SIZE = 20
@@ -73,8 +72,6 @@ type Props = {
   formatNumber: (value: string | number | null | undefined, digits?: number) => string
   formatPercent: (value: string | number | null | undefined) => string
   formatDateTime: (value: string | null | undefined) => string
-  accountEquity: string
-  baseUrl: string
   coveragePct: number | null
   dataAsOf: string | null
   onRefresh: () => void
@@ -96,8 +93,6 @@ export function FormingWatchlistDesk({
   formatNumber,
   formatPercent,
   formatDateTime,
-  accountEquity,
-  baseUrl,
   coveragePct,
   dataAsOf,
   onRefresh,
@@ -339,12 +334,6 @@ export function FormingWatchlistDesk({
               </p>
             ) : null}
           </section>
-          <AskTradePilotPanel
-            baseUrl={baseUrl}
-            selected={null}
-            forming={selected}
-            accountEquity={accountEquity}
-          />
         </aside>
       </div>
 

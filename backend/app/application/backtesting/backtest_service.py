@@ -75,9 +75,8 @@ class BacktestService:
             if result.evidence.confirmation_candle_index != cursor:
                 cursor += 1
                 continue
-            if cursor == len(candles) - 1:
-                cursor += 1
-                continue
+            # Last-bar confirmations are still tradable: exit via END_OF_DATA / mark-to-market
+            # on the final close when no subsequent bar exists (see _find_exit).
             sizing = calculate_position_size(current_equity, risk_percent, candidate)
             if sizing.quantity == 0:
                 cursor += 1
@@ -134,7 +133,8 @@ class BacktestService:
                 )
             )
             current_equity += net_pnl
-            cursor = exit_index + 1
+            # Advance past the exit so we do not re-enter the same setup window.
+            cursor = max(exit_index + 1, confirmation_index + 1)
 
         return tuple(trades)
 

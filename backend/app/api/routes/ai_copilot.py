@@ -13,6 +13,10 @@ _PRICE_ASK = re.compile(
     r"\b(entry|stop|sl|target|or high|or low|opening range|give me (a |the )?price)\b",
     re.I,
 )
+_BLOCKED_ASK = re.compile(
+    r"\b(why\s+blocked|invalidat|not eligible|surveillance|blocked|cannot\s+arm)\b",
+    re.I,
+)
 
 
 class AskRequest(BaseModel):
@@ -20,10 +24,34 @@ class AskRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+def _plain_english_block(reason_code: str | None, invalidation: str | None, detail: str | None) -> str:
+    code = (reason_code or "").upper()
+    if "SURVEILLANCE" in code:
+        return "This name is on surveillance — TradePilot will not arm a trade."
+    if "CORPORATE" in code or "CA_" in code:
+        return "A corporate-action window blocks this name for the session — TradePilot will not arm a trade."
+    if "SHORT" in code and "NOT" in code:
+        return "Shorts are not permitted for this name — the engine will not arm a short."
+    if invalidation:
+        return invalidation
+    if detail:
+        return str(detail)
+    if reason_code:
+        return f"Engine reason code {reason_code} — TradePilot will not override CONFIG_V1."
+    return "No block or invalidation facts are in context yet. Select a setup or a skipped name first."
+
+
 def _grounded_answer(question: str, context: dict[str, Any]) -> dict[str, Any]:
     q = question.strip()
     evidence = context.get("evidence") if isinstance(context.get("evidence"), dict) else {}
     symbol = context.get("symbol") or evidence.get("symbol")
+    invalidation = context.get("invalidation") or evidence.get("invalidation")
+    reason_code = context.get("reason_code") or evidence.get("reason_code") or context.get("block_reason")
+    detail = context.get("detail") or evidence.get("detail")
+    checklist = context.get("invalidation_checklist")
+    if not isinstance(checklist, list):
+        checklist = []
+
     levels = {
         "entry": evidence.get("entry") or evidence.get("entry_price"),
         "stop": evidence.get("stop") or evidence.get("stop_loss"),
@@ -50,7 +78,44 @@ def _grounded_answer(question: str, context: dict[str, Any]) -> dict[str, Any]:
             "citations": list(known.keys()),
         }
 
-    if re.search(r"\b(why|explain|blocked|eligible|armed)\b", q, re.I):
+    if _BLOCKED_ASK.search(q) or (invalidation and re.search(r"\bwhy\b", q, re.I)):
+        plain = _plain_english_block(
+            str(reason_code) if reason_code else None,
+            str(invalidation) if invalidation else None,
+            str(detail) if detail else None,
+        )
+        lines = [
+            f"Setup blocked" if reason_code else "Invalidation",
+            f"Symbol: {symbol or '—'}",
+        ]
+        if reason_code:
+            lines.append(f"Reason: {reason_code}")
+        lines.append("")
+        lines.append(f"Plain English: {plain}")
+        if checklist:
+            lines.append("")
+            lines.append("Invalidation checklist:")
+            for item in checklist:
+                lines.append(f"- {item}")
+        elif invalidation and not reason_code:
+            lines.append("")
+            lines.append("Invalidation checklist:")
+            lines.append(f"- {invalidation}")
+        lines.append("")
+        lines.append("Note: Cannot override CONFIG_V1")
+        return {
+            "answer": "\n".join(lines),
+            "refused_invention": False,
+            "citations": [c for c in ["invalidation", "reason_code", "detail"] if context.get(c) or evidence.get(c)],
+            "kind": "invalidation",
+            "plain_english": plain,
+            "reason_code": reason_code,
+            "invalidation_checklist": checklist
+            or ([invalidation] if invalidation and not reason_code else []),
+            "config_note": "Cannot override CONFIG_V1",
+        }
+
+    if re.search(r"\b(why|explain|eligible|armed)\b", q, re.I):
         reason = context.get("reason") or evidence.get("reason") or context.get("detail")
         if reason:
             return {

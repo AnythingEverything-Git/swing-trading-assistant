@@ -12,7 +12,7 @@
 | Use case | Status |
 |----------|--------|
 | Demo / persisted ORB session run | ✅ |
-| Beginner + power desk (labels, Top ideas, How decided, CSV) | ✅ |
+| Beginner + power desk (labels, Top ideas, Strategy Steps, CSV) | ✅ |
 | OR evidence chart 1m + 5m | ✅ |
 | Intraday practice (seed / live LTP tick / 15:10 flatten) | ✅ |
 | Practice seed respects CONFIG_V1 portfolio locks | ✅ |

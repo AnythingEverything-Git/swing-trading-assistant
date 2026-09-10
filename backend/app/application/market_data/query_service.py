@@ -7,6 +7,16 @@ from app.domain.market_data import Candle as DomainCandle
 from app.infrastructure.database.repositories.instrument_repository import InstrumentRepository
 from app.infrastructure.database.repositories.candle_repository import CandleRepository
 
+_DEFAULT_EXCHANGE = "NSE"
+
+
+def _instrument_exchange(inst: object) -> str:
+    """Domain candles require a non-empty exchange; older rows may have NULL."""
+    raw = getattr(inst, "exchange", None)
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return _DEFAULT_EXCHANGE
+
 
 class MarketDataQueryService:
     def __init__(self, instrument_repo: InstrumentRepository, candle_repo: CandleRepository) -> None:
@@ -19,12 +29,13 @@ class MarketDataQueryService:
             return []
 
         rows = await self.candle_repo.get_range(inst.id, timeframe, start, end)
+        exchange = _instrument_exchange(inst)
         out: List[DomainCandle] = []
         for r in rows:
             out.append(
                 DomainCandle(
                     symbol=symbol,
-                    exchange=getattr(inst, "exchange", None),
+                    exchange=exchange,
                     instrument_id=inst.id,
                     timeframe=r.timeframe,
                     timestamp=r.timestamp,
@@ -68,7 +79,7 @@ class MarketDataQueryService:
             grouped.setdefault(inst.symbol, []).append(
                 DomainCandle(
                     symbol=inst.symbol,
-                    exchange=getattr(inst, "exchange", None),
+                    exchange=_instrument_exchange(inst),
                     instrument_id=inst.id,
                     timeframe=row.timeframe,
                     timestamp=row.timestamp,

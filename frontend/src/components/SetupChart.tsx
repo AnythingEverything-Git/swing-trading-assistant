@@ -19,6 +19,7 @@ export type ChartCandle = {
 type Levels = {
   resistance?: string | number | null
   support?: string | number | null
+  trendline?: string | number | null
   entry?: string | number | null
   stop?: string | number | null
   target?: string | number | null
@@ -48,18 +49,19 @@ export function SetupChart({
   candles: ChartCandle[]
   levels: Levels
   height?: number
-  /** Inspect: plan levels only. Evidence: structure + plan + markers. */
-  variant?: 'default' | 'inspect' | 'evidence'
+  /** Inspect: plan levels only. Evidence: structure + plan + markers. Structure: S/R + trendline. */
+  variant?: 'default' | 'inspect' | 'evidence' | 'structure'
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const isInspect = variant === 'inspect'
   const isEvidence = variant === 'evidence'
-  const roomy = isInspect || isEvidence
+  const isStructure = variant === 'structure'
+  const roomy = isInspect || isEvidence || isStructure
 
   useEffect(() => {
     if (!hostRef.current || candles.length === 0) return
     const host = hostRef.current
-    const chartHeight = Math.max(height, host.clientHeight || height)
+    const chartHeight = height
 
     const chart = createChart(host, {
       width: host.clientWidth || 860,
@@ -226,6 +228,10 @@ export function SetupChart({
       addLine(levels.entry, 'Entry', '#16a34a', { style: LineStyle.Solid })
       addLine(levels.stop, 'Stop', '#dc2626')
       addLine(levels.target, 'Target', '#0369a1')
+    } else if (isStructure) {
+      addLine(levels.support, 'Support', '#c2410c')
+      addLine(levels.resistance, 'Resistance', '#0f766e', { style: LineStyle.Solid })
+      addLine(levels.trendline, 'Trendline', '#64748b', { style: LineStyle.Solid })
     } else if (isEvidence) {
       addLine(levels.resistance, 'Ceiling', '#0f766e')
       addLine(levels.support, 'Support', '#c2410c', { style: LineStyle.Solid })
@@ -243,10 +249,10 @@ export function SetupChart({
     chart.timeScale().fitContent()
     const syncSize = () => {
       if (!hostRef.current) return
-      const nextH = Math.max(height, hostRef.current.clientHeight || height)
+      // Width only — never grow height from the host (avoids ResizeObserver feedback loops).
       chart.applyOptions({
-        width: hostRef.current.clientWidth,
-        height: nextH,
+        width: hostRef.current.clientWidth || 860,
+        height,
       })
     }
     const observer = new ResizeObserver(syncSize)
@@ -256,10 +262,17 @@ export function SetupChart({
       observer.disconnect()
       chart.remove()
     }
-  }, [candles, levels, height, isInspect, isEvidence, roomy])
+  }, [candles, levels, height, isInspect, isEvidence, isStructure, roomy])
 
   if (candles.length === 0) {
-    return <p className="field-hint">No candles for this range.</p>
+    return (
+      <div
+        className={`setup-chart${roomy ? ' is-inspect' : ''} is-empty`}
+        style={{ ['--setup-chart-height' as string]: `${height}px` }}
+      >
+        <p className="field-hint setup-chart-empty">No candles for this range.</p>
+      </div>
+    )
   }
 
   return (

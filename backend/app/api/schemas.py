@@ -287,6 +287,21 @@ class PerformancePointResponse(BaseModel):
     change_percent: Decimal | None = None
 
 
+class FaProxyMetricResponse(BaseModel):
+    label: str
+    value: str | None = None
+    change_percent: Decimal | None = None
+    available: bool = True
+    note: str | None = None
+
+
+class QualityCheckResponse(BaseModel):
+    id: str
+    label: str
+    status: str  # clear | warn
+    detail: str
+
+
 class OverviewResearchResponse(BaseModel):
     symbol: str
     timeframe: str
@@ -298,6 +313,13 @@ class OverviewResearchResponse(BaseModel):
     candle_count: int = 0
     current_price: Decimal | None = None
     current_price_change_percent: Decimal | None = None
+    sector: str | None = None
+    caution_flags: list[str] = Field(default_factory=list)
+    quality_flags: list[str] = Field(default_factory=list)
+    quality_checks: list[QualityCheckResponse] = Field(default_factory=list)
+    caution_summary: str | None = None
+    range_52w_position_pct: Decimal | None = None
+    fa_proxies: list[FaProxyMetricResponse] = Field(default_factory=list)
 
 
 class IndicatorReadingResponse(BaseModel):
@@ -324,6 +346,18 @@ class TechnicalResearchResponse(BaseModel):
     indicators: list[IndicatorReadingResponse] = []
     pivots: PivotLevelsResponse | None = None
     volume_vs_sma: Decimal | None = None
+    # UC-D2 technical panel
+    support: Decimal | None = None
+    resistance: Decimal | None = None
+    trendline: Decimal | None = None
+    atr: Decimal | None = None
+    swing_fit: str | None = None
+    swing_eligible: bool = False
+    orb_snapshot: Decimal | None = None
+    orb_high: Decimal | None = None
+    orb_low: Decimal | None = None
+    orb_armed: bool = False
+    orb_status: str | None = None
 
 
 class OptionChainRowResponse(BaseModel):
@@ -331,9 +365,11 @@ class OptionChainRowResponse(BaseModel):
     expiry: str | None = None
     call_ltp: Decimal | None = None
     call_oi: Decimal | None = None
+    call_oi_change: Decimal | None = None
     call_iv: Decimal | None = None
     put_ltp: Decimal | None = None
     put_oi: Decimal | None = None
+    put_oi_change: Decimal | None = None
     put_iv: Decimal | None = None
 
 
@@ -343,6 +379,17 @@ class FnoResearchResponse(BaseModel):
     expiry: str | None = None
     spot: Decimal | None = None
     pcr: Decimal | None = None
+    futures_ltp: Decimal | None = None
+    futures_premium: Decimal | None = None
+    futures_premium_status: str = "unavailable"
+    oi_change: Decimal | None = None
+    call_oi_change: Decimal | None = None
+    put_oi_change: Decimal | None = None
+    oi_change_status: str = "unavailable"
+    call_wall_strike: Decimal | None = None
+    put_wall_strike: Decimal | None = None
+    call_wall_oi: Decimal | None = None
+    put_wall_oi: Decimal | None = None
     rows: list[OptionChainRowResponse] = []
     status: str = "ok"
     detail: str | None = None
@@ -356,10 +403,23 @@ class NewsItemResponse(BaseModel):
     url: str | None = None
 
 
+class CorporateActionItemResponse(BaseModel):
+    symbol: str
+    ex_date: str
+    type: str
+    block_sessions: int = 1
+    end_date: str | None = None
+    source: str = "local"
+    label: str | None = None
+
+
 class NewsEventsResearchResponse(BaseModel):
     symbol: str
     announcements: list[NewsItemResponse] = []
     events: list[NewsItemResponse] = []
+    corporate_actions: list[CorporateActionItemResponse] = Field(default_factory=list)
+    trading_caution: bool = False
+    caution_summary: str | None = None
     status: str = "ok"
     detail: str | None = None
 
@@ -515,6 +575,10 @@ class SimilarSetupItemResponse(BaseModel):
     blurb: str | None = None
     blurb_provider: str = "template"
     scan_run_id: int | None = None
+    entry_price: Decimal | None = None
+    stop_loss: Decimal | None = None
+    target: Decimal | None = None
+    setup_name: str | None = None
 
 
 class SimilarSetupsResponse(BaseModel):
@@ -522,6 +586,9 @@ class SimilarSetupsResponse(BaseModel):
     direction: str | None = None
     matches: list[SimilarSetupItemResponse]
     provider: str = "template"
+    query_source: str | None = None
+    setup_family: str | None = None
+    detail: str | None = None
 
 
 class PaperTradeResponse(BaseModel):
