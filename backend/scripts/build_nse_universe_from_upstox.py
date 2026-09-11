@@ -49,7 +49,8 @@ def _is_cash_eq(item: dict) -> bool:
     if item.get("segment") != "NSE_EQ":
         return False
     itype = str(item.get("instrument_type") or "").strip().upper()
-    return itype in {"EQ", "ETF"}
+    # Include BE (trade-to-trade) so HEG/HFCL-class symbols stay in cash master maps.
+    return itype in {"EQ", "ETF", "BE"}
 
 
 def _sector(item: dict) -> str:
@@ -82,12 +83,15 @@ def main() -> None:
             continue
         symbol = str(item.get("trading_symbol") or "").strip().upper()
         key = str(item.get("instrument_key") or "").strip()
+        itype = str(item.get("instrument_type") or "").strip().upper()
         if not symbol or not key:
             continue
         # Skip series suffixes / odd lots that aren't plain cash tickers
         if " " in symbol or "-" in symbol:
             continue
-        mappings[symbol] = key
+        # Prefer EQ over BE when both exist for the same trading symbol.
+        if symbol not in mappings or itype == "EQ":
+            mappings[symbol] = key
         sectors[symbol] = _sector(item)
         if _is_etf(item):
             if symbol not in seen_etf:

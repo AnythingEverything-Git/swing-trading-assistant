@@ -1,0 +1,11 @@
+#!/bin/bash
+set -euo pipefail
+# Minimal bootstrap for ephemeral backfill worker (no long-lived app).
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y --no-install-recommends ca-certificates curl git docker.io docker-compose-v2
+systemctl enable --now docker
+usermod -aG docker ubuntu || true
+mkdir -p /opt/tradepilot /var/log/tradepilot
+chown ubuntu:ubuntu /opt/tradepilot /var/log/tradepilot
+echo "tradepilot-backfill ready" > /var/log/tradepilot/bootstrap.log

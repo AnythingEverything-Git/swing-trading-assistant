@@ -10,9 +10,9 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: swingdb
-    # Bind to localhost only — do not expose Postgres to the public internet on a VPS.
+    # SG-guarded: allow VPC peers (ephemeral backfill worker). Do NOT open 5432 in SG to 0.0.0.0/0.
     ports:
-      - "127.0.0.1:5432:5432"
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -36,8 +36,9 @@ services:
       MARKET_DATA_REFRESH_RUN_ON_STARTUP: ${MARKET_DATA_REFRESH_RUN_ON_STARTUP:-false}
       INTRADAY_1M_REFRESH_ENABLED: ${INTRADAY_1M_REFRESH_ENABLED:-true}
       INTRADAY_1M_REFRESH_INTERVAL_SEC: ${INTRADAY_1M_REFRESH_INTERVAL_SEC:-600}
-      INTRADAY_1M_REFRESH_UNIVERSE: ${INTRADAY_1M_REFRESH_UNIVERSE:-NSE_ALL}
-      INTRADAY_1M_REFRESH_LIMIT: ${INTRADAY_1M_REFRESH_LIMIT:-3000}
+      # Free Tier defaults: light in-app loop. Bulk today = cron NIFTY_500.
+      INTRADAY_1M_REFRESH_UNIVERSE: ${INTRADAY_1M_REFRESH_UNIVERSE:-NIFTY_50}
+      INTRADAY_1M_REFRESH_LIMIT: ${INTRADAY_1M_REFRESH_LIMIT:-50}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://127.0.0.1}
     ports:
       - "${API_PORT:-8001}:8001"

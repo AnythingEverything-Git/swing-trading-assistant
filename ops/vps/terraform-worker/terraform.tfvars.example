@@ -1,0 +1,12 @@
+# Ephemeral backfill worker — DO NOT leave applied overnight.
+# Copy to terraform.tfvars (gitignored) and fill real values.
+
+aws_region   = "ap-south-1"
+project_name = "tradepilot"
+
+instance_type  = "t3.micro"
+root_volume_gb = 8
+
+key_name         = "ec2KeyPair"
+ssh_ingress_cidr = "203.0.113.10/32"
+live_instance_name = "tradepilot-live"

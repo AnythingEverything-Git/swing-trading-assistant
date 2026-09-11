@@ -377,11 +377,11 @@ export function IntradayDesk({
   onEquityChange,
   preferredBoardRefreshSec = 30,
 }: Props) {
-  const [universe, setUniverse] = useState<IntradayUniverse>('DEMO_SAMPLE')
+  const [universe, setUniverse] = useState<IntradayUniverse>('NIFTY_500')
   const [boardFilters, setBoardFilters] = useState<UniverseFilterState>(DEFAULT_FILTERS)
   const [symbolsText, setSymbolsText] = useState(DEMO_SAMPLE)
   const [sessionDate, setSessionDate] = useState(todayIsoDate)
-  const [source, setSource] = useState<'demo' | 'persisted'>('demo')
+  const [source, setSource] = useState<'demo' | 'persisted'>('persisted')
   const [showHow, setShowHow] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
   const [coverageOpen, setCoverageOpen] = useState(false)

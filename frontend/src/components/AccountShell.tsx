@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { RiskCoachPanel } from './RiskCoachPanel'
+import { SchedulerOpsPanel } from './SchedulerOpsPanel'
 import { listScanRuns } from '../scan/api'
 import { listIntradaySessions } from '../intraday/api'
 import { PAPER_CLAIM } from '../terminology'
 
 type ThemeChoice = 'light' | 'dark' | 'system'
-type AccountTab = 'risk' | 'alerts' | 'appearance' | 'export' | 'plans' | 'broker'
+type AccountTab = 'risk' | 'alerts' | 'appearance' | 'export' | 'plans' | 'broker' | 'ops'
 type TradingMode = 'paper' | 'broker'
 
 type Props = {
@@ -374,6 +375,7 @@ export function AccountShell({
             {tab === 'export' && 'Export & audit'}
             {tab === 'plans' && 'Account & plans'}
             {tab === 'broker' && 'Broker & trading mode'}
+            {tab === 'ops' && 'Schedulers'}
           </h1>
           <p className="header-copy">
             {tab === 'risk'
@@ -382,7 +384,9 @@ export function AccountShell({
                 ? 'Choose theme and how often Swing, Intraday, and Practice refresh.'
                 : tab === 'alerts'
                   ? 'Choose notification channels and how often briefs are sent.'
-                  : 'Manage notifications, theme, exports, plans, and paper vs broker mode.'}
+                  : tab === 'ops'
+                    ? 'Live status of in-app refresh jobs, cron, and host catch-up.'
+                    : 'Manage notifications, theme, exports, plans, and paper vs broker mode.'}
           </p>
         </div>
         <button type="button" className="secondary-button" onClick={onOpenCapital}>
@@ -400,6 +404,7 @@ export function AccountShell({
             ['export', 'Export'],
             ['plans', 'Plans'],
             ['broker', 'Broker'],
+            ['ops', 'Ops'],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -704,6 +709,8 @@ export function AccountShell({
           </div>
         </div>
       ) : null}
+
+      {tab === 'ops' ? <SchedulerOpsPanel baseUrl={baseUrl} /> : null}
 
       {tab === 'broker' ? (
         <div className="account-section broker-layout">

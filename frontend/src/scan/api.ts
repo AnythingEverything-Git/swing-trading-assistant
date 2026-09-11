@@ -110,6 +110,7 @@ export function readDeepLinkParams(search = window.location.search): {
   view: string | null
   runId: number | null
   symbol: string | null
+  tab: string | null
 } {
   const params = new URLSearchParams(search)
   const runRaw = params.get('run')
@@ -118,6 +119,7 @@ export function readDeepLinkParams(search = window.location.search): {
     view: params.get('view'),
     runId,
     symbol: params.get('symbol'),
+    tab: params.get('tab'),
   }
 }
 

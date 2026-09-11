@@ -37,23 +37,30 @@ def main() -> None:
         records = json.loads(gzip.decompress(response.read()))
 
     mappings: dict[str, str] = {}
+    # Prefer EQ; allow BE (trade-to-trade / special) for Nifty constituents like HEG/HFCL.
     for item in records:
         if not isinstance(item, dict):
             continue
-        if item.get("instrument_type") != "EQ":
-            continue
         if item.get("segment") != "NSE_EQ":
+            continue
+        itype = str(item.get("instrument_type") or "").strip().upper()
+        if itype not in ("EQ", "BE"):
             continue
         symbol = str(item.get("trading_symbol") or "").strip().upper()
         key = str(item.get("instrument_key") or "").strip()
-        if symbol in wanted and key:
+        if symbol not in wanted or not key:
+            continue
+        # Keep first EQ; only fill BE if missing.
+        if symbol in mappings and itype != "EQ":
+            continue
+        if itype == "EQ" or symbol not in mappings:
             mappings[symbol] = key
 
     missing = sorted(wanted - set(mappings))
     payload = {
         "version": f"{date.today().isoformat()}-nse-eq-master",
         "source_note": (
-            "Generated from Upstox public NSE instrument master (NSE_EQ / EQ) "
+            "Generated from Upstox public NSE instrument master (NSE_EQ / EQ+BE) "
             "for packaged Nifty 500 symbols. Refresh when membership or ISINs change."
         ),
         "mappings": dict(sorted(mappings.items())),

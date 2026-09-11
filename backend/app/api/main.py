@@ -25,6 +25,7 @@ from .routes import (
     backtest,
     intraday,
     market_data,
+    ops,
     paper,
     product,
     product_shell,
@@ -78,8 +79,13 @@ def create_app() -> FastAPI:
             app.state.ingest_provider = provider
 
         app.state.refresh_running = False
+        app.state.refresh_running_since = None
+        app.state.history_backfill_running = False
         app.state.refresh_stop_event = asyncio.Event()
         app.state.refresh_task = None
+        from app.application.ops.scheduler_status import seed_registry_from_settings
+
+        seed_registry_from_settings(app.state, settings)
         if scheduler_should_run(settings):
             app.state.refresh_task = asyncio.create_task(
                 refresh_scheduler_loop(app, app.state.refresh_stop_event),
@@ -161,6 +167,7 @@ def create_app() -> FastAPI:
     app.include_router(ai_copilot.router)
     app.include_router(product_shell.router)
     app.include_router(product.router)
+    app.include_router(ops.router)
     app.include_router(research.router)
     app.include_router(paper.router)
 

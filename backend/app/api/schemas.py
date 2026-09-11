@@ -5,7 +5,7 @@ Note: these mirror domain types but are API-layer DTOs. No business logic here.
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from uuid import UUID
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 
@@ -274,6 +274,96 @@ class ProductStatusResponse(BaseModel):
     symbols_with_1m: int = 0
     last_1m_candle_time: datetime | None = None
     stale_risk: str = "High"
+
+
+class SchedulerJobResponse(BaseModel):
+    job_id: str
+    label: str
+    source: str
+    enabled: bool = True
+    schedule: str = ""
+    universe: str | None = None
+    running: bool = False
+    next_run_at: datetime | None = None
+    last_started_at: datetime | None = None
+    last_finished_at: datetime | None = None
+    last_status: str = "unknown"
+    last_detail: str | None = None
+    phase: str | None = None
+    can_run: bool = False
+    progress_done: int | None = None
+    progress_total: int | None = None
+    progress_current: str | None = None
+    progress_pct: float | None = None
+
+
+class SchedulerStatusResponse(BaseModel):
+    environment: str
+    data_source: str
+    live_ready: bool
+    upstox_token_configured: bool
+    refresh_mutex_held: bool
+    history_backfill_running: bool = False
+    last_candle_time: datetime | None = None
+    last_1m_candle_time: datetime | None = None
+    symbols_with_candles: int = 0
+    symbols_with_1m: int = 0
+    stale_risk: str = "High"
+    jobs: list[SchedulerJobResponse]
+
+
+class ReadinessGateResponse(BaseModel):
+    id: str
+    label: str
+    status: str
+    detail: str
+    metrics: dict = {}
+
+
+class ReadinessResponse(BaseModel):
+    universe: str
+    ready: bool
+    status: str
+    as_of: datetime
+    provider_1d_max: datetime | None = None
+    calendar_1d_expected: date | None = None
+    gates: list[ReadinessGateResponse]
+    recommendations: list[str] = []
+
+
+class SchedulerHeartbeatRequest(BaseModel):
+    job_id: str
+    status: str
+    detail: str | None = None
+    phase: str | None = None
+    running: bool | None = None
+
+
+class SchedulerHeartbeatResponse(BaseModel):
+    ok: bool = True
+    job: SchedulerJobResponse
+
+
+class SchedulerEnableRequest(BaseModel):
+    enabled: bool
+
+
+class SchedulerRunRequest(BaseModel):
+    universe: str | None = None
+    stage: str | None = None
+    start: date | None = None
+    end: date | None = None
+    lookback_days: int = 28
+
+
+class SchedulerRunAcceptedResponse(BaseModel):
+    accepted: bool = True
+    job_id: str
+    status: str
+    job: SchedulerJobResponse
+    universe: str | None = None
+    start: str | None = None
+    end: str | None = None
 
 
 class MarketQuoteResponse(BaseModel):

@@ -6355,6 +6355,103 @@ button.symbol-link:hover {
   display: grid;
   gap: 1rem;
 }
+.scheduler-ops-panel .scheduler-ops-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.scheduler-ops-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1rem;
+  margin: 0.75rem 0 1rem;
+  font-size: 0.88rem;
+}
+.scheduler-ops-table {
+  width: 100%;
+  font-size: 0.86rem;
+}
+.scheduler-job-label {
+  font-weight: 650;
+}
+.scheduler-job-meta,
+.scheduler-job-detail {
+  font-size: 0.78rem;
+  color: var(--muted, #667);
+  max-width: 18rem;
+  word-break: break-word;
+}
+.scheduler-job-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.scheduler-job-actions .primary-button,
+.scheduler-job-actions .secondary-button {
+  padding: 0.25rem 0.55rem;
+  font-size: 0.78rem;
+}
+.scheduler-backfill-card {
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.85rem 1rem;
+  background: color-mix(in srgb, var(--accent-soft) 35%, transparent);
+  display: grid;
+  gap: 0.65rem;
+}
+.scheduler-stage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.scheduler-stage-actions .primary-button {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+}
+.scheduler-n500-checklist {
+  margin: 0.65rem 0 0.85rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px dashed var(--line);
+  border-radius: 0.45rem;
+  font-size: 0.84rem;
+}
+.scheduler-n500-checklist ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.15rem;
+}
+.scheduler-n500-checklist li {
+  margin: 0.15rem 0;
+}
+.scheduler-readiness {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+}
+.scheduler-readiness-gates {
+  margin-top: 0.35rem;
+}
+.scheduler-readiness-recs {
+  margin: 0.45rem 0 0.25rem;
+  padding-left: 1.15rem;
+  font-size: 0.84rem;
+}
+.scheduler-backfill-progress {
+  display: grid;
+  gap: 0.35rem;
+}
+.scheduler-progress-bar {
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--surface-muted, #e8ecef);
+  overflow: hidden;
+}
+.scheduler-progress-bar-fill {
+  height: 100%;
+  background: var(--accent, #0f766e);
+  transition: width 0.4s ease;
+}
 .alerts-layout {
   display: grid;
   grid-template-columns: minmax(16rem, 1.25fr) minmax(14rem, 0.85fr);

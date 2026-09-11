@@ -10,6 +10,18 @@ LOG="$LOG_DIR/universe-rebuild.log"
 
 exec >>"$LOG" 2>&1
 log "START universe rebuild"
-acquire_lock "$LOCK"
-api_python scripts/build_nse_universe_from_upstox.py
-log "DONE universe rebuild"
+scheduler_job_enabled cron_universe || exit 0
+scheduler_heartbeat cron_universe running "universe rebuild starting"
+if ! acquire_lock "$LOCK"; then
+  scheduler_heartbeat cron_universe skipped "lock held"
+  exit 0
+fi
+if api_python scripts/build_nse_universe_from_upstox.py \
+  && api_python scripts/refresh_instrument_key_map.py; then
+  log "DONE universe rebuild + Nifty 500 EQ+BE keys"
+  scheduler_heartbeat cron_universe ok "universe rebuild + keys done"
+else
+  log "FAIL universe rebuild"
+  scheduler_heartbeat cron_universe failed "universe rebuild failed"
+  exit 1
+fi

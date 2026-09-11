@@ -161,7 +161,7 @@ grep POSTGRES_PASSWORD /opt/tradepilot/.env
 psql "host=127.0.0.1 port=5433 dbname=swingdb user=postgres"
 ```
 
-Compose binds Postgres to `127.0.0.1:5432` on the instance only — see [`docker-compose.yml`](../docker-compose.yml).
+Compose publishes Postgres on `:5432` on the instance; the security group must **not** allow `0.0.0.0/0` on 5432 (only the ephemeral backfill worker SG, plus SSH tunnel from your laptop). See §7.
 
 ---
 
@@ -213,3 +213,46 @@ Destroy everything (stops charges for this stack): `terraform destroy`.
 - Candle growth can fill 30 GB — monitor volume size / disk `%` on the host (`df -h`).
 
 Details: [`ops/vps/terraform/README.md`](../ops/vps/terraform/README.md).
+
+---
+
+## 7. Ephemeral staged backfill worker (Free Tier–safe)
+
+`tradepilot-live` already consumes most of the monthly **750 micro-hours** and the typical **30 GB** EBS Free Tier. A second instance is **not** free forever while live stays up. Use a short-lived worker to minimize incremental cost:
+
+| Rule | Why |
+|------|-----|
+| No second Elastic IP | Idle EIPs bill; worker uses auto public IP while running |
+| 8 GB gp3, delete on terminate | Stay under EBS allowance; no leftover disk |
+| `terraform destroy` after job | Stopped disks still bill/count — terminate, don’t stop |
+| Staged order | Nifty 50 → 100 remaining → 500 remaining (short windows) |
+
+Expect **small prorated EBS + any micro-hours past the remaining Free Tier budget** only during the worker’s on-window.
+
+### Architecture
+
+- Live keeps API/UI/Postgres.
+- Worker runs `backend/scripts/run_1m_history_stage.py` and writes to live Postgres over the VPC (`:5432` allowed **only** from the worker security group).
+- Heartbeats hit live `POST /api/v1/ops/schedulers/heartbeat` so Account → Ops shows progress.
+
+Terraform: [`ops/vps/terraform-worker/`](../ops/vps/terraform-worker/) (separate state — safe to destroy).
+
+### Operator runbook
+
+1. Confirm live healthy (`3/3` checks, API up).
+2. Fill `ops/vps/terraform-worker/terraform.tfvars` (same `key_name` + home `/32` as live).
+3. Sync updated `docker-compose.yml` on live so Postgres is published on `:5432` (SG-guarded; not `127.0.0.1` only).
+4. From Git Bash / WSL:
+
+```bash
+export TRADEPILOT_PEM="/c/Users/User/Downloads/AWSec2/ec2KeyPair.pem"
+export TRADEPILOT_LIVE_ENV="/path/to/live.env"   # UPSTOX_* + POSTGRES_PASSWORD
+./ops/vps/worker/start_backfill_worker.sh
+./ops/vps/worker/run_staged_backfill.sh --stage NIFTY_50
+# then NIFTY_100_REMAINING, then NIFTY_500_REMAINING
+./ops/vps/worker/stop_backfill_worker.sh   # terraform destroy — do this immediately
+```
+
+5. Prefer the worker for Free Tier safety. Ops UI stage buttons on live are for tiny stages only if needed.
+
+More detail: [`ops/vps/worker/README.md`](../ops/vps/worker/README.md) · [`ops/vps/README.md`](../ops/vps/README.md).

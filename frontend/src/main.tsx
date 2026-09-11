@@ -584,6 +584,9 @@ function App() {
   const storedRefresh = readRefreshPrefs()
   const [theme, setTheme] = useState<ThemeMode>(() => readStoredTheme())
   const [activeView, setActiveView] = useState<AppView>('home')
+  const [accountInitialTab, setAccountInitialTab] = useState<
+    'risk' | 'alerts' | 'appearance' | 'export' | 'plans' | 'broker' | 'ops'
+  >('risk')
   const [swingRefreshSec, setSwingRefreshSec] = useState(storedRefresh.swingRefreshSec)
   const [intradayRefreshSec, setIntradayRefreshSec] = useState(storedRefresh.intradayRefreshSec)
   const [practiceTickMode, setPracticeTickMode] = useState(storedRefresh.practiceTickMode)
@@ -617,8 +620,13 @@ function App() {
   const [backtestError, setBacktestError] = useState('')
   const [result, setResult] = useState<StrategyResponse | null>(null)
   const [backtestResult, setBacktestResult] = useState<BacktestResponse | null>(null)
-  const [scanStart, setScanStart] = useState('2025-12-07')
-  const [scanEnd, setScanEnd] = useState('2026-09-03')
+  const [scanStart, setScanStart] = useState(() => {
+    const end = new Date()
+    const start = new Date()
+    start.setUTCDate(start.getUTCDate() - 270)
+    return start.toISOString().slice(0, 10)
+  })
+  const [scanEnd, setScanEnd] = useState(() => new Date().toISOString().slice(0, 10))
   const [scanLoading, setScanLoading] = useState(false)
   const [scanProgress, setScanProgress] = useState('')
   const [scanError, setScanError] = useState('')
@@ -879,7 +887,7 @@ function App() {
   )
 
   useEffect(() => {
-    const { view, runId, symbol: deepSymbol } = readDeepLinkParams()
+    const { view, runId, symbol: deepSymbol, tab: deepTab } = readDeepLinkParams()
     if (view === 'home' || view === '' || view == null) setActiveView('home')
     if (view === 'scan') setActiveView('scan')
     if (view === 'history') setActiveView('history')
@@ -890,6 +898,18 @@ function App() {
     if (view === 'brief') setActiveView('brief')
     if (view === 'compare') setActiveView('compare')
     if (view === 'account') setActiveView('account')
+    const allowedAccountTabs = new Set([
+      'risk',
+      'alerts',
+      'appearance',
+      'export',
+      'plans',
+      'broker',
+      'ops',
+    ])
+    if (deepTab && allowedAccountTabs.has(deepTab)) {
+      setAccountInitialTab(deepTab as typeof accountInitialTab)
+    }
     if (runId == null) return
     let cancelled = false
     const loadDeepLink = async () => {
@@ -2395,6 +2415,7 @@ function App() {
           swingRefreshSec={swingRefreshSec}
           intradayRefreshSec={intradayRefreshSec}
           practiceTickMode={practiceTickMode}
+          initialTab={accountInitialTab}
           onSaveRefresh={({ swingRefreshSec: swing, intradayRefreshSec: intra, practiceTickMode: practice }) => {
             setSwingRefreshSec(swing)
             setIntradayRefreshSec(intra)
