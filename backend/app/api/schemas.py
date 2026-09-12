@@ -121,7 +121,7 @@ class OpportunityScanRequest(BaseModel):
     start: datetime
     end: datetime
     universe: str = Field(
-        default="NSE_ALL",
+        default="NIFTY_500",
         description="Universe: NSE_ALL, NSE_CASH, NSE_ETF, NIFTY_50/100/200/500.",
     )
     account_equity: Decimal | None = Field(

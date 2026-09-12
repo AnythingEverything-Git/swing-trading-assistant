@@ -20,7 +20,16 @@ def create_engine(db_url: str, echo: bool = False) -> AsyncEngine:
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-    return create_async_engine(db_url, echo=echo)
+    # Interactive accept/poll paths share the pool with board/scan workers on
+    # Free Tier — keep enough connections so HTTP ≤3s is not blocked on checkout.
+    return create_async_engine(
+        db_url,
+        echo=echo,
+        pool_size=10,
+        max_overflow=20,
+        pool_timeout=5,
+        pool_pre_ping=True,
+    )
 
 
 def create_sessionmaker(engine: AsyncEngine) -> sessionmaker:

@@ -5,7 +5,7 @@ Uses Numeric for price fields and timezone-aware DateTime for timestamps.
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
-from sqlalchemy import Integer, BigInteger, ForeignKey, String, DateTime, Numeric, UniqueConstraint
+from sqlalchemy import Integer, BigInteger, ForeignKey, String, DateTime, Numeric, UniqueConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from ..base import Base
 
@@ -14,6 +14,8 @@ class CandleORM(Base):
     __tablename__ = "candles"
     __table_args__ = (
         UniqueConstraint("instrument_id", "timeframe", "timestamp", name="uq_candle_instrument_timeframe_timestamp"),
+        Index("ix_candles_timeframe_timestamp", "timeframe", "timestamp"),
+        Index("ix_candles_timeframe_instrument", "timeframe", "instrument_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

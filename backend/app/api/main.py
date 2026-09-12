@@ -140,7 +140,9 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Swing Trading Assistant - Backend", lifespan=lifespan)
 
     from .rate_limit import RateLimitMiddleware
+    from .timing_middleware import RequestTimingMiddleware
 
+    app.add_middleware(RequestTimingMiddleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,

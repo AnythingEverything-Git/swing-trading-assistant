@@ -70,7 +70,9 @@ async def get_quotes(
         return [MarketQuoteResponse(symbol=symbol) for symbol in names]
 
     try:
-        raw_quotes = await quote_fn(names)
+        from app.application.market_data.quote_cache import fetch_quotes_cached
+
+        raw_quotes = await fetch_quotes_cached(quote_fn, names)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

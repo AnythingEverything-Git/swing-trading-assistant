@@ -126,13 +126,16 @@ async def _latest_1d_metrics(
     return prices, advs, len(prices)
 
 
-async def _symbols_with_1d(session: AsyncSession) -> set[str]:
+async def _symbols_with_1d(session: AsyncSession, symbols: list[str] | None = None) -> set[str]:
+    """Symbols that have any 1d candle. When ``symbols`` is set, scope to that universe only."""
     stmt = (
         select(InstrumentORM.symbol)
         .join(CandleORM, CandleORM.instrument_id == InstrumentORM.id)
         .where(CandleORM.timeframe == "1d")
-        .distinct()
     )
+    if symbols:
+        stmt = stmt.where(InstrumentORM.symbol.in_(list(symbols)))
+    stmt = stmt.distinct()
     result = await session.execute(stmt)
     return {str(row[0]).strip().upper() for row in result.fetchall() if row[0]}
 
@@ -227,7 +230,7 @@ async def coverage_report(
     )
 
     try:
-        with_candles = await _symbols_with_1d(session)
+        with_candles = await _symbols_with_1d(session, list(snap.symbols))
     except Exception:
         with_candles = set()
 

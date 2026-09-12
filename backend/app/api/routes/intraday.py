@@ -5,11 +5,13 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_query_service, get_upstox_provider
+from app.application.intraday.board_cache import job_status, serve_morning_board
 from app.application.intraday.session_service import (
     load_session,
     load_session_chart,
@@ -40,6 +42,7 @@ class IntradaySessionRunRequest(BaseModel):
     ] | None = None
     equity: Decimal = Field(default=Decimal("1000000"))
     source: Literal["demo", "persisted"] = "demo"
+    sync: bool = Field(default=False, description="When true, block until session completes (tests).")
 
 
 @router.get("/rules")
@@ -110,24 +113,92 @@ def _resolve_symbols(payload: IntradaySessionRunRequest) -> list[str] | None:
 @router.post("/sessions/run")
 async def run_session(
     payload: IntradaySessionRunRequest,
+    request: Request,
     query: MarketDataQueryService = Depends(get_query_service),
     session_repo: IntradaySessionRepository = Depends(_session_repo),
-) -> dict:
+) -> JSONResponse:
+    """Run ORB session. Default async 202; ``sync=true`` for tests keeps full blocking accuracy."""
+    import asyncio
+
+    from app.infrastructure.database.repositories.candle_repository import CandleRepository
+    from app.infrastructure.database.repositories.instrument_repository import InstrumentRepository
+
+    sync = bool(payload.sync)
     try:
         symbols = _resolve_symbols(payload)
-        session_id, report, meta = await run_intraday_session(
-            session_date=payload.session_date,
-            symbols=symbols,
-            equity=payload.equity,
-            source=payload.source,
-            query=query if payload.source == "persisted" else None,
-            session_repo=session_repo,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    body = session_report_to_dict(report, meta)
-    body["id"] = session_id
-    return body
+    except HTTPException:
+        raise
+
+    if sync:
+        try:
+            session_id, report, meta = await run_intraday_session(
+                session_date=payload.session_date,
+                symbols=symbols,
+                equity=payload.equity,
+                source=payload.source,
+                query=query if payload.source == "persisted" else None,
+                session_repo=session_repo,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        body = session_report_to_dict(report, meta)
+        body["id"] = session_id
+        return JSONResponse(status_code=200, content=_jsonable(body))
+
+    job_id = f"session-{int(asyncio.get_event_loop().time() * 1000)}"
+    jobs = getattr(request.app.state, "session_run_jobs", None)
+    if not isinstance(jobs, dict):
+        jobs = {}
+        request.app.state.session_run_jobs = jobs
+    jobs[job_id] = {"status": "queued"}
+
+    sessionmaker = request.app.state.sessionmaker
+    src = payload.source
+    equity = payload.equity
+    session_date = payload.session_date
+
+    async def _run() -> None:
+        jobs[job_id]["status"] = "running"
+        try:
+            async with sessionmaker() as session:
+                q = (
+                    MarketDataQueryService(InstrumentRepository(session), CandleRepository(session))
+                    if src == "persisted"
+                    else None
+                )
+                repo = IntradaySessionRepository(session)
+                session_id, report, meta = await run_intraday_session(
+                    session_date=session_date,
+                    symbols=symbols,
+                    equity=equity,
+                    source=src,
+                    query=q,
+                    session_repo=repo,
+                )
+                await session.commit()
+            body = session_report_to_dict(report, meta)
+            body["id"] = session_id
+            jobs[job_id]["status"] = "ready"
+            jobs[job_id]["session_id"] = session_id
+            jobs[job_id]["result"] = _jsonable(body)
+        except Exception as exc:
+            jobs[job_id]["status"] = "failed"
+            jobs[job_id]["error"] = str(exc)[:400]
+
+    asyncio.create_task(_run(), name=job_id)
+    return JSONResponse(
+        status_code=202,
+        content={"accepted": True, "job_id": job_id, "status": "queued"},
+    )
+
+
+@router.get("/sessions/jobs/{job_id}")
+async def session_run_job(job_id: str, request: Request) -> dict:
+    jobs = getattr(request.app.state, "session_run_jobs", {}) or {}
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"job_id": job_id, **job}
 
 
 @router.get("/sessions")
@@ -223,7 +294,7 @@ class MorningRunRequest(BaseModel):
         "NSE_CASH",
         "NSE_ALL",
         "NSE_MORNING",
-    ] = "NSE_ALL"
+    ] = "NIFTY_500"
     symbols: list[str] | None = None
     equity: Decimal = Field(default=Decimal("1000000"))
     source: Literal["demo", "persisted"] = "persisted"
@@ -257,16 +328,16 @@ def _session_payload(stored: dict) -> dict:
 
 @router.get("/morning-board")
 async def morning_board(
+    request: Request,
     session_date: date | None = None,
     source: Literal["demo", "persisted"] = "persisted",
     equity: Decimal = Decimal("1000000"),
     asset_class: Literal["ALL", "STOCK", "ETF"] = "ALL",
     min_adv_inr: Decimal | None = None,
-    query: MarketDataQueryService = Depends(get_query_service),
-) -> dict:
-    """One-click morning eligibility board — stocks and ETFs ranked separately; auto-refresh friendly."""
-    from app.application.intraday.morning_board_service import build_morning_board
-
+    force_refresh: bool = Query(default=False),
+    universe: str = Query(default="NIFTY_500"),
+) -> JSONResponse:
+    """Morning board — cached/SWR for ≤3s HTTP; ranks remain accuracy-identical."""
     filters = {
         "asset_class": asset_class,
         "min_adv_inr": str(min_adv_inr) if min_adv_inr is not None else None,
@@ -274,50 +345,84 @@ async def morning_board(
         "exclude_corporate_actions": True,
     }
     try:
-        return await build_morning_board(
+        body, status = await serve_morning_board(
+            request.app,
             session_date=session_date,
             source=source,
-            query=query if source == "persisted" else None,
             equity=equity,
             filters=filters,
+            universe=universe,
+            symbols=None,
+            force_refresh=force_refresh,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(status_code=status, content=_jsonable(body))
 
 
 @router.post("/morning-board")
-async def morning_board_post(
-    payload: dict,
-    query: MarketDataQueryService = Depends(get_query_service),
-) -> dict:
+async def morning_board_post(payload: dict, request: Request) -> JSONResponse:
     """Morning board with full filter body (sellable EP1/EP3)."""
-    from app.application.intraday.morning_board_service import build_morning_board
     from datetime import date as date_cls
 
     session_date = payload.get("session_date")
     day = date_cls.fromisoformat(str(session_date)) if session_date else None
     source = payload.get("source") or "persisted"
+    force_refresh = bool(payload.get("force_refresh"))
     try:
-        return await build_morning_board(
+        body, status = await serve_morning_board(
+            request.app,
             session_date=day,
-            source=source,  # type: ignore[arg-type]
-            query=query if source == "persisted" else None,
+            source=str(source),
             equity=Decimal(str(payload.get("equity") or "1000000")),
             filters=payload.get("filters") if isinstance(payload.get("filters"), dict) else payload,
-            universe=str(payload.get("universe") or "NSE_ALL"),
+            universe=str(payload.get("universe") or "NIFTY_500"),
             symbols=[str(s).upper() for s in (payload.get("symbols") or []) if str(s).strip()] or None,
+            force_refresh=force_refresh,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse(status_code=status, content=_jsonable(body))
+
+
+@router.get("/morning-board/jobs/{job_id}")
+async def morning_board_job(job_id: str, request: Request) -> dict:
+    status = job_status(request.app, job_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if status.get("status") == "ready":
+        from app.application.intraday.board_cache import get_cached_board
+
+        board = get_cached_board(request.app, str(status.get("cache_key") or ""))
+        if board is not None:
+            return {"job": status, "board": board}
+    return {"job": status}
+
+
+def _jsonable(value):
+    """Ensure Decimals/dates become JSON-safe (board payloads already mostly str)."""
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, Decimal):
+        return str(value)
+    return value
 
 
 @router.post("/ingest/ensure-1m")
 async def ensure_1m(
     payload: dict,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     provider=Depends(get_upstox_provider),
-) -> dict:
-    """Hybrid 1m backfill for an active symbol list (EP3)."""
+) -> JSONResponse:
+    """Hybrid 1m backfill — returns 202 immediately; work runs in background (full accuracy)."""
+    import asyncio
     from datetime import date as date_cls
 
     from app.application.intraday.active_set_ingest import ensure_1m_for_symbols
@@ -331,26 +436,68 @@ async def ensure_1m(
         symbols = symbols[:200]
     day_raw = payload.get("session_date")
     day = date_cls.fromisoformat(str(day_raw)) if day_raw else None
-    result = await ensure_1m_for_symbols(
-        symbols=symbols,
-        provider=provider,
-        instrument_repo=InstrumentRepository(db),
-        candle_repo=CandleRepository(db),
-        session_date=day,
+    sync = bool(payload.get("sync"))
+    if sync:
+        result = await ensure_1m_for_symbols(
+            symbols=symbols,
+            provider=provider,
+            instrument_repo=InstrumentRepository(db),
+            candle_repo=CandleRepository(db),
+            session_date=day,
+        )
+        await db.commit()
+        return JSONResponse(status_code=200, content=result)
+
+    job_id = f"ensure1m-{int(asyncio.get_event_loop().time() * 1000)}"
+    jobs = getattr(request.app.state, "ensure_1m_jobs", None)
+    if not isinstance(jobs, dict):
+        jobs = {}
+        request.app.state.ensure_1m_jobs = jobs
+    jobs[job_id] = {"status": "queued", "symbols": len(symbols)}
+
+    sessionmaker = request.app.state.sessionmaker
+    upstox = provider
+
+    async def _run() -> None:
+        jobs[job_id]["status"] = "running"
+        try:
+            async with sessionmaker() as session:
+                result = await ensure_1m_for_symbols(
+                    symbols=symbols,
+                    provider=upstox,
+                    instrument_repo=InstrumentRepository(session),
+                    candle_repo=CandleRepository(session),
+                    session_date=day,
+                )
+                await session.commit()
+            jobs[job_id]["status"] = "ready"
+            jobs[job_id]["result"] = result
+        except Exception as exc:
+            jobs[job_id]["status"] = "failed"
+            jobs[job_id]["error"] = str(exc)[:400]
+
+    asyncio.create_task(_run(), name=job_id)
+    return JSONResponse(
+        status_code=202,
+        content={"accepted": True, "job_id": job_id, "status": "queued", "symbols": len(symbols)},
     )
-    await db.commit()
-    return result
+
+
+@router.get("/ingest/ensure-1m/jobs/{job_id}")
+async def ensure_1m_job(job_id: str, request: Request) -> dict:
+    jobs = getattr(request.app.state, "ensure_1m_jobs", {}) or {}
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"job_id": job_id, **job}
 
 
 @router.post("/sessions/morning")
 async def morning_session(
     payload: MorningRunRequest,
-    query: MarketDataQueryService = Depends(get_query_service),
-    session_repo: IntradaySessionRepository = Depends(_session_repo),
-    practice=Depends(_practice_service),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """Run today's (or chosen weekday) ORB session — morning desk one-click."""
+    request: Request,
+) -> JSONResponse:
+    """Morning one-click session — 202 accept; full ORB accuracy runs in background."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -365,31 +512,75 @@ async def morning_session(
         universe=None if payload.symbols else payload.universe,
         equity=payload.equity,
         source=payload.source,
+        sync=False,
     )
+    # Delegate to the same async runner (Depends not needed — we build session inside job).
+    import asyncio
+
+    from app.infrastructure.database.repositories.candle_repository import CandleRepository
+    from app.infrastructure.database.repositories.instrument_repository import InstrumentRepository
+
     try:
         symbols = _resolve_symbols(run_payload)
-        session_id, report, meta = await run_intraday_session(
-            session_date=day,
-            symbols=symbols,
-            equity=payload.equity,
-            source=payload.source,
-            query=query if payload.source == "persisted" else None,
-            session_repo=session_repo,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
 
-    body = session_report_to_dict(report, meta)
-    body["id"] = session_id
-    practice_result = None
-    if payload.seed_practice and report.fills:
-        practice_result = await practice.seed_from_session_payload(session_id=session_id, payload=body)
-    await db.commit()
-    return {
-        "session": body,
-        "practice": practice_result,
-        "hint": "Refresh 1m with: python scripts/refresh_intraday_candles.py --mode today|watermark",
-    }
+    job_id = f"morning-session-{int(asyncio.get_event_loop().time() * 1000)}"
+    jobs = getattr(request.app.state, "session_run_jobs", None)
+    if not isinstance(jobs, dict):
+        jobs = {}
+        request.app.state.session_run_jobs = jobs
+    jobs[job_id] = {"status": "queued"}
+    sessionmaker = request.app.state.sessionmaker
+    src = payload.source
+    equity = payload.equity
+    seed_practice = payload.seed_practice
+
+    async def _run() -> None:
+        jobs[job_id]["status"] = "running"
+        try:
+            async with sessionmaker() as session:
+                q = (
+                    MarketDataQueryService(InstrumentRepository(session), CandleRepository(session))
+                    if src == "persisted"
+                    else None
+                )
+                repo = IntradaySessionRepository(session)
+                session_id, report, meta = await run_intraday_session(
+                    session_date=day,
+                    symbols=symbols,
+                    equity=equity,
+                    source=src,
+                    query=q,
+                    session_repo=repo,
+                )
+                body = session_report_to_dict(report, meta)
+                body["id"] = session_id
+                practice_result = None
+                if seed_practice and report.fills:
+                    from app.application.intraday.practice_service import IntradayPracticeService
+                    from app.infrastructure.database.repositories.intraday_practice_repository import (
+                        IntradayPracticeRepository,
+                    )
+
+                    practice_result = await IntradayPracticeService(
+                        IntradayPracticeRepository(session)
+                    ).seed_from_session_payload(session_id=session_id, payload=body)
+                await session.commit()
+            jobs[job_id]["status"] = "ready"
+            jobs[job_id]["session_id"] = session_id
+            jobs[job_id]["result"] = _jsonable(
+                {"session": body, "practice": practice_result, "hint": "Morning one-click session ready"}
+            )
+        except Exception as exc:
+            jobs[job_id]["status"] = "failed"
+            jobs[job_id]["error"] = str(exc)[:400]
+
+    asyncio.create_task(_run(), name=job_id)
+    return JSONResponse(
+        status_code=202,
+        content={"accepted": True, "job_id": job_id, "status": "queued"},
+    )
 
 
 @router.post("/sessions/{session_id}/practice/seed")

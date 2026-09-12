@@ -1,6 +1,7 @@
 """Product / data-source status for the UI freshness banner."""
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -11,6 +12,10 @@ from app.infrastructure.market_data.source import (
     live_ready,
     normalize_market_data_source,
 )
+
+# Process-wide cache (candle max/count are global). Accuracy preserved within TTL.
+_STATUS_CACHE_TTL_SEC = 20.0
+_status_cache: dict[str, tuple[float, "ProductStatus"]] = {}
 
 
 def _stale_risk(*, live: bool, source: str, last_1d: datetime | None) -> str:
@@ -47,13 +52,21 @@ class ProductStatusService:
         self.settings = settings or get_settings()
 
     async def status(self, timeframe: str = "1d") -> ProductStatus:
+        cache_key = timeframe
+        hit = _status_cache.get(cache_key)
+        now = time.monotonic()
+        if hit is not None and (now - hit[0]) < _STATUS_CACHE_TTL_SEC:
+            return hit[1]
+
+        # Sequential queries only — AsyncSession forbids concurrent ops on one session
+        # (asyncio.gather here caused 500s under load).
         last_1d = await self.candle_repo.latest_timestamp("1d")
         count_1d = await self.candle_repo.count_instruments("1d")
         last_1m = await self.candle_repo.latest_timestamp("1m")
         count_1m = await self.candle_repo.count_instruments("1m")
         source = normalize_market_data_source(self.settings.market_data_source)
         ready = live_ready(self.settings)
-        return ProductStatus(
+        result = ProductStatus(
             data_source=source,
             live_ready=ready,
             claim=data_claim(self.settings),
@@ -64,6 +77,8 @@ class ProductStatusService:
             last_1m_candle_time=last_1m,
             stale_risk=_stale_risk(live=ready, source=source, last_1d=last_1d),
         )
+        _status_cache[cache_key] = (now, result)
+        return result
 
 
 __all__ = ["ProductStatus", "ProductStatusService"]

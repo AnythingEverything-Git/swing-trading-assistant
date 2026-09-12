@@ -154,6 +154,32 @@ export type IntradaySessionSummary = {
   realized_pnl: string | null
 }
 
+async function pollSessionJob<T>(baseUrl: string, jobId: string): Promise<T> {
+  const deadline = Date.now() + 180_000
+  while (Date.now() < deadline) {
+    const response = await fetch(
+      `${baseUrl}/api/v1/intraday/sessions/jobs/${encodeURIComponent(jobId)}`,
+    )
+    if (!response.ok) {
+      throw new Error(`Session job failed (${response.status})`)
+    }
+    const payload = (await response.json()) as {
+      status?: string
+      error?: string
+      result?: T
+      session_id?: string
+    }
+    if (payload.status === 'ready' && payload.result != null) {
+      return payload.result
+    }
+    if (payload.status === 'failed') {
+      throw new Error(payload.error || 'Session job failed')
+    }
+    await new Promise((r) => setTimeout(r, 400))
+  }
+  throw new Error('Session job timed out')
+}
+
 export async function runIntradaySession(
   baseUrl: string,
   body: IntradaySessionRunRequest,
@@ -163,6 +189,11 @@ export async function runIntradaySession(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+  if (response.status === 202) {
+    const accepted = (await response.json()) as { job_id?: string }
+    if (!accepted.job_id) throw new Error('Session accepted without job_id')
+    return pollSessionJob<IntradaySessionResponse>(baseUrl, accepted.job_id)
+  }
   if (!response.ok) {
     let detail = 'Intraday session failed'
     try {
@@ -347,21 +378,56 @@ export async function fetchMorningBoard(
     universe?: string
     symbols?: string[]
     filters?: Record<string, unknown>
+    force_refresh?: boolean
   } = {},
 ): Promise<MorningBoardResponse> {
-  if (params.filters || params.universe || params.symbols) {
-    const response = await fetch(`${baseUrl}/api/v1/intraday/morning-board`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_date: params.session_date || null,
-        source: params.source || 'demo',
-        equity: params.equity || '1000000',
-        universe: params.universe || 'NSE_ALL',
-        symbols: params.symbols || null,
-        filters: params.filters || {},
-      }),
-    })
+  const pollJob = async (jobId: string): Promise<MorningBoardResponse> => {
+    const deadline = Date.now() + 120_000
+    while (Date.now() < deadline) {
+      const response = await fetch(`${baseUrl}/api/v1/intraday/morning-board/jobs/${encodeURIComponent(jobId)}`)
+      if (!response.ok) {
+        throw new Error(`Morning board job failed (${response.status})`)
+      }
+      const payload = (await response.json()) as {
+        status?: string
+        error?: string
+        job?: { status?: string; error?: string }
+        board?: MorningBoardResponse
+      }
+      if (payload.board) return payload.board
+      const status = payload.status || payload.job?.status
+      if (status === 'failed') {
+        throw new Error(payload.error || payload.job?.error || 'Morning board rebuild failed')
+      }
+      if (status === 'ready') {
+        // Job finished — cache is warm; fetch the accurate board payload.
+        const qs = new URLSearchParams()
+        if (params.session_date) qs.set('session_date', params.session_date)
+        if (params.source) qs.set('source', params.source)
+        if (params.equity) qs.set('equity', params.equity)
+        qs.set('universe', params.universe || 'NIFTY_500')
+        const suffix = qs.toString() ? `?${qs.toString()}` : ''
+        const boardResp = await fetch(`${baseUrl}/api/v1/intraday/morning-board${suffix}`)
+        if (boardResp.status === 202) {
+          await new Promise((r) => setTimeout(r, 400))
+          continue
+        }
+        if (!boardResp.ok) {
+          throw new Error(`Morning board fetch failed (${boardResp.status})`)
+        }
+        return (await boardResp.json()) as MorningBoardResponse
+      }
+      await new Promise((r) => setTimeout(r, 400))
+    }
+    throw new Error('Morning board timed out waiting for rebuild')
+  }
+
+  const handleResponse = async (response: Response): Promise<MorningBoardResponse> => {
+    if (response.status === 202) {
+      const accepted = (await response.json()) as { job_id?: string }
+      if (!accepted.job_id) throw new Error('Morning board accepted without job_id')
+      return pollJob(accepted.job_id)
+    }
     if (!response.ok) {
       let detail = 'Morning board failed'
       try {
@@ -371,24 +437,34 @@ export async function fetchMorningBoard(
       }
       throw new Error(detail)
     }
-    return (await response.json()) as MorningBoardResponse
+    const board = (await response.json()) as MorningBoardResponse & { rebuild_job_id?: string }
+    return board
+  }
+
+  if (params.filters || params.universe || params.symbols || params.force_refresh) {
+    const response = await fetch(`${baseUrl}/api/v1/intraday/morning-board`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_date: params.session_date || null,
+        source: params.source || 'persisted',
+        equity: params.equity || '1000000',
+        universe: params.universe || 'NIFTY_500',
+        symbols: params.symbols || null,
+        filters: params.filters || {},
+        force_refresh: Boolean(params.force_refresh),
+      }),
+    })
+    return handleResponse(response)
   }
   const qs = new URLSearchParams()
   if (params.session_date) qs.set('session_date', params.session_date)
   if (params.source) qs.set('source', params.source)
   if (params.equity) qs.set('equity', params.equity)
+  qs.set('universe', params.universe || 'NIFTY_500')
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   const response = await fetch(`${baseUrl}/api/v1/intraday/morning-board${suffix}`)
-  if (!response.ok) {
-    let detail = 'Morning board failed'
-    try {
-      detail = detailFromErrorPayload(await response.json(), detail)
-    } catch {
-      detail = response.statusText || detail
-    }
-    throw new Error(detail)
-  }
-  return (await response.json()) as MorningBoardResponse
+  return handleResponse(response)
 }
 
 export async function ensure1mActiveSet(
@@ -400,7 +476,8 @@ export async function ensure1mActiveSet(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ symbols }),
   })
-  if (!response.ok) {
+  // 202 = accepted background job (full accuracy ingest continues off-request)
+  if (response.status !== 200 && response.status !== 202) {
     let detail = 'ensure-1m failed'
     try {
       detail = detailFromErrorPayload(await response.json(), detail)
@@ -423,11 +500,30 @@ export async function runMorningIntradaySession(
     session_date?: string | null
   },
 ) {
+  type MorningResult = {
+    session: IntradaySessionResponse
+    practice: { opened: number; skipped: number; claim: string; trades: IntradayPracticeTrade[] } | null
+    hint?: string
+  }
+
   const response = await fetch(`${baseUrl}/api/v1/intraday/sessions/morning`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+  if (response.status === 202) {
+    const accepted = (await response.json()) as { job_id?: string }
+    if (!accepted.job_id) throw new Error('Morning session accepted without job_id')
+    const result = await pollSessionJob<MorningResult>(baseUrl, accepted.job_id)
+    if (!result?.session?.id) {
+      throw new Error('Morning session finished without a session id')
+    }
+    return {
+      session: result.session,
+      practice: result.practice ?? null,
+      hint: result.hint || '',
+    }
+  }
   if (!response.ok) {
     let detail = 'Morning session failed'
     try {
@@ -437,10 +533,14 @@ export async function runMorningIntradaySession(
     }
     throw new Error(detail)
   }
-  return (await response.json()) as {
-    session: IntradaySessionResponse
-    practice: { opened: number; skipped: number; claim: string; trades: IntradayPracticeTrade[] } | null
-    hint: string
+  const payload = (await response.json()) as MorningResult
+  if (!payload?.session?.id) {
+    throw new Error('Morning session response missing session.id')
+  }
+  return {
+    session: payload.session,
+    practice: payload.practice ?? null,
+    hint: payload.hint || '',
   }
 }
 

@@ -122,7 +122,10 @@ async def build_persisted_screen_bundle(
 
     syms = [s.upper() for s in symbols]
     m1_map = await query.get_candles_for_symbols(syms, "1m", start, end)
-    hist_map = await query.get_candles_for_symbols(syms, "1m", hist_start, start)
+    # Accuracy-identical to scanning full hist 1m: only OR minutes (09:15–09:19) are used for RVOL.
+    prior_maps = await query.get_first_5m_volumes_for_symbols(
+        syms, hist_start=hist_start, session_start=start
+    )
     daily_map = await query.get_candles_for_symbols(syms, "1d", hist_start, daily_end)
 
     screen_inputs: list[dict] = []
@@ -131,13 +134,12 @@ async def build_persisted_screen_bundle(
 
     for sym in syms:
         m1 = m1_map.get(sym) or []
-        hist = hist_map.get(sym) or []
+        prior_map = prior_maps.get(sym) or {}
         daily = daily_map.get(sym) or []
         candles_1m_by_symbol[sym] = m1
         if m1:
             coverage["with_1m"] += 1
 
-        prior_map = _first_5m_volumes_by_session(hist)
         prior_dates = sorted(d for d in prior_map if d < session_date and is_weekday(d))
         prior_vols = [prior_map[d] for d in prior_dates[-config.rvol_lookback_sessions :]]
 

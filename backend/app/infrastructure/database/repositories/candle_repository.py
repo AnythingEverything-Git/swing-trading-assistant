@@ -150,14 +150,93 @@ class CandleRepository:
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def first_5m_volumes_by_instrument(
+        self,
+        instrument_ids: list[int],
+        *,
+        start_timestamp: datetime,
+        end_timestamp: datetime,
+    ) -> dict[int, dict]:
+        """Sum 09:15–09:19 IST 1m volumes per instrument per IST calendar day.
+
+        Matches ``session_service._first_5m_volumes_by_session`` exactly — only the
+        opening-range minutes — without loading full-day 1m history.
+        """
+        from datetime import date as date_cls
+
+        if not instrument_ids:
+            return {}
+
+        bind = self.session.get_bind()
+        dialect = getattr(getattr(bind, "dialect", None), "name", "") or ""
+
+        if dialect == "postgresql":
+            local_ts = func.timezone("Asia/Kolkata", CandleORM.timestamp)
+            day_expr = func.date(local_ts)
+            hour_expr = func.extract("hour", local_ts)
+            minute_expr = func.extract("minute", local_ts)
+            stmt = (
+                select(
+                    CandleORM.instrument_id,
+                    day_expr.label("session_day"),
+                    func.coalesce(func.sum(CandleORM.volume), 0),
+                )
+                .where(CandleORM.instrument_id.in_(instrument_ids))
+                .where(CandleORM.timeframe == "1m")
+                .where(CandleORM.timestamp >= start_timestamp)
+                .where(CandleORM.timestamp < end_timestamp)
+                .where(hour_expr == 9)
+                .where(minute_expr >= 15)
+                .where(minute_expr < 20)
+                .group_by(CandleORM.instrument_id, day_expr)
+            )
+            result = await self.session.execute(stmt)
+            out: dict[int, dict] = {}
+            for instrument_id, session_day, vol in result.fetchall():
+                if instrument_id is None or session_day is None:
+                    continue
+                day = session_day if isinstance(session_day, date_cls) else date_cls.fromisoformat(str(session_day))
+                out.setdefault(int(instrument_id), {})[day] = int(vol or 0)
+            return out
+
+        # SQLite / other: load OR-window bars only via Python filter after range fetch.
+        # Still accuracy-identical; used mainly in unit tests.
+        rows = await self.get_range_for_instruments(instrument_ids, "1m", start_timestamp, end_timestamp)
+        from zoneinfo import ZoneInfo
+
+        ist = ZoneInfo("Asia/Kolkata")
+        out = {}
+        for row in rows:
+            ts = row.timestamp
+            if ts.tzinfo is None:
+                from datetime import timezone as tz
+
+                ts = ts.replace(tzinfo=tz.utc)
+            local = ts.astimezone(ist)
+            if local.hour != 9 or not (15 <= local.minute < 20):
+                continue
+            bucket = out.setdefault(int(row.instrument_id), {})
+            d = local.date()
+            bucket[d] = bucket.get(d, 0) + int(row.volume or 0)
+        return out
+
     async def latest_timestamp(self, timeframe: str = "1d") -> datetime | None:
-        stmt = select(func.max(CandleORM.timestamp)).where(CandleORM.timeframe == timeframe)
+        stmt = (
+            select(func.max(CandleORM.timestamp))
+            .where(CandleORM.timeframe == timeframe)
+            .execution_options(synchronize_session=False)
+        )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def count_instruments(self, timeframe: str = "1d") -> int:
-        stmt = select(func.count(func.distinct(CandleORM.instrument_id))).where(
-            CandleORM.timeframe == timeframe
+        # DISTINCT over large candle tables is expensive; prefer distinct instrument_id
+        # via a semi-join that can use (timeframe, instrument_id) if indexed.
+        stmt = select(func.count()).select_from(
+            select(CandleORM.instrument_id)
+            .where(CandleORM.timeframe == timeframe)
+            .distinct()
+            .subquery()
         )
         result = await self.session.execute(stmt)
         return int(result.scalar_one() or 0)

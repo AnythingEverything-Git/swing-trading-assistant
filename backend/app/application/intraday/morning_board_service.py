@@ -218,13 +218,13 @@ async def build_morning_board(
     if day.weekday() >= 5:
         raise ValueError("Pick a weekday session date")
 
-    uni = (universe or "NSE_ALL").strip().upper()
+    uni = (universe or "NIFTY_500").strip().upper() or "NIFTY_500"
     if symbols:
         ordered = [str(s).strip().upper() for s in symbols if str(s).strip()]
         from app.domain.intraday.asset_class import classify_asset_class
 
         classes = {s: classify_asset_class(s) for s in ordered}
-    elif uni in ("NSE_ALL", "NSE_MORNING", ""):
+    elif uni in ("NSE_ALL", "NSE_MORNING"):
         ordered, classes = morning_universe_symbols()
     elif uni == "DEMO_SAMPLE":
         ordered = ["ORBDEMO", "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT"]

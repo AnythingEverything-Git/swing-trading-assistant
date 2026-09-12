@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Dict, List, Sequence
-from datetime import datetime
+from datetime import datetime, date as date_cls
 
 from app.domain.market_data import Candle as DomainCandle
 from app.infrastructure.database.repositories.instrument_repository import InstrumentRepository
@@ -54,8 +54,10 @@ class MarketDataQueryService:
         timeframe: str,
         start: datetime,
         end: datetime,
+        *,
+        chunk_size: int = 100,
     ) -> Dict[str, List[DomainCandle]]:
-        """Batch-load candles for many symbols (2 DB queries instead of 2N)."""
+        """Batch-load candles for many symbols (chunked IN queries; identical rows)."""
         if not symbols:
             return {}
 
@@ -64,11 +66,14 @@ class MarketDataQueryService:
         if not by_id:
             return {symbol: [] for symbol in symbols}
 
-        rows = await self.candle_repo.get_range_for_instruments(
-            list(by_id.keys()), timeframe, start, end
-        )
+        ids = list(by_id.keys())
+        rows = []
+        size = max(1, int(chunk_size))
+        for i in range(0, len(ids), size):
+            chunk = ids[i : i + size]
+            rows.extend(await self.candle_repo.get_range_for_instruments(chunk, timeframe, start, end))
+
         grouped: Dict[str, List[DomainCandle]] = {symbol: [] for symbol in symbols}
-        # Also ensure known instruments map even if not in requested order duplicates
         for inst in instruments:
             grouped.setdefault(inst.symbol, [])
 
@@ -91,6 +96,45 @@ class MarketDataQueryService:
                 )
             )
         return grouped
+
+    async def get_first_5m_volumes_for_symbols(
+        self,
+        symbols: Sequence[str],
+        *,
+        hist_start: datetime,
+        session_start: datetime,
+    ) -> Dict[str, dict[date_cls, int]]:
+        """Per-symbol IST date -> first-5m volume (same definition as hist 1m scan)."""
+        if not symbols:
+            return {}
+        instruments = await self.instrument_repo.get_by_symbols(list(symbols))
+        by_id = {inst.id: inst for inst in instruments}
+        if not by_id:
+            return {s: {} for s in symbols}
+
+        ids = list(by_id.keys())
+        aggregated: dict[int, dict[date_cls, int]] = {}
+        chunk_size = 100
+        for i in range(0, len(ids), chunk_size):
+            chunk = ids[i : i + chunk_size]
+            part = await self.candle_repo.first_5m_volumes_by_instrument(
+                chunk,
+                start_timestamp=hist_start,
+                end_timestamp=session_start,
+            )
+            for iid, day_map in part.items():
+                bucket = aggregated.setdefault(int(iid), {})
+                for d, vol in day_map.items():
+                    day = d if isinstance(d, date_cls) else date_cls.fromisoformat(str(d))
+                    bucket[day] = int(vol)
+
+        out: Dict[str, dict[date_cls, int]] = {s: {} for s in symbols}
+        for iid, day_map in aggregated.items():
+            inst = by_id.get(iid)
+            if inst is None:
+                continue
+            out[inst.symbol] = dict(day_map)
+        return out
 
 
 __all__ = ["MarketDataQueryService"]

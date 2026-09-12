@@ -551,7 +551,7 @@ function readStoredUniverse(): ScanUniverse {
   } catch {
     /* ignore */
   }
-  return 'NSE_ALL'
+  return 'NIFTY_500'
 }
 
 function readStoredFilters(): UniverseFilterState {

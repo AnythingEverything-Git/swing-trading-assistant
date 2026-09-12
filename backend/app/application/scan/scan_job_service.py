@@ -242,6 +242,10 @@ async def execute_scan_job(
 
 
 async def execute_scan_job_for_app(app: FastAPI, scan_run_id: int) -> None:
+    import asyncio
+
+    # Yield so POST /opportunities 202 can flush before heavy scan work.
+    await asyncio.sleep(0)
     sessionmaker = getattr(app.state, "sessionmaker", None)
     if sessionmaker is None:
         raise RuntimeError("Database sessionmaker not configured")
