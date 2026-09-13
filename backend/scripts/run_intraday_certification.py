@@ -62,6 +62,11 @@ def main() -> None:
     parser.add_argument("--holdout-frac", type=float, default=0.3)
     parser.add_argument("--cost-mult", default="2")
     parser.add_argument(
+        "--universe",
+        default="NIFTY_50",
+        help="Universe for persisted/demo backtest (default NIFTY_50)",
+    )
+    parser.add_argument(
         "--out",
         default=str(_REPO_ROOT / "docs" / "artifacts" / "intraday_cert_package.json"),
     )
@@ -84,6 +89,8 @@ def main() -> None:
         str(args.holdout_frac),
         "--cost-mult",
         str(args.cost_mult),
+        "--universe",
+        args.universe,
         "--out",
         str(backtest_out),
     ]

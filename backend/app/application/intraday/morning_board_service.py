@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 from app.application.intraday.session_service import (
     build_demo_screen_bundle,
@@ -11,17 +11,32 @@ from app.application.intraday.session_service import (
 )
 from app.application.market_data.query_service import MarketDataQueryService
 from app.domain.intraday.asset_class import morning_universe_symbols
+from app.domain.intraday.breakout import (
+    planned_entry_price,
+    planned_stop_distance,
+    planned_target_price,
+    slippage_amount,
+    stop_price,
+    validate_stop_bounds,
+)
 from app.domain.intraday.config_v1 import DEFAULT_CONFIG_V1, IntradayConfigV1
 from app.domain.intraday.eligibility import (
     corporate_action_label,
     eligibility_flags,
-    is_short_allowed,
     is_surveillance_blocked,
 )
 from app.domain.intraday.engine import screen_symbol
 from app.domain.intraday.rank import rank_candidates_split
-from app.domain.intraday.session_calendar import IST, combine_ist
-from app.domain.intraday.types import RankedCandidate, ScreenCandidate
+from app.domain.intraday.session_calendar import (
+    IST,
+    combine_ist,
+    default_session_date,
+    is_trading_day,
+)
+from app.domain.intraday.decision import count_decisions, decision_from_board_row, decision_from_reason
+from app.domain.intraday.sizing import can_open, size_quantity
+from app.domain.intraday.types import FillPlan, PortfolioState, RankedCandidate, ScreenCandidate
+from app.domain.market_data import Candle
 
 BoardPhase = Literal["PRE_OPEN", "OR_BUILDING", "LIVE_SCREEN", "HISTORICAL"]
 DataSource = Literal["demo", "persisted"]
@@ -52,26 +67,210 @@ def auto_refresh_seconds(phase: BoardPhase) -> int:
     return 120
 
 
-def _ranked_payload(rows: list[RankedCandidate]) -> list[dict[str, Any]]:
+def _last_close(candles: Sequence[Candle] | None) -> Decimal | None:
+    if not candles:
+        return None
+    last = max(candles, key=lambda c: c.timestamp)
+    return last.close
+
+
+def _plan_fields(
+    ranked: RankedCandidate,
+    *,
+    current_price: Decimal | None,
+    config: IntradayConfigV1,
+) -> dict[str, Any]:
+    """Strategy-deduced entry / stop / 1R planning target (exits remain stop or 15:10 flatten)."""
+    c = ranked.candidate
+    entry = planned_entry_price(c.opening_range, c.direction, c.tick_size, config)
+    planned = planned_stop_distance(c.prior_atr14, config)
+    stop = stop_price(entry, c.direction, planned, c.tick_size)
+    stop_distance = abs(entry - stop)
+    target = planned_target_price(entry, c.direction, planned, c.tick_size)
+    bound_err = validate_stop_bounds(
+        entry=entry,
+        stop_distance=planned,
+        opening_range=c.opening_range,
+        spread=c.spread,
+        tick=c.tick_size,
+        config=config,
+    )
+    if bound_err is None and (
+        stop <= 0
+        or (c.direction == "LONG" and not (stop < entry < target))
+        or (c.direction == "SHORT" and not (target < entry < stop))
+    ):
+        bound_err = "invalid entry/stop/target geometry"
+    entry_slip = slippage_amount(entry, c.tick_size, config)
+    exit_slip = slippage_amount(entry, c.tick_size, config)
+    effective = stop_distance + entry_slip + exit_slip
+    risk_err = None
+    if bound_err:
+        risk_err = bound_err
+    elif effective > planned * config.risk_invalid_mult:
+        risk_err = "effective risk exceeds 1.25x planned stop"
+
+    reason = (
+        f"Rank #{ranked.rank} · RVOL5 {c.rvol5:.2f} · "
+        f"{'long breakout above OR high' if c.direction == 'LONG' else 'short breakdown below OR low'}"
+    )
+    return {
+        "current_price": str(current_price) if current_price is not None else None,
+        "entry": str(entry),
+        "stop": str(stop),
+        "target": str(target),
+        "target_label": "1R",
+        "stop_distance": str(stop_distance),
+        "effective_risk_per_share": str(effective),
+        "quantity": 0,
+        "risk_amount": None,
+        "size_status": "PENDING",
+        "reason": reason,
+        "detail": risk_err,
+        "_effective": effective,
+        "_entry": entry,
+        "_stop": stop,
+        "_risk_err": risk_err,
+    }
+
+
+def _ranked_payload(
+    rows: list[RankedCandidate],
+    *,
+    candles_by_symbol: dict[str, list[Candle]] | None = None,
+    equity: Decimal = Decimal("1000000"),
+    config: IntradayConfigV1 = DEFAULT_CONFIG_V1,
+    allocate: bool = True,
+) -> list[dict[str, Any]]:
+    candles_by_symbol = candles_by_symbol or {}
     out: list[dict[str, Any]] = []
     for r in rows:
         c = r.candidate
-        out.append(
-            {
-                "rank": r.rank,
-                "symbol": c.symbol,
-                "asset_class": c.asset_class,
-                "direction": c.direction,
-                "rvol5": str(c.rvol5),
-                "or_high": str(c.opening_range.high),
-                "or_low": str(c.opening_range.low),
-                "or_expansion_pct": str(round(c.opening_range.expansion_pct * 100, 4)),
-                "adv_value": str(c.adv_value),
-                "short_allowed": c.short_allowed,
-                "status": "RANKED",
-            }
+        plan = _plan_fields(
+            r,
+            current_price=_last_close(candles_by_symbol.get(c.symbol)),
+            config=config,
         )
+        row = {
+            "rank": r.rank,
+            "symbol": c.symbol,
+            "asset_class": c.asset_class,
+            "direction": c.direction,
+            "rvol5": str(c.rvol5),
+            "or_high": str(c.opening_range.high),
+            "or_low": str(c.opening_range.low),
+            "or_expansion_pct": str(round(c.opening_range.expansion_pct * 100, 4)),
+            "adv_value": str(c.adv_value),
+            "short_allowed": c.short_allowed,
+            "status": "RANKED",
+            "current_price": plan["current_price"],
+            "entry": plan["entry"],
+            "stop": plan["stop"],
+            "target": plan["target"],
+            "target_label": plan["target_label"],
+            "stop_distance": plan["stop_distance"],
+            "effective_risk_per_share": plan["effective_risk_per_share"],
+            "quantity": 0,
+            "risk_amount": None,
+            "size_status": "PENDING",
+            "reason": plan["reason"],
+            "detail": plan["detail"],
+            "_effective": plan["_effective"],
+            "_entry": plan["_entry"],
+            "_stop": plan["_stop"],
+            "_risk_err": plan["_risk_err"],
+            "_rank": r.rank,
+            "_asset_class": c.asset_class,
+            "_symbol": c.symbol,
+            "_direction": c.direction,
+        }
+        out.append(row)
+
+    if allocate and out:
+        _allocate_quantities(out, equity=equity, config=config)
+
+    for row in out:
+        row["decision"] = decision_from_board_row(
+            status=str(row.get("status")),
+            size_status=str(row.get("size_status")) if row.get("size_status") is not None else None,
+            reason=str(row.get("reason")) if row.get("reason") is not None else None,
+        )
+        for key in (
+            "_effective",
+            "_entry",
+            "_stop",
+            "_risk_err",
+            "_rank",
+            "_asset_class",
+            "_symbol",
+            "_direction",
+        ):
+            row.pop(key, None)
     return out
+
+
+def _allocate_quantities(
+    rows: list[dict[str, Any]],
+    *,
+    equity: Decimal,
+    config: IntradayConfigV1,
+) -> None:
+    """Distribute qty by rank (stocks then ETFs) within capital / portfolio guards."""
+
+    def _arm_key(row: dict[str, Any]) -> tuple[int, int]:
+        return (0 if row.get("_asset_class") != "ETF" else 1, int(row.get("_rank") or 999))
+
+    state = PortfolioState(equity=equity)
+    for row in sorted(rows, key=_arm_key):
+        risk_err = row.get("_risk_err")
+        if risk_err:
+            row["quantity"] = 0
+            row["size_status"] = "RISK_INVALID"
+            row["reason"] = f"{row['reason']} · sizing blocked: {risk_err}"
+            continue
+        entry = Decimal(str(row["_entry"]))
+        stop = Decimal(str(row["_stop"]))
+        effective = Decimal(str(row["_effective"]))
+        qty = size_quantity(
+            equity=equity,
+            effective_risk_per_share=effective,
+            entry=entry,
+            config=config,
+        )
+        if qty <= 0:
+            row["quantity"] = 0
+            row["size_status"] = "ZERO_QTY"
+            row["reason"] = f"{row['reason']} · quantity zero after capital sizing"
+            continue
+        risk_amount = effective * Decimal(qty)
+        plan = FillPlan(
+            symbol=str(row["_symbol"]),
+            direction=row["_direction"] if row["_direction"] in ("LONG", "SHORT") else "LONG",  # type: ignore[arg-type]
+            rank=int(row["_rank"]),
+            entry=entry,
+            stop=stop,
+            quantity=qty,
+            stop_distance=abs(entry - stop),
+            effective_risk_per_share=effective,
+            trigger_bar_open=combine_ist(date.today(), time(9, 20)),
+            risk_amount=risk_amount,
+        )
+        lock = can_open(state, plan, config)
+        if lock:
+            row["quantity"] = 0
+            row["risk_amount"] = None
+            row["size_status"] = lock
+            row["reason"] = f"{row['reason']} · not allocated ({lock.replace('_', ' ').title()})"
+            continue
+        row["quantity"] = qty
+        row["risk_amount"] = str(risk_amount)
+        row["size_status"] = "SIZED"
+        row["reason"] = (
+            f"{row['reason']} · qty {qty} from {config.risk_per_trade_pct * 100:.2f}% risk "
+            f"of capital (rank-ordered vs max {config.max_concurrent} positions)"
+        )
+        state.open_fills.append(plan)
+        state.traded_symbols.add(plan.symbol)
 
 
 def _eligibility_row(
@@ -112,6 +311,14 @@ def _eligibility_row(
         "adv_ok": adv_value >= config.min_adv_inr,
         "status": reason,
         "detail": detail,
+        "current_price": None,
+        "entry": None,
+        "stop": None,
+        "target": None,
+        "target_label": None,
+        "quantity": None,
+        "reason": detail or reason,
+        "decision": decision_from_board_row(status=reason, size_status=None, reason=reason),
     }
 
 
@@ -212,11 +419,10 @@ async def build_morning_board(
     symbols: list[str] | None = None,
 ) -> dict[str, Any]:
     """One-click morning board: NSE cash + ETFs (or a chosen universe), ranked by asset class."""
-    del equity  # reserved for future arm-from-board
     clock = now or datetime.now(tz=IST)
-    day = session_date or clock.astimezone(IST).date()
-    if day.weekday() >= 5:
-        raise ValueError("Pick a weekday session date")
+    day = session_date or default_session_date(clock)
+    if not is_trading_day(day):
+        raise ValueError("Pick a trading day (weekends and NSE holidays are closed)")
 
     uni = (universe or "NIFTY_500").strip().upper() or "NIFTY_500"
     if symbols:
@@ -251,7 +457,8 @@ async def build_morning_board(
     claim = (
         f"Morning universe = {uni}. "
         "Stocks and ETFs are ranked in separate Top-N pools. "
-        "Persisted board screens only symbols present in the local instrument/candle DB."
+        "Persisted board screens only symbols present in the local instrument/candle DB. "
+        "Quantity uses account capital + ORB V1 risk rules, allocated by rank."
     )
 
     if phase in ("PRE_OPEN", "OR_BUILDING"):
@@ -284,6 +491,7 @@ async def build_morning_board(
             "eligible_stocks": [r for r in stocks if r["status"] in ("ADV_OK", "WATCHLIST")],
             "eligible_etfs": [r for r in etfs if r["status"] in ("ADV_OK", "WATCHLIST")],
             "reason_counts": _count_status(stocks + etfs),
+            "decision_counts": count_decisions(stocks[: config.top_n] + etfs[: config.top_n]),
             "coverage": meta,
             "filter_coverage": {
                 "universe_total": len(ordered),
@@ -354,6 +562,7 @@ async def build_morning_board(
                     "detail": result.detail,
                     "rvol5": str(result.rvol5) if result.rvol5 is not None else None,
                     "direction": result.direction,
+                    "decision": decision_from_reason(result.reason),
                 }
             )
         else:
@@ -361,11 +570,25 @@ async def build_morning_board(
 
     stock_ranked, etf_ranked = rank_candidates_split(screened, config)
 
+    # Shared capital pool across stocks + ETFs (same order as session engine).
+    combined = _ranked_payload(
+        list(stock_ranked) + list(etf_ranked),
+        candles_by_symbol=candles,
+        equity=equity,
+        config=config,
+        allocate=True,
+    )
+    by_symbol = {r["symbol"]: r for r in combined}
+    stock_rows = [by_symbol[r.candidate.symbol] for r in stock_ranked if r.candidate.symbol in by_symbol]
+    etf_rows = [by_symbol[r.candidate.symbol] for r in etf_ranked if r.candidate.symbol in by_symbol]
+
     reason_counts: dict[str, int] = {}
     for row in blocked:
         reason_counts[row["reason"]] = reason_counts.get(row["reason"], 0) + 1
-    reason_counts["RANKED_STOCK"] = len(stock_ranked)
-    reason_counts["RANKED_ETF"] = len(etf_ranked)
+    reason_counts["RANKED_STOCK"] = len(stock_rows)
+    reason_counts["RANKED_ETF"] = len(etf_rows)
+    reason_counts["SIZED"] = sum(1 for r in combined if r.get("size_status") == "SIZED")
+    decision_counts = count_decisions(combined + blocked)
 
     return {
         "session_date": day.isoformat(),
@@ -377,15 +600,17 @@ async def build_morning_board(
         "claim": claim,
         "universe_stocks": sum(1 for s in ordered if classes[s] == "STOCK"),
         "universe_etfs": sum(1 for s in ordered if classes[s] == "ETF"),
-        "ranked_stocks": _ranked_payload(list(stock_ranked)),
-        "ranked_etfs": _ranked_payload(list(etf_ranked)),
+        "ranked_stocks": stock_rows,
+        "ranked_etfs": etf_rows,
         "blocked_sample": blocked[:40],
         "reason_counts": reason_counts,
+        "decision_counts": decision_counts,
         "coverage": {
             **meta,
             "screened": len(screened),
             "blocked": len(blocked),
             "with_1m_or_data": sum(1 for v in candles.values() if v),
+            "equity": str(equity),
         },
         "filter_coverage": {
             "universe_total": len(ordered),
@@ -394,8 +619,10 @@ async def build_morning_board(
             "filters": filter_spec.to_dict(),
         },
         "hint": (
-            "Refresh 1m: python scripts/refresh_intraday_candles.py --mode today|watermark. "
-            "Names without OR bars appear under blocked / low coverage."
+            "Confirmed = Top-N RVOL screen after OR. "
+            "Entry/SL/Target from ORB V1 (Target = 1R planning price). "
+            "Exits remain stop or forced flatten 15:10 — V1 does not auto-take profit at Target. "
+            "Refresh 1m: python scripts/refresh_intraday_candles.py --mode today|watermark."
         ),
     }
 

@@ -166,7 +166,7 @@ def build_fill_plan(
     stop_distance = abs(entry - stop)
     bound_err = validate_stop_bounds(
         entry=entry,
-        stop_distance=stop_distance,
+        stop_distance=planned,
         opening_range=c.opening_range,
         spread=c.spread,
         tick=tick,

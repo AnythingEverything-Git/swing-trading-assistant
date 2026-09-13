@@ -60,22 +60,32 @@ async def get_candles(
 async def get_quotes(
     symbols: str = Query(..., description="Comma-separated symbols, e.g. RELIANCE,TCS"),
     provider=Depends(get_upstox_provider),
+    svc: MarketDataQueryService = Depends(get_query_service),
 ) -> list[MarketQuoteResponse]:
+    from datetime import timedelta, timezone
+
     names = [item.strip().upper() for item in symbols.split(",") if item.strip()]
     if not names:
         raise HTTPException(status_code=400, detail="symbols query parameter is required")
 
     quote_fn = getattr(provider, "get_last_traded_prices", None)
-    if quote_fn is None:
-        return [MarketQuoteResponse(symbol=symbol) for symbol in names]
+    raw_quotes: dict = {}
+    if quote_fn is not None:
+        try:
+            from app.application.market_data.quote_cache import fetch_quotes_cached
 
-    try:
-        from app.application.market_data.quote_cache import fetch_quotes_cached
+            raw_quotes = await fetch_quotes_cached(quote_fn, names)
+        except Exception as exc:
+            # Fall through to persisted last-close so the desk stays usable offline.
+            logging.getLogger("app.quotes").warning("quote provider failed: %s", exc)
+            raw_quotes = {}
 
-        raw_quotes = await fetch_quotes_cached(quote_fn, names)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    # Prefer DB last close when provider is demo (synthetic seed ≠ persisted chart).
+    provider_name = type(provider).__name__ if provider is not None else ""
+    prefer_db = "Demo" in provider_name
 
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=21)
     response: list[MarketQuoteResponse] = []
     for symbol in names:
         payload = raw_quotes.get(symbol) or {}
@@ -85,13 +95,26 @@ async def get_quotes(
         try:
             raw = payload.get("raw", {}) or {}
             net_change = raw.get("net_change")
-            if net_change is not None and price_decimal is not None:
+            if net_change is not None and price_decimal is not None and not prefer_db:
                 net_change_decimal = Decimal(str(net_change))
                 prev_close = price_decimal - net_change_decimal
                 if prev_close != 0:
                     change_percent = (net_change_decimal / prev_close) * Decimal("100")
         except Exception:
             change_percent = None
+
+        if prefer_db or price_decimal is None:
+            try:
+                candles = await svc.get_candles(symbol, "1d", start, end)
+                if candles:
+                    price_decimal = candles[-1].close
+                    if len(candles) >= 2 and candles[-2].close:
+                        prev = candles[-2].close
+                        if prev != 0:
+                            change_percent = ((price_decimal - prev) / prev) * Decimal("100")
+            except Exception:
+                pass
+
         response.append(
             MarketQuoteResponse(
                 symbol=symbol,

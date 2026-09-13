@@ -197,6 +197,11 @@ def main() -> None:
     parser.add_argument("--end", type=date.fromisoformat, required=True)
     parser.add_argument("--source", choices=("demo", "persisted"), default="demo")
     parser.add_argument("--symbols", default=None, help="Comma-separated symbols")
+    parser.add_argument(
+        "--universe",
+        default=None,
+        help="Universe name (e.g. NIFTY_50). Ignored when --symbols is set.",
+    )
     parser.add_argument("--equity", type=Decimal, default=Decimal("1000000"))
     parser.add_argument("--persist", action="store_true", help="Write each day to intraday_sessions")
     parser.add_argument(
@@ -219,6 +224,10 @@ def main() -> None:
     if args.oos_start is not None and args.holdout_frac is not None:
         raise SystemExit("Use only one of --oos-start or --holdout-frac")
     symbols = [s.strip().upper() for s in args.symbols.split(",")] if args.symbols else None
+    if symbols is None and args.universe:
+        from app.infrastructure.universe import get_universe
+
+        symbols = list(get_universe(args.universe).get_snapshot().symbols)
     report = _run_async(
         _run_backtest(
             start=args.start,

@@ -13,9 +13,11 @@ type Props = {
   baseUrl: string
   theme: ThemeChoice
   onThemeChange: (next: ThemeChoice) => void
-  accountEquity: string
+  swingEquity: string
+  intradayEquity: string
   riskPercent: string
-  onEquityChange: (value: string) => void
+  onSwingEquityChange: (value: string) => void
+  onIntradayEquityChange: (value: string) => void
   onRiskChange: (value: string) => void
   paperTradingEnabled: boolean
   onPaperEnabledChange: (enabled: boolean) => void
@@ -131,9 +133,11 @@ export function AccountShell({
   baseUrl,
   theme,
   onThemeChange,
-  accountEquity,
+  swingEquity,
+  intradayEquity,
   riskPercent,
-  onEquityChange,
+  onSwingEquityChange,
+  onIntradayEquityChange,
   onRiskChange,
   paperTradingEnabled,
   onPaperEnabledChange,
@@ -379,7 +383,7 @@ export function AccountShell({
           </h1>
           <p className="header-copy">
             {tab === 'risk'
-              ? 'Size shares from capital and risk % — engine still owns Entry / Stop.'
+              ? 'Separate Swing and Intraday capital — engine still owns Entry / Stop.'
               : tab === 'appearance'
                 ? 'Choose theme and how often Swing, Intraday, and Practice refresh.'
                 : tab === 'alerts'
@@ -390,8 +394,10 @@ export function AccountShell({
           </p>
         </div>
         <button type="button" className="secondary-button" onClick={onOpenCapital}>
-          Your capital ₹
-          {new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Number(accountEquity) || 0)}
+          Capitals · Swing ₹
+          {new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Number(swingEquity) || 0)}
+          {' · Intra ₹'}
+          {new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Number(intradayEquity) || 0)}
         </button>
       </header>
 
@@ -423,9 +429,11 @@ export function AccountShell({
       {tab === 'risk' ? (
         <div className="account-section">
           <RiskCoachPanel
-            accountEquity={accountEquity}
+            swingEquity={swingEquity}
+            intradayEquity={intradayEquity}
             riskPercent={riskPercent}
-            onEquityChange={onEquityChange}
+            onSwingEquityChange={onSwingEquityChange}
+            onIntradayEquityChange={onIntradayEquityChange}
             onRiskChange={onRiskChange}
             embedded
           />

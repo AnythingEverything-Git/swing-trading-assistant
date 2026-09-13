@@ -435,16 +435,24 @@ async def research_overview(
     candles = await svc.get_candles(symbol.upper(), timeframe, resolved_start, resolved_end)
     snapshot = build_overview_snapshot(symbol.upper(), timeframe, candles)
 
-    current_price = None
+    current_price = snapshot.last_close
     change_pct = None
-    provider = getattr(request.app.state, "upstox_provider", None)
+    if len(candles) >= 2 and candles[-2].close and candles[-2].close != 0 and snapshot.last_close is not None:
+        change_pct = ((snapshot.last_close - candles[-2].close) / candles[-2].close) * Decimal("100")
+
+    provider = getattr(request.app.state, "ingest_provider", None) or getattr(
+        request.app.state, "upstox_provider", None
+    )
+    # Live Upstox LTP overlays persisted close; demo synthetic quotes must not diverge from the chart.
+    from app.infrastructure.market_data.demo_provider import DemoMarketDataProvider
+
     quote_fn = getattr(provider, "get_last_traded_prices", None)
-    if quote_fn is not None:
+    if quote_fn is not None and not isinstance(provider, DemoMarketDataProvider):
         try:
             quotes = await quote_fn([symbol.upper()])
             payload = quotes.get(symbol.upper())
             if payload:
-                current_price = payload.get("last_price")
+                current_price = payload.get("last_price") or current_price
                 raw = payload.get("raw") or {}
                 net_change = raw.get("net_change")
                 if net_change is not None and current_price:
@@ -602,7 +610,12 @@ async def research_fno(
     symbol: str,
     expiry: str = Query("current_month"),
     provider=Depends(get_upstox_provider),
+    svc: MarketDataQueryService = Depends(get_query_service),
 ) -> FnoResearchResponse:
+    from datetime import timedelta, timezone
+
+    from app.infrastructure.market_data.demo_provider import DemoMarketDataProvider
+
     chain_fn = getattr(provider, "get_option_chain", None)
     if chain_fn is None:
         return FnoResearchResponse(
@@ -624,6 +637,21 @@ async def research_fno(
             futures_premium_status="unavailable",
             oi_change_status="unavailable",
         )
+
+    # Align demo chain spot with the same persisted last close the chart uses.
+    if isinstance(provider, DemoMarketDataProvider):
+        try:
+            end = datetime.now(timezone.utc)
+            start = end - timedelta(days=21)
+            candles = await svc.get_candles(symbol.upper(), "1d", start, end)
+            if candles:
+                spot_db = candles[-1].close
+                payload["spot"] = spot_db
+                payload["futures_ltp"] = spot_db + Decimal("0.5")
+                payload["futures_premium"] = Decimal("0.5")
+                payload["futures_premium_status"] = "ok"
+        except Exception:
+            pass
 
     rows_raw = list(payload.get("rows") or [])
     rows = [OptionChainRowResponse(**row) for row in rows_raw]

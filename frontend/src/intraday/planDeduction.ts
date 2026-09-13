@@ -86,7 +86,7 @@ export function buildOrbDeductionSteps(input: {
         ? `Sized so roughly ${ORB_V1_RULES.riskPerTradePct}% of your capital is at risk to the safety exit.`
         : `When a fill prints, shares = risk budget ÷ stop distance (capped by position and portfolio limits).`,
       details: [
-        `Your capital (desk): ${formatPrice(accountEquity)}`,
+        `Intraday capital (desk): ${formatPrice(accountEquity)}`,
         `Risk budget this trade: ~${riskBudget}`,
         fill?.risk_amount != null ? `Rules risk amount: ${formatPrice(fill.risk_amount)}` : '',
         `Max concurrent positions: ${ORB_V1_RULES.maxConcurrent}`,
@@ -180,7 +180,23 @@ export function buildOrbBoardDeductionSteps(input: {
       summary: 'Morning board ranks stocks and ETFs in separate Top-N pools by RVOL5.',
       details: [
         `Status: ${row.status || 'RANKED'}`,
-        row.detail || 'Numbers come from the ORB engine — AI only rephrases.',
+        row.reason || row.detail || 'Numbers come from the ORB engine — AI only rephrases.',
+      ],
+    },
+    {
+      id: 'levels',
+      title: 'Planned levels',
+      value:
+        row.entry != null
+          ? `Entry ${formatPrice(row.entry)} · SL ${row.stop != null ? formatPrice(row.stop) : '—'}`
+          : 'Pending OR',
+      summary: 'Entry is OR extreme + slip; stop and 1R target from prior ATR14. Flatten still at 15:10.',
+      details: [
+        `Current: ${row.current_price != null ? formatPrice(row.current_price) : '—'}`,
+        `Target (1R): ${row.target != null ? formatPrice(row.target) : '—'}`,
+        row.quantity != null && row.quantity > 0
+          ? `Qty ${row.quantity} (capital + rank allocation)`
+          : 'Qty not allocated (portfolio / risk gate)',
       ],
     },
   ]

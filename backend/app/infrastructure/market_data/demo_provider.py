@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, time, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import List, Sequence
+from typing import Any, Iterable, List, Sequence
 from zoneinfo import ZoneInfo
 
 from app.domain.market_data import Candle
@@ -136,6 +136,74 @@ class DemoMarketDataProvider(MarketDataProvider):
                 return candles_1m
             return _aggregate_5m(candles_1m)
         raise ValueError("DemoMarketDataProvider supports timeframes '1d', '1m', '5m'")
+
+    async def get_last_traded_prices(self, symbols: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Synthetic LTP from the latest demo daily close (desk works offline)."""
+        names = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        if not names:
+            return {}
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=40)
+        out: dict[str, dict[str, Any]] = {}
+        for symbol in names:
+            candles = await self.get_candles(symbol, "1d", start, end)
+            if len(candles) < 1:
+                continue
+            last = candles[-1]
+            prev = candles[-2] if len(candles) >= 2 else last
+            net = last.close - prev.close
+            out[symbol] = {
+                "last_price": last.close,
+                "instrument_key": f"DEMO:{symbol}",
+                "raw": {"net_change": net, "symbol": symbol},
+            }
+        return out
+
+    async def get_option_chain(self, symbol: str, expiry_date: str = "current_month") -> dict[str, Any]:
+        """Deterministic near-ATM demo option chain for research F&O tab."""
+        normalized = symbol.strip().upper()
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=40)
+        candles = await self.get_candles(normalized, "1d", start, end)
+        spot = candles[-1].close if candles else Decimal("100")
+        seed = self.symbol_seed(normalized)
+        step = Decimal("5") if spot < 500 else Decimal("10") if spot < 2000 else Decimal("50")
+        atm = (spot / step).to_integral_value(rounding=ROUND_HALF_UP) * step
+        rows: list[dict[str, Any]] = []
+        for i in range(-10, 11):
+            strike = atm + step * Decimal(i)
+            dist = abs(i)
+            call_oi = Decimal(50_000 + (seed % 7_000) - dist * 2_000)
+            put_oi = Decimal(48_000 + (seed % 5_000) - dist * 1_800)
+            intrinsic_c = max(Decimal("0"), spot - strike)
+            intrinsic_p = max(Decimal("0"), strike - spot)
+            time_val = Decimal("2") + Decimal(max(0, 8 - dist)) * Decimal("0.35")
+            rows.append(
+                {
+                    "strike": strike,
+                    "call_ltp": (intrinsic_c + time_val).quantize(Decimal("0.05")),
+                    "call_oi": max(Decimal("1000"), call_oi),
+                    "call_iv": Decimal("18") + Decimal(dist),
+                    "call_oi_change": Decimal(1000 - dist * 50),
+                    "put_ltp": (intrinsic_p + time_val).quantize(Decimal("0.05")),
+                    "put_oi": max(Decimal("1000"), put_oi),
+                    "put_iv": Decimal("19") + Decimal(dist),
+                    "put_oi_change": Decimal(800 - dist * 40),
+                }
+            )
+        total_call = sum((Decimal(str(r["call_oi"])) for r in rows), Decimal("0"))
+        total_put = sum((Decimal(str(r["put_oi"])) for r in rows), Decimal("0"))
+        pcr = (total_put / total_call).quantize(Decimal("0.0001")) if total_call else None
+        return {
+            "symbol": normalized,
+            "expiry": expiry_date,
+            "spot": spot,
+            "pcr": pcr,
+            "futures_ltp": spot + Decimal("0.5"),
+            "futures_premium": Decimal("0.5"),
+            "futures_premium_status": "ok",
+            "rows": rows,
+        }
 
     def _daily_candles(self, normalized: str, start: datetime, end: datetime) -> List[Candle]:
         start_ts = _as_utc(start)

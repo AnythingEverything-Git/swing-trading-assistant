@@ -58,6 +58,14 @@ class PaperTradeRepository:
     async def list_active(self) -> list[PaperTrade]:
         return await self.list_by_status("ACTIVE", limit=500)
 
+    async def delete_all(self) -> int:
+        """Remove all practice paper trades (fresh wallet)."""
+        from sqlalchemy import delete
+
+        result = await self.session.execute(delete(PaperTradeORM))
+        await self.session.flush()
+        return int(result.rowcount or 0)
+
     @staticmethod
     def _to_orm(trade: PaperTrade) -> PaperTradeORM:
         return PaperTradeORM(

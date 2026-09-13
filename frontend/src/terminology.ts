@@ -27,7 +27,32 @@ export function exitReasonLabel(reason: string | null | undefined): string {
   }
 }
 
-/** Intraday ORB V1 — plain-language outcome for every symbol reason code. */
+/** Product decision for ORB desk (G2) — derived from reason codes, not a second engine. */
+export function orbDecisionLabel(decision: string | null | undefined): string {
+  switch (String(decision || '').toUpperCase()) {
+    case 'EXECUTE':
+      return 'Execute'
+    case 'WATCH':
+      return 'Watch'
+    case 'REJECT':
+      return 'Reject'
+    default:
+      return decision || '—'
+  }
+}
+
+export function orbDecisionHint(decision: string | null | undefined): string {
+  switch (String(decision || '').toUpperCase()) {
+    case 'EXECUTE':
+      return 'Sized within capital — take the 1m breakout when it prints.'
+    case 'WATCH':
+      return 'Valid setup waiting on trigger, cutoff, or a free portfolio slot.'
+    case 'REJECT':
+      return 'Rules blocked this name for today — see reason.'
+    default:
+      return ''
+  }
+}
 export function orbReasonLabel(reason: string | null | undefined): string {
   switch (reason) {
     case 'TRADED':

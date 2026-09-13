@@ -67,6 +67,21 @@ def get_paper_service(
     )
 
 
+@router.delete("/trades")
+async def reset_paper_trades(
+    svc: PaperTradeService = Depends(get_paper_service),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Start fresh — delete all swing practice trades (fake money only)."""
+    deleted = await svc.reset_all()
+    await session.commit()
+    return {
+        "claim": _CLAIM,
+        "deleted": deleted,
+        "message": "Swing practice book cleared. Wallet returns to starting capital.",
+    }
+
+
 @router.get("/trades", response_model=PaperTradeListResponse)
 async def list_paper_trades(
     status: str = Query(default="ALL", pattern="^(PENDING|OPEN|CLOSED|ACTIVE|ALL)$"),

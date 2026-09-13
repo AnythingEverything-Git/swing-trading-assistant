@@ -501,10 +501,15 @@ async def morning_session(
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
+    from app.domain.intraday.session_calendar import default_session_date, is_trading_day
+
     ist = ZoneInfo("Asia/Kolkata")
-    day = payload.session_date or datetime.now(tz=ist).date()
-    if day.weekday() >= 5:
-        raise HTTPException(status_code=400, detail="Pick a weekday session date")
+    day = payload.session_date or default_session_date(datetime.now(tz=ist))
+    if not is_trading_day(day):
+        raise HTTPException(
+            status_code=400,
+            detail="Pick a trading day (weekends and NSE holidays are closed)",
+        )
 
     run_payload = IntradaySessionRunRequest(
         session_date=day,
@@ -674,3 +679,18 @@ async def close_practice(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
     return trade
+
+
+@router.delete("/practice")
+async def reset_intraday_practice(
+    practice=Depends(_practice_service),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Start fresh — delete all intraday practice trades."""
+    deleted = await practice.reset_all()
+    await db.commit()
+    return {
+        "claim": "PRACTICE — fake money, no real broker orders",
+        "deleted": deleted,
+        "message": "Intraday practice book cleared. Wallet returns to starting capital.",
+    }

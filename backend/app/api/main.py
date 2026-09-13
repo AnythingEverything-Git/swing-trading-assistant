@@ -63,8 +63,9 @@ def create_app() -> FastAPI:
         source = normalize_market_data_source(getattr(settings, "market_data_source", "demo"))
         app.state.market_data_source = source
         app.state.upstox_factory = None
-        app.state.upstox_provider = None
         app.state.ingest_provider = DemoMarketDataProvider()
+        # Keep quote/F&O research wired in demo (same object as ingest).
+        app.state.upstox_provider = app.state.ingest_provider
 
         if source == "upstox":
             if not live_ready(settings):

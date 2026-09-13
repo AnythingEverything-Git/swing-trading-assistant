@@ -99,6 +99,14 @@ class IntradayPracticeRepository:
         )
         return {str(s) for s in result.scalars().all()}
 
+    async def delete_all(self) -> int:
+        """Remove all intraday practice trades (fresh wallet)."""
+        from sqlalchemy import delete
+
+        result = await self.session.execute(delete(IntradayPracticeTradeORM))
+        await self.session.flush()
+        return int(result.rowcount or 0)
+
     async def save(self, trade: IntradayPracticeTrade) -> IntradayPracticeTrade:
         if trade.id is None:
             return await self.create(trade)

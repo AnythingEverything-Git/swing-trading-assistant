@@ -1,5 +1,7 @@
 /** Intraday ORB session API client. */
 
+export type IntradayDecision = 'EXECUTE' | 'WATCH' | 'REJECT'
+
 export type IntradaySymbolResult = {
   symbol: string
   reason: string
@@ -8,6 +10,7 @@ export type IntradaySymbolResult = {
   direction: string | null
   detail: string | null
   asset_class?: 'STOCK' | 'ETF' | null
+  decision?: IntradayDecision | null
 }
 
 export type IntradayRankedRow = {
@@ -28,6 +31,18 @@ export type IntradayRankedRow = {
   adv_ok?: boolean
   status?: string
   detail?: string | null
+  current_price?: string | null
+  entry?: string | null
+  stop?: string | null
+  target?: string | null
+  target_label?: string | null
+  quantity?: number | null
+  risk_amount?: string | null
+  size_status?: string | null
+  reason?: string | null
+  stop_distance?: string | null
+  effective_risk_per_share?: string | null
+  decision?: IntradayDecision | null
 }
 
 export type MorningBoardResponse = {
@@ -53,6 +68,7 @@ export type MorningBoardResponse = {
     direction: string | null
   }>
   reason_counts: Record<string, number>
+  decision_counts?: Partial<Record<'EXECUTE' | 'WATCH' | 'REJECT', number>>
   coverage: Record<string, unknown>
   hint: string
 }
@@ -95,6 +111,7 @@ export type IntradaySessionResponse = {
   coverage_total: number
   coverage_pct?: number
   reason_counts?: Record<string, number>
+  decision_counts?: Partial<Record<'EXECUTE' | 'WATCH' | 'REJECT', number>>
   ranked_stocks?: IntradayRankedRow[]
   ranked_etfs?: IntradayRankedRow[]
   symbol_results: IntradaySymbolResult[]

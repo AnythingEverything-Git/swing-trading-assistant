@@ -33,9 +33,14 @@ def calculate_position_size(
     account_equity = _as_decimal(account_equity, "account_equity")
     risk_percent = _as_decimal(risk_percent, "risk_percent")
     risk_per_share = _as_decimal(candidate.risk_per_share, "risk_per_share")
+    entry = _as_decimal(candidate.entry_price, "entry_price")
 
     maximum_risk_amount = account_equity * risk_percent / Decimal("100")
     quantity = int((maximum_risk_amount / risk_per_share).to_integral_value(rounding=ROUND_FLOOR))
+    # Cap notional so a tight stop cannot consume more than full equity
+    max_by_capital = int((account_equity / entry).to_integral_value(rounding=ROUND_FLOOR))
+    if max_by_capital >= 0:
+        quantity = min(quantity, max_by_capital)
     actual_risk_amount = Decimal(quantity) * risk_per_share
 
     return PositionSizingResult(

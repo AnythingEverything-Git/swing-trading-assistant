@@ -203,7 +203,7 @@ export function buildPlanDeductionSteps(input: DeductionInput): DeductionStep[] 
       value: input.quantity == null ? '—' : String(input.quantity),
       summary: 'Share count comes from your capital and risk %, not from guessing a round lot.',
       details: [
-        `Your capital (from the form) = ${input.formatPrice(equity)}.`,
+        `Swing capital (from the form) = ${input.formatPrice(equity)}.`,
         `Risk % you chose = ${input.formatPercent(riskPct)}.`,
         Number.isFinite(maxRiskRupees)
           ? `Max rupees you are willing to lose on this idea = capital × risk% = ${input.formatPrice(maxRiskRupees)}.`

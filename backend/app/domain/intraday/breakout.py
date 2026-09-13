@@ -16,6 +16,21 @@ def slippage_amount(price: Decimal, tick: Decimal, config: IntradayConfigV1) -> 
     return max(tick, bps)
 
 
+def planned_entry_price(
+    opening_range: OpeningRange,
+    direction: Direction,
+    tick: Decimal,
+    config: IntradayConfigV1 = DEFAULT_CONFIG_V1,
+) -> Decimal:
+    """Armed breakout price before a trigger bar (OR extreme + slip, snapped away)."""
+    slip = slippage_amount(opening_range.close, tick, config)
+    if direction == "LONG":
+        raw = opening_range.high + slip
+        return _snap_away(raw, tick, "LONG", for_stop=False)
+    raw = opening_range.low - slip
+    return _snap_away(raw, tick, "SHORT", for_stop=False)
+
+
 def _snap_away(price: Decimal, tick: Decimal, direction: Direction, *, for_stop: bool) -> Decimal:
     if tick <= 0:
         return price
@@ -78,8 +93,45 @@ def planned_stop_distance(prior_atr14: Decimal, config: IntradayConfigV1) -> Dec
 
 
 def stop_price(entry: Decimal, direction: Direction, stop_distance: Decimal, tick: Decimal) -> Decimal:
-    raw = entry - stop_distance if direction == "LONG" else entry + stop_distance
-    return _snap_away(raw, tick, direction, for_stop=True)
+    """SL price on the protective side of entry; never ≤ 0 and never through entry."""
+    dist = abs(stop_distance)
+    safe_tick = tick if tick > 0 else Decimal("0.05")
+    if direction == "LONG":
+        # At least one tick below entry, and never at/under zero.
+        max_dist = entry - safe_tick
+        if max_dist <= 0:
+            return safe_tick if entry > safe_tick else max(entry / Decimal("2"), safe_tick)
+        dist = min(dist, max_dist)
+        raw = entry - dist
+        snapped = _snap_away(raw, safe_tick, direction, for_stop=True)
+        if snapped <= 0:
+            snapped = safe_tick
+        if snapped >= entry:
+            snapped = entry - safe_tick
+        return snapped if snapped > 0 else safe_tick
+    raw = entry + dist
+    snapped = _snap_away(raw, safe_tick, direction, for_stop=True)
+    if snapped <= entry:
+        snapped = entry + safe_tick
+    return snapped
+
+
+def planned_target_price(
+    entry: Decimal, direction: Direction, stop_distance: Decimal, tick: Decimal
+) -> Decimal:
+    """1R planning price (same distance as SL, favorable side). Desk/display only in V1."""
+    dist = abs(entry - stop_price(entry, direction, stop_distance, tick))
+    safe_tick = tick if tick > 0 else Decimal("0.05")
+    if direction == "LONG":
+        raw = entry + dist
+        return _snap_away(raw, safe_tick, "LONG", for_stop=False)
+    raw = entry - dist
+    snapped = _snap_away(raw, safe_tick, "SHORT", for_stop=False)
+    if snapped <= 0:
+        snapped = safe_tick
+    if snapped >= entry:
+        snapped = entry - safe_tick
+    return snapped if snapped > 0 else safe_tick
 
 
 def validate_stop_bounds(
@@ -92,6 +144,14 @@ def validate_stop_bounds(
     config: IntradayConfigV1,
 ) -> str | None:
     """Return reject detail or None if OK."""
+    if entry <= 0:
+        return "entry must be positive"
+    if stop_distance <= 0:
+        return "stop distance must be positive"
+    # Raw ATR stop must leave a positive SL for longs (before clamp in stop_price).
+    safe_tick = tick if tick > 0 else Decimal("0.05")
+    if stop_distance >= entry - safe_tick:
+        return "stop would cross through entry or go non-positive"
     or_range = opening_range.high - opening_range.low
     min_stop = max(
         tick * config.stop_min_ticks,
@@ -110,8 +170,10 @@ def validate_stop_bounds(
 
 __all__ = [
     "slippage_amount",
+    "planned_entry_price",
     "find_breakout_fill",
     "planned_stop_distance",
     "stop_price",
+    "planned_target_price",
     "validate_stop_bounds",
 ]

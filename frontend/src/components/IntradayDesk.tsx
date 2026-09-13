@@ -4,6 +4,7 @@ import { OrbChart } from './OrbChart'
 import { FilterBuilder, DEFAULT_FILTERS, filtersToPayload, type UniverseFilterState } from './FilterBuilder'
 import { CoverageDrawer } from './CoverageDrawer'
 import { TradeDurationTimer } from './TradeDurationTimer'
+import { TradingDatePicker } from './TradingDatePicker'
 import {
   ensure1mActiveSet,
   fetchMorningBoard,
@@ -29,9 +30,12 @@ import {
   type MorningBoardResponse,
 } from '../intraday/api'
 import { buildOrbBoardDeductionSteps, buildOrbDeductionSteps } from '../intraday/planDeduction'
+import { defaultSessionDate } from '../intraday/tradingCalendar'
 import {
   directionLabel,
   exitReasonLabel,
+  orbDecisionHint,
+  orbDecisionLabel,
   orbPaperClaim,
   orbReasonHint,
   orbReasonLabel,
@@ -43,14 +47,6 @@ type Props = {
   accountEquity: string
   onEquityChange?: (value: string) => void
   preferredBoardRefreshSec?: number
-}
-
-function todayIsoDate(): string {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
 }
 
 function isPreOrPhase(phase: MorningBoardResponse['phase'] | undefined): boolean {
@@ -72,7 +68,7 @@ function eligibilityStatusLabel(status?: string | null): string {
   }
 }
 
-type OutcomeFilter = 'ALL' | 'TRADED' | 'ARMED' | 'BLOCKED' | 'SKIPPED'
+type OutcomeFilter = 'ALL' | 'EXECUTE' | 'WATCH' | 'REJECT'
 
 const DEMO_SAMPLE = 'ORBDEMO, ADANIENT, ADANIPORTS, APOLLOHOSP, ASIANPAINT'
 
@@ -99,6 +95,14 @@ function formatInr(value: string | number | null | undefined): string {
   }).format(numeric)
 }
 
+function decisionTone(decision: string | null | undefined): string {
+  const d = String(decision || '').toUpperCase()
+  if (d === 'EXECUTE') return 'intraday-decision execute'
+  if (d === 'WATCH') return 'intraday-decision watch'
+  if (d === 'REJECT') return 'intraday-decision reject'
+  return 'intraday-decision muted'
+}
+
 function reasonTone(reason: string): string {
   if (reason === 'TRADED') return 'intraday-reason traded'
   if (
@@ -117,22 +121,18 @@ function reasonTone(reason: string): string {
   return 'intraday-reason muted'
 }
 
-function outcomeBucket(reason: string): Exclude<OutcomeFilter, 'ALL'> {
-  if (reason === 'TRADED') return 'TRADED'
-  if (reason === 'RANKED_ARMED' || reason === 'BREAKOUT_NOT_TRIGGERED') return 'ARMED'
-  if (
-    reason.includes('LOCK') ||
-    reason === 'RISK_INVALID' ||
-    reason === 'ORDER_REJECTED' ||
-    reason === 'PORTFOLIO_RISK_LIMIT' ||
-    reason === 'SHORT_NOT_PERMITTED' ||
-    reason === 'SURVEILLANCE_BLOCKED' ||
-    reason === 'PRICE_BAND_RISK' ||
-    reason === 'CORPORATE_ACTION_BLOCK'
-  ) {
-    return 'BLOCKED'
+function decisionFromReason(reason: string): Exclude<OutcomeFilter, 'ALL'> {
+  if (reason === 'TRADED') return 'EXECUTE'
+  if (reason === 'RANKED_ARMED' || reason === 'BREAKOUT_NOT_TRIGGERED' || reason === 'ENTRY_CUTOFF') {
+    return 'WATCH'
   }
-  return 'SKIPPED'
+  return 'REJECT'
+}
+
+function outcomeBucket(row: { reason: string; decision?: string | null }): Exclude<OutcomeFilter, 'ALL'> {
+  const d = String(row.decision || '').toUpperCase()
+  if (d === 'EXECUTE' || d === 'WATCH' || d === 'REJECT') return d
+  return decisionFromReason(row.reason)
 }
 
 function csvEscape(value: string | number | null | undefined): string {
@@ -219,20 +219,32 @@ function downloadSessionCsv(session: IntradaySessionResponse) {
   URL.revokeObjectURL(url)
 }
 
+const BOARD_PREVIEW_LIMIT = 5
+
 function MorningRankTable({
   title,
   rows,
   empty,
   mode,
   onExplain,
+  previewLimit = BOARD_PREVIEW_LIMIT,
 }: {
   title: string
   rows: IntradayRankedRow[]
   empty: string
   mode: 'rank' | 'eligibility'
   onExplain?: (symbol: string) => void
+  previewLimit?: number
 }) {
   const eligibility = mode === 'eligibility'
+  const [expanded, setExpanded] = useState(false)
+  const canCollapse = rows.length > previewLimit
+  const visibleRows = expanded || !canCollapse ? rows : rows.slice(0, previewLimit)
+
+  useEffect(() => {
+    setExpanded(false)
+  }, [rows.length, rows[0]?.symbol, rows[rows.length - 1]?.symbol])
+
   return (
     <div className="confirmed-box intraday-table-box">
       <div className="table-toolbar">
@@ -240,10 +252,21 @@ function MorningRankTable({
           <h3>{title}</h3>
           <p className="field-hint">
             {eligibility
-              ? `Showing ${rows.length} ${title.toLowerCase()} · ADV / flags before OR closes`
-              : `Showing ${rows.length} ranked ${title.toLowerCase()}. Rank is RVOL order for this session.`}
+              ? `Showing ${visibleRows.length} of ${rows.length} ${title.toLowerCase()} · ADV / flags before OR closes`
+              : `Showing ${visibleRows.length} of ${rows.length} strategy-confirmed ${title.toLowerCase()}. Qty uses capital + rank within max concurrent.`}
           </p>
         </div>
+        {canCollapse ? (
+          <div className="table-toolbar-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {expanded ? 'Show less' : `Show more (${rows.length - previewLimit})`}
+            </button>
+          </div>
+        ) : null}
       </div>
       {rows.length === 0 ? (
         <div className="empty-state">
@@ -251,121 +274,149 @@ function MorningRankTable({
           <span>{empty}</span>
         </div>
       ) : (
-        <div className="table-wrap scan-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>{title === 'ETFs' ? 'ETF' : 'Stock'}</th>
-                {eligibility ? (
-                  <>
-                    <th>ADV</th>
-                    <th>Surveillance</th>
-                    <th>CA</th>
-                    <th>Short-allow</th>
-                    <th>Status</th>
-                  </>
-                ) : (
-                  <>
-                    <th>Trade type</th>
-                    <th>RVOL5</th>
-                    <th>OR high</th>
-                    <th>OR low</th>
-                    <th>Status</th>
-                    {onExplain ? <th>Strategy Steps</th> : null}
-                  </>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => {
-                const isShort = row.direction === 'SHORT'
-                return (
-                  <tr key={`${row.asset_class}-${row.symbol}`}>
-                    <td className="num-cell">
-                      <span className="rank-badge">#{row.rank ?? '—'}</span>
-                    </td>
-                    <td className="symbol-cell">
-                      {onExplain ? (
-                        <button type="button" className="symbol-link" onClick={() => onExplain(row.symbol)}>
-                          {row.symbol}
-                        </button>
-                      ) : (
-                        <span className="symbol-link">{row.symbol}</span>
-                      )}
-                    </td>
-                    {eligibility ? (
-                      <>
-                        <td>{row.adv_band || (row.adv_ok ? 'OK' : 'Low')}</td>
-                        <td className="num-cell" aria-label={row.surveillance_blocked ? 'Blocked' : 'Clear'}>
-                          <span className={`elig-check ${row.surveillance_blocked ? 'is-blocked' : 'is-ok'}`}>
-                            {row.surveillance_blocked ? '⚠' : '☐'}
-                          </span>
-                        </td>
-                        <td>
-                          {row.corporate_action_label ||
-                            (row.corporate_action_blocked ? 'Blocked' : 'None')}
-                        </td>
-                        <td>{row.short_allowed === false ? 'No' : 'Yes'}</td>
-                        <td>
-                          <span
-                            className={`elig-status ${
-                              eligibilityStatusLabel(row.status) === 'Blocked'
-                                ? 'is-blocked'
-                                : eligibilityStatusLabel(row.status) === 'Pending OR'
-                                  ? 'is-pending'
-                                  : 'is-ok'
-                            }`}
-                          >
-                            <span className="elig-flag" aria-hidden="true" />
-                            {eligibilityStatusLabel(row.status)}
-                          </span>
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td>
-                          {row.direction ? (
-                            <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
-                              {directionLabel(row.direction)}
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td className="num-cell">
-                          {row.rvol5 != null ? Number(row.rvol5).toFixed(2) : '—'}
-                        </td>
-                        <td className="num-cell">{row.or_high ? formatInr(row.or_high) : '—'}</td>
-                        <td className="num-cell">{row.or_low ? formatInr(row.or_low) : '—'}</td>
-                        <td>
-                          <span
-                            className={reasonTone(
-                              row.status === 'RANKED' ? 'RANKED_ARMED' : row.status || 'NO_SETUP',
-                            )}
-                          >
-                            {row.status || '—'}
-                          </span>
-                        </td>
+        <>
+          <div className="table-wrap scan-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>{title === 'ETFs' ? 'ETF' : 'Stock'}</th>
+                  {eligibility ? (
+                    <>
+                      <th>ADV</th>
+                      <th>Surveillance</th>
+                      <th>CA</th>
+                      <th>Short-allow</th>
+                      <th>Status</th>
+                    </>
+                  ) : (
+                    <>
+                      <th>Decision</th>
+                      <th>Trade type</th>
+                      <th>Current</th>
+                      <th>Entry</th>
+                      <th>Target</th>
+                      <th>SL</th>
+                      <th>Qty</th>
+                      <th>Reason</th>
+                      {onExplain ? <th>Strategy Steps</th> : null}
+                    </>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRows.map((row) => {
+                  const isShort = row.direction === 'SHORT'
+                  return (
+                    <tr key={`${row.asset_class}-${row.symbol}`}>
+                      <td className="num-cell">
+                        <span className="rank-badge">#{row.rank ?? '—'}</span>
+                      </td>
+                      <td className="symbol-cell">
                         {onExplain ? (
-                          <td className="deduction-cell">
-                            <button
-                              type="button"
-                              className="ghost-btn deduction-toggle"
-                              onClick={() => onExplain(row.symbol)}
-                            >
-                              Strategy Steps
-                            </button>
+                          <button type="button" className="symbol-link" onClick={() => onExplain(row.symbol)}>
+                            {row.symbol}
+                          </button>
+                        ) : (
+                          <span className="symbol-link">{row.symbol}</span>
+                        )}
+                      </td>
+                      {eligibility ? (
+                        <>
+                          <td>{row.adv_band || (row.adv_ok ? 'OK' : 'Low')}</td>
+                          <td className="num-cell" aria-label={row.surveillance_blocked ? 'Blocked' : 'Clear'}>
+                            <span className={`elig-check ${row.surveillance_blocked ? 'is-blocked' : 'is-ok'}`}>
+                              {row.surveillance_blocked ? '⚠' : '☐'}
+                            </span>
                           </td>
-                        ) : null}
-                      </>
-                    )}
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                          <td>
+                            {row.corporate_action_label ||
+                              (row.corporate_action_blocked ? 'Blocked' : 'None')}
+                          </td>
+                          <td>{row.short_allowed === false ? 'No' : 'Yes'}</td>
+                          <td>
+                            <span
+                              className={`elig-status ${
+                                eligibilityStatusLabel(row.status) === 'Blocked'
+                                  ? 'is-blocked'
+                                  : eligibilityStatusLabel(row.status) === 'Pending OR'
+                                    ? 'is-pending'
+                                    : 'is-ok'
+                              }`}
+                            >
+                              <span className="elig-flag" aria-hidden="true" />
+                              {eligibilityStatusLabel(row.status)}
+                            </span>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td>
+                            <span
+                              className={decisionTone(row.decision)}
+                              title={orbDecisionHint(row.decision)}
+                            >
+                              {orbDecisionLabel(row.decision || 'WATCH')}
+                            </span>
+                          </td>
+                          <td>
+                            {row.direction ? (
+                              <span className={`direction-pill ${isShort ? 'short' : 'long'}`}>
+                                {directionLabel(row.direction)}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td className="num-cell">
+                            {row.current_price != null ? formatInr(row.current_price) : '—'}
+                          </td>
+                          <td className="num-cell">{row.entry != null ? formatInr(row.entry) : '—'}</td>
+                          <td className="num-cell">
+                            {row.target != null ? formatInr(row.target) : '—'}
+                          </td>
+                          <td className="num-cell">
+                            {row.stop != null && Number(row.stop) > 0 ? formatInr(row.stop) : '—'}
+                          </td>
+                          <td className="num-cell">
+                            {row.quantity != null && row.quantity > 0 ? row.quantity : '—'}
+                          </td>
+                          <td className="reason-cell" title={row.reason || row.detail || ''}>
+                            {row.reason || row.detail || row.status || '—'}
+                          </td>
+                          {onExplain ? (
+                            <td className="deduction-cell">
+                              <button
+                                type="button"
+                                className="ghost-btn deduction-toggle"
+                                onClick={() => onExplain(row.symbol)}
+                              >
+                                Strategy Steps
+                              </button>
+                            </td>
+                          ) : null}
+                        </>
+                      )}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          {canCollapse ? (
+            <div className="intraday-board-more">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setExpanded((v) => !v)}
+              >
+                {expanded
+                  ? 'Show less'
+                  : `Show more · ${rows.length - previewLimit} more ${title.toLowerCase()}`}
+              </button>
+            </div>
+          ) : null}
+        </>
       )}
     </div>
   )
@@ -380,7 +431,7 @@ export function IntradayDesk({
   const [universe, setUniverse] = useState<IntradayUniverse>('NIFTY_500')
   const [boardFilters, setBoardFilters] = useState<UniverseFilterState>(DEFAULT_FILTERS)
   const [symbolsText, setSymbolsText] = useState(DEMO_SAMPLE)
-  const [sessionDate, setSessionDate] = useState(todayIsoDate)
+  const [sessionDate, setSessionDate] = useState(defaultSessionDate)
   const [source, setSource] = useState<'demo' | 'persisted'>('persisted')
   const [showHow, setShowHow] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
@@ -428,6 +479,11 @@ export function IntradayDesk({
     void loadRecentSessions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseUrl])
+
+  useEffect(() => {
+    void loadMorningBoard({ quiet: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- auto board for trading day / capital / universe
+  }, [baseUrl, sessionDate, source, universe, accountEquity, boardFilters])
 
   useEffect(() => {
     if (!session?.id) {
@@ -729,9 +785,9 @@ export function IntradayDesk({
   }, [session])
 
   const counts = useMemo(() => {
-    const base = { TRADED: 0, ARMED: 0, BLOCKED: 0, SKIPPED: 0, total: 0 }
+    const base = { EXECUTE: 0, WATCH: 0, REJECT: 0, total: 0 }
     for (const row of session?.symbol_results ?? []) {
-      base[outcomeBucket(row.reason)] += 1
+      base[outcomeBucket(row)] += 1
       base.total += 1
     }
     return base
@@ -740,7 +796,7 @@ export function IntradayDesk({
   const filteredLedger = useMemo(() => {
     const rows = session?.symbol_results ?? []
     if (outcomeFilter === 'ALL') return rows
-    return rows.filter((row) => outcomeBucket(row.reason) === outcomeFilter)
+    return rows.filter((row) => outcomeBucket(row) === outcomeFilter)
   }, [session, outcomeFilter])
 
   const visibleLedger = useMemo(
@@ -755,7 +811,10 @@ export function IntradayDesk({
   const highlightRows = useMemo(() => {
     const rows = session?.symbol_results ?? []
     return rows
-      .filter((row) => row.reason === 'TRADED' || row.reason === 'RANKED_ARMED' || row.reason === 'BREAKOUT_NOT_TRIGGERED')
+      .filter((row) => {
+        const d = outcomeBucket(row)
+        return d === 'EXECUTE' || d === 'WATCH'
+      })
       .slice(0, 8)
   }, [session])
 
@@ -858,7 +917,7 @@ export function IntradayDesk({
       <div className="intraday-toolbar">
         <label className="field">
           <span>Date</span>
-          <input type="date" value={sessionDate} onChange={(e) => setSessionDate(e.target.value)} />
+          <TradingDatePicker value={sessionDate} onChange={setSessionDate} />
         </label>
         <label className="field">
           <span>Source</span>
@@ -885,7 +944,7 @@ export function IntradayDesk({
           </select>
         </label>
         <label className="field">
-          <span>Capital</span>
+          <span>Intraday capital</span>
           <input
             type="text"
             value={accountEquity}
@@ -1011,7 +1070,7 @@ export function IntradayDesk({
           <p className="intraday-board-caption">
             {preOr
               ? 'Pre-OR · ADV / surveillance / CA / short-allow · ranks provisional'
-              : 'Stocks vs ETFs ranked separately · Rank is RVOL5 order'}
+              : 'Top 5 shown by default · Show more for full Top-N · Target = 1R · Decision = Execute / Watch / Reject'}
           </p>
           {morningBoard.hint ? <p className="field-hint">{morningBoard.hint}</p> : null}
           <div className="intraday-board-grid">
@@ -1056,7 +1115,7 @@ export function IntradayDesk({
                 <span>Date {session.session_date}</span>
                 <span>Source {session.data_source ?? source}</span>
                 <span>Universe {universeLabel}</span>
-                <span>Capital {formatInr(accountEquity)}</span>
+                <span>Intraday capital {formatInr(accountEquity)}</span>
               </p>
             </div>
             <div className="intraday-section-tools">
@@ -1074,14 +1133,13 @@ export function IntradayDesk({
             </div>
           </div>
 
-          <div className="intraday-outcome-chips" role="group" aria-label="Outcome filter">
+          <div className="intraday-outcome-chips" role="group" aria-label="Decision filter">
             {(
               [
                 ['ALL', 'ALL'],
-                ['TRADED', 'TRADED'],
-                ['ARMED', 'ARMED'],
-                ['BLOCKED', 'BLOCKED'],
-                ['SKIPPED', 'SKIPPED'],
+                ['EXECUTE', 'EXECUTE'],
+                ['WATCH', 'WATCH'],
+                ['REJECT', 'REJECT'],
               ] as const
             ).map(([key, label]) => (
               <button
@@ -1094,7 +1152,7 @@ export function IntradayDesk({
                 {key !== 'ALL' ? ` ${counts[key]}` : ''}
               </button>
             ))}
-            <span className="intraday-chip-note">No profit target</span>
+            <span className="intraday-chip-note">Target = 1R plan · flatten {ORB_V1_RULES.flatten}</span>
           </div>
 
           <div className="intraday-kpi-strip">
@@ -1107,8 +1165,12 @@ export function IntradayDesk({
               <span>Fills</span>
             </div>
             <div className="kpi-item">
-              <strong>{counts.ARMED}</strong>
-              <span>Armed</span>
+              <strong>{counts.EXECUTE}</strong>
+              <span>Execute</span>
+            </div>
+            <div className="kpi-item">
+              <strong>{counts.WATCH}</strong>
+              <span>Watch</span>
             </div>
             <div className="kpi-item">
               <strong className={closedPnl >= 0 ? 'pnl-pos' : 'pnl-neg'}>{formatInr(closedPnl)}</strong>
@@ -1319,6 +1381,7 @@ export function IntradayDesk({
                           <tr>
                             <th>Rank</th>
                             <th>Stock</th>
+                            <th>Decision</th>
                             <th>Trade type</th>
                             <th>RVOL5</th>
                             <th>Outcome</th>
@@ -1330,6 +1393,7 @@ export function IntradayDesk({
                           {visibleLedger.map((row) => {
                             const isShort = row.direction === 'SHORT'
                             const open = explainSymbol === row.symbol
+                            const decision = outcomeBucket(row)
                             return (
                               <tr key={`${row.symbol}-${row.reason}`}>
                                 <td className="num-cell">
@@ -1343,6 +1407,11 @@ export function IntradayDesk({
                                   >
                                     {row.symbol}
                                   </button>
+                                </td>
+                                <td>
+                                  <span className={decisionTone(decision)} title={orbDecisionHint(decision)}>
+                                    {orbDecisionLabel(decision)}
+                                  </span>
                                 </td>
                                 <td>
                                   {row.direction ? (

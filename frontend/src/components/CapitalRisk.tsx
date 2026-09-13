@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { ORB_V1_RULES } from '../terminology'
 
 type Props = {
   open: boolean
   onClose: () => void
-  accountEquity: string
+  swingEquity: string
+  intradayEquity: string
   riskPercent: string
-  onEquityChange: (value: string) => void
+  onSwingEquityChange: (value: string) => void
+  onIntradayEquityChange: (value: string) => void
   onRiskChange: (value: string) => void
   dataLive?: boolean
   lastCandleTime?: string | null
@@ -37,26 +40,42 @@ function formatInrExact(value: number): string {
   }).format(value)
 }
 
+function sizePreview(equityRaw: string, riskPctRaw: string) {
+  const equity = Number(equityRaw)
+  const riskPct = Number(riskPctRaw)
+  const perShare = Math.abs(EXAMPLE.entry - EXAMPLE.stop)
+  if (!Number.isFinite(equity) || equity <= 0 || !Number.isFinite(riskPct) || riskPct <= 0 || perShare <= 0) {
+    return null
+  }
+  const qty = Math.floor((equity * riskPct) / 100 / perShare)
+  const atRisk = qty * perShare
+  return { qty, atRisk }
+}
+
 export function CapitalRisk({
   open,
   onClose,
-  accountEquity,
+  swingEquity,
+  intradayEquity,
   riskPercent,
-  onEquityChange,
+  onSwingEquityChange,
+  onIntradayEquityChange,
   onRiskChange,
   dataLive,
   lastCandleTime,
 }: Props) {
-  const [draftEquity, setDraftEquity] = useState(accountEquity)
+  const [draftSwing, setDraftSwing] = useState(swingEquity)
+  const [draftIntra, setDraftIntra] = useState(intradayEquity)
   const [draftRisk, setDraftRisk] = useState(riskPercent)
   const [savedFlash, setSavedFlash] = useState(false)
 
   useEffect(() => {
     if (!open) return
-    setDraftEquity(accountEquity)
+    setDraftSwing(swingEquity)
+    setDraftIntra(intradayEquity)
     setDraftRisk(riskPercent)
     setSavedFlash(false)
-  }, [open, accountEquity, riskPercent])
+  }, [open, swingEquity, intradayEquity, riskPercent])
 
   useEffect(() => {
     if (!open) return
@@ -67,25 +86,22 @@ export function CapitalRisk({
     }
   }, [open])
 
-  const preview = useMemo(() => {
-    const equity = Number(draftEquity)
-    const riskPct = Number(draftRisk)
-    const perShare = Math.abs(EXAMPLE.entry - EXAMPLE.stop)
-    if (!Number.isFinite(equity) || equity <= 0 || !Number.isFinite(riskPct) || riskPct <= 0 || perShare <= 0) {
-      return null
-    }
-    const qty = Math.floor((equity * riskPct) / 100 / perShare)
-    const atRisk = qty * perShare
-    return { qty, atRisk }
-  }, [draftEquity, draftRisk])
+  const swingPreview = useMemo(() => sizePreview(draftSwing, draftRisk), [draftSwing, draftRisk])
+  const intraPreview = useMemo(
+    () => sizePreview(draftIntra, String(ORB_V1_RULES.riskPerTradePct)),
+    [draftIntra],
+  )
 
   function handleSave(event: FormEvent) {
     event.preventDefault()
-    const equity = Number(draftEquity)
+    const swing = Number(draftSwing)
+    const intra = Number(draftIntra)
     const risk = Number(draftRisk)
-    if (!Number.isFinite(equity) || equity < 0) return
+    if (!Number.isFinite(swing) || swing < 0) return
+    if (!Number.isFinite(intra) || intra < 0) return
     if (!Number.isFinite(risk) || risk <= 0 || risk > 100) return
-    onEquityChange(String(equity))
+    onSwingEquityChange(String(swing))
+    onIntradayEquityChange(String(intra))
     onRiskChange(String(risk))
     setSavedFlash(true)
     window.setTimeout(() => setSavedFlash(false), 1800)
@@ -108,25 +124,41 @@ export function CapitalRisk({
               ×
             </button>
           </div>
-          <p className="field-hint capital-risk-rec">Recommended: Risk 0.5–1% of capital per trade</p>
+          <p className="field-hint capital-risk-rec">
+            Swing and Intraday keep separate practice capital. Recommended swing risk: 0.5–1% per trade.
+            Intraday ORB V1 uses a fixed {ORB_V1_RULES.riskPerTradePct}% risk.
+          </p>
 
-          <div className="capital-risk-fields">
-            <label className="field capital-risk-field" htmlFor="capital-equity">
-              <span>Account capital</span>
+          <div className="capital-risk-fields capital-risk-fields-dual">
+            <label className="field capital-risk-field" htmlFor="capital-swing-equity">
+              <span>Swing capital</span>
               <input
-                id="capital-equity"
+                id="capital-swing-equity"
                 type="number"
                 min="0"
                 step="1000"
-                value={draftEquity}
-                onChange={(e) => setDraftEquity(e.target.value)}
+                value={draftSwing}
+                onChange={(e) => setDraftSwing(e.target.value)}
                 autoFocus
               />
-              <strong className="capital-risk-display">{formatInr(Number(draftEquity))}</strong>
+              <strong className="capital-risk-display">{formatInr(Number(draftSwing))}</strong>
+            </label>
+
+            <label className="field capital-risk-field" htmlFor="capital-intra-equity">
+              <span>Intraday capital</span>
+              <input
+                id="capital-intra-equity"
+                type="number"
+                min="0"
+                step="1000"
+                value={draftIntra}
+                onChange={(e) => setDraftIntra(e.target.value)}
+              />
+              <strong className="capital-risk-display">{formatInr(Number(draftIntra))}</strong>
             </label>
 
             <label className="field capital-risk-field" htmlFor="capital-risk">
-              <span>Risk per trade</span>
+              <span>Swing risk per trade</span>
               <div className="capital-risk-pct-row">
                 <input
                   id="capital-risk"
@@ -143,22 +175,26 @@ export function CapitalRisk({
           </div>
 
           <div className="capital-risk-example" role="status">
-            {preview ? (
-              <>
-                Example sizing: {EXAMPLE.symbol} entry {formatInrExact(EXAMPLE.entry)} stop{' '}
-                {formatInrExact(EXAMPLE.stop)} → {preview.qty.toLocaleString('en-IN')} shares ·{' '}
-                {formatInrExact(preview.atRisk)} at risk.
-              </>
-            ) : (
-              <>Enter a valid capital and risk % to preview example sizing.</>
-            )}
+            <p>
+              Swing example: {EXAMPLE.symbol} entry {formatInrExact(EXAMPLE.entry)} stop{' '}
+              {formatInrExact(EXAMPLE.stop)}
+              {swingPreview
+                ? ` → ${swingPreview.qty.toLocaleString('en-IN')} shares · ${formatInrExact(swingPreview.atRisk)} at risk.`
+                : ' — enter valid swing capital & risk %.'}
+            </p>
+            <p>
+              Intraday example (ORB {ORB_V1_RULES.riskPerTradePct}% risk): same levels
+              {intraPreview
+                ? ` → ${intraPreview.qty.toLocaleString('en-IN')} shares · ${formatInrExact(intraPreview.atRisk)} at risk.`
+                : ' — enter valid intraday capital.'}
+            </p>
           </div>
 
           <div className="capital-risk-actions">
             <button type="submit" className="primary-button">
-              Save capital
+              Save capitals
             </button>
-            <p className="capital-risk-note">Engine owns Entry/SL — risk % only sizes qty.</p>
+            <p className="capital-risk-note">Engine owns Entry/SL — capital only sizes qty per desk.</p>
             {savedFlash ? <span className="capital-risk-saved">Saved to workspace</span> : null}
           </div>
 

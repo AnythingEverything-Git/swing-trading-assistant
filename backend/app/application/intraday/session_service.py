@@ -12,7 +12,8 @@ from app.domain.intraday.asset_class import classify_asset_class
 from app.domain.intraday.config_v1 import DEFAULT_CONFIG_V1, IntradayConfigV1
 from app.domain.intraday.eligibility import eligibility_flags
 from app.domain.intraday.engine import prior_day_atr14, run_session
-from app.domain.intraday.session_calendar import is_weekday
+from app.domain.intraday.session_calendar import default_session_date, is_trading_day, is_weekday
+from app.domain.intraday.decision import count_decisions, decision_from_reason
 from app.domain.intraday.types import SessionReport
 from app.domain.market_data import Candle
 from app.infrastructure.market_data.demo_provider import DemoMarketDataProvider
@@ -221,9 +222,9 @@ async def run_intraday_session(
     session_repo: Any | None = None,
 ) -> tuple[str, SessionReport, dict[str, Any]]:
     """Run ORB session from demo or persisted candles; store report in memory (+ DB if repo)."""
-    day = session_date or date(2026, 9, 7)
-    if day.weekday() >= 5:
-        day = date(2026, 9, 7)
+    day = session_date or default_session_date()
+    if not is_trading_day(day):
+        raise ValueError("Pick a trading day (weekends and NSE holidays are closed)")
 
     if source == "persisted":
         if query is None:
@@ -348,7 +349,23 @@ def session_report_to_dict(report: SessionReport, meta: dict[str, Any] | None = 
             "or_low": str(c.opening_range.low),
             "or_expansion_pct": str(c.opening_range.expansion_pct),
             "adv_value": str(c.adv_value),
+            "decision": "WATCH",
+            "status": "RANKED",
         }
+
+    symbol_results = [
+        {
+            "symbol": r.symbol,
+            "reason": r.reason,
+            "rank": r.rank,
+            "rvol5": str(r.rvol5) if r.rvol5 is not None else None,
+            "direction": r.direction,
+            "detail": r.detail,
+            "asset_class": r.asset_class,
+            "decision": decision_from_reason(r.reason),
+        }
+        for r in sorted(report.symbol_results, key=lambda x: (x.rank is None, x.rank or 999, x.symbol))
+    ]
 
     body: dict[str, Any] = {
         "session_date": report.session_date.isoformat(),
@@ -358,20 +375,10 @@ def session_report_to_dict(report: SessionReport, meta: dict[str, Any] | None = 
         "coverage_total": report.coverage_total,
         "coverage_pct": coverage_pct,
         "reason_counts": reason_counts,
+        "decision_counts": count_decisions(symbol_results),
         "ranked_stocks": [_ranked_row(r) for r in report.ranked_stocks],
         "ranked_etfs": [_ranked_row(r) for r in report.ranked_etfs],
-        "symbol_results": [
-            {
-                "symbol": r.symbol,
-                "reason": r.reason,
-                "rank": r.rank,
-                "rvol5": str(r.rvol5) if r.rvol5 is not None else None,
-                "direction": r.direction,
-                "detail": r.detail,
-                "asset_class": r.asset_class,
-            }
-            for r in sorted(report.symbol_results, key=lambda x: (x.rank is None, x.rank or 999, x.symbol))
-        ],
+        "symbol_results": symbol_results,
         "fills": [
             {
                 "symbol": f.symbol,

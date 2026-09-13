@@ -1,10 +1,12 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useMemo, useRef } from 'react'
 import {
   ColorType,
   CrosshairMode,
   LineStyle,
   UTCTimestamp,
   createChart,
+  type IChartApi,
+  type ISeriesApi,
 } from 'lightweight-charts'
 
 export type ChartCandle = {
@@ -40,6 +42,8 @@ function near(a: number, b: number, rel = 0.0015): boolean {
   return Math.abs(a - b) / scale < rel
 }
 
+const DEFAULT_VISIBLE_BARS = 90
+
 export function SetupChart({
   candles,
   levels,
@@ -53,66 +57,115 @@ export function SetupChart({
   variant?: 'default' | 'inspect' | 'evidence' | 'structure'
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const chartRef = useRef<IChartApi | null>(null)
+  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
+  const fittedKeyRef = useRef<string>('')
+  const candlesRef = useRef(candles)
+  const levelsRef = useRef(levels)
+  candlesRef.current = candles
+  levelsRef.current = levels
   const isInspect = variant === 'inspect'
   const isEvidence = variant === 'evidence'
   const isStructure = variant === 'structure'
   const roomy = isInspect || isEvidence || isStructure
 
+  // Stable fingerprints — parent often recreates candles/levels arrays each render.
+  const candlesKey = useMemo(
+    () =>
+      candles
+        .map(
+          (c) =>
+            `${c.timestamp}:${c.open}:${c.high}:${c.low}:${c.close}:${c.volume ?? ''}`,
+        )
+        .join('|'),
+    [candles],
+  )
+  const levelsKey = useMemo(() => JSON.stringify(levels ?? {}), [levels])
+
   useEffect(() => {
-    if (!hostRef.current || candles.length === 0) return
+    if (!hostRef.current || candlesRef.current.length === 0) return
     const host = hostRef.current
-    const chartHeight = height
+    const candles = candlesRef.current
+    const levels = levelsRef.current
 
-    const chart = createChart(host, {
-      width: host.clientWidth || 860,
-      height: chartHeight,
-      layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#64748b',
-        fontSize: roomy ? 11 : 12,
-        attributionLogo: false,
-      },
-      grid: {
-        vertLines: { color: 'rgba(148, 163, 184, 0.12)' },
-        horzLines: { color: 'rgba(148, 163, 184, 0.12)' },
-      },
-      rightPriceScale: {
-        borderColor: 'rgba(148, 163, 184, 0.28)',
-        minimumWidth: roomy ? 78 : 64,
-        scaleMargins: roomy ? { top: 0.08, bottom: 0.18 } : { top: 0.1, bottom: 0.2 },
-      },
-      leftPriceScale: { visible: false },
-      timeScale: {
-        borderColor: 'rgba(148, 163, 184, 0.28)',
-        timeVisible: true,
-        rightOffset: roomy ? 6 : 4,
-        barSpacing: roomy ? 7 : 6,
-        fixLeftEdge: true,
-        fixRightEdge: true,
-      },
-      crosshair: { mode: CrosshairMode.Normal },
-      handleScroll: { vertTouchDrag: false },
-    })
+    if (!chartRef.current) {
+      const chart = createChart(host, {
+        width: host.clientWidth || 860,
+        height,
+        layout: {
+          background: { type: ColorType.Solid, color: 'transparent' },
+          textColor: '#64748b',
+          fontSize: roomy ? 11 : 12,
+          attributionLogo: false,
+        },
+        grid: {
+          vertLines: { color: 'rgba(148, 163, 184, 0.12)' },
+          horzLines: { color: 'rgba(148, 163, 184, 0.12)' },
+        },
+        rightPriceScale: {
+          borderColor: 'rgba(148, 163, 184, 0.28)',
+          minimumWidth: roomy ? 78 : 64,
+          scaleMargins: roomy ? { top: 0.08, bottom: 0.18 } : { top: 0.1, bottom: 0.2 },
+        },
+        leftPriceScale: { visible: false },
+        timeScale: {
+          borderColor: 'rgba(148, 163, 184, 0.28)',
+          timeVisible: true,
+          rightOffset: roomy ? 6 : 4,
+          barSpacing: roomy ? 8 : 7,
+          // Allow user zoom/pan; do not pin edges (that fights manual zoom).
+          fixLeftEdge: false,
+          fixRightEdge: false,
+        },
+        crosshair: { mode: CrosshairMode.Normal },
+        handleScroll: { vertTouchDrag: false },
+        handleScale: {
+          axisPressedMouseMove: true,
+          mouseWheel: true,
+          pinch: true,
+        },
+      })
+      const candleSeries = chart.addCandlestickSeries({
+        upColor: '#16a34a',
+        downColor: '#dc2626',
+        borderUpColor: '#16a34a',
+        borderDownColor: '#dc2626',
+        wickUpColor: '#16a34a',
+        wickDownColor: '#dc2626',
+        priceLineVisible: false,
+        lastValueVisible: true,
+      })
+      const volumeSeries = chart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'vol',
+        color: 'rgba(71, 85, 105, 0.45)',
+      })
+      chart.priceScale('vol').applyOptions({
+        scaleMargins: { top: roomy ? 0.78 : 0.72, bottom: 0 },
+        borderVisible: false,
+      })
+      chartRef.current = chart
+      candleSeriesRef.current = candleSeries
+      volumeSeriesRef.current = volumeSeries
 
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: '#16a34a',
-      downColor: '#dc2626',
-      borderUpColor: '#16a34a',
-      borderDownColor: '#dc2626',
-      wickUpColor: '#16a34a',
-      wickDownColor: '#dc2626',
-      priceLineVisible: false,
-      lastValueVisible: true,
-    })
-    const volumeSeries = chart.addHistogramSeries({
-      priceFormat: { type: 'volume' },
-      priceScaleId: 'vol',
-      color: 'rgba(71, 85, 105, 0.45)',
-    })
-    chart.priceScale('vol').applyOptions({
-      scaleMargins: { top: roomy ? 0.78 : 0.72, bottom: 0 },
-      borderVisible: false,
-    })
+      const syncSize = () => {
+        if (!hostRef.current || !chartRef.current) return
+        chartRef.current.applyOptions({
+          width: hostRef.current.clientWidth || 860,
+          height,
+        })
+      }
+      const observer = new ResizeObserver(syncSize)
+      observer.observe(host)
+      syncSize()
+      ;(host as HTMLDivElement & { __tpRo?: ResizeObserver }).__tpRo = observer
+    }
+
+    const chart = chartRef.current
+    const candleSeries = candleSeriesRef.current
+    const volumeSeries = volumeSeriesRef.current
+    if (!chart || !candleSeries || !volumeSeries) return
 
     const priceData = candles
       .map((item) => {
@@ -134,9 +187,25 @@ export function SetupChart({
           item !== null,
       )
 
+    const preserved = chart.timeScale().getVisibleLogicalRange()
     candleSeries.setData(priceData)
-    const toTime = (timestamp: string) => Math.floor(new Date(timestamp).getTime() / 1000) as UTCTimestamp
+    volumeSeries.setData(
+      candles
+        .map((item) => {
+          const close = num(item.close)
+          const open = num(item.open)
+          const volume = item.volume == null ? null : Number(item.volume)
+          if (close == null || open == null || volume == null || Number.isNaN(volume)) return null
+          return {
+            time: Math.floor(new Date(item.timestamp).getTime() / 1000) as UTCTimestamp,
+            value: volume,
+            color: close >= open ? 'rgba(22, 163, 74, 0.35)' : 'rgba(220, 38, 38, 0.35)',
+          }
+        })
+        .filter((item): item is { time: UTCTimestamp; value: number; color: string } => item !== null),
+    )
 
+    const toTime = (timestamp: string) => Math.floor(new Date(timestamp).getTime() / 1000) as UTCTimestamp
     const markers: Array<{
       time: UTCTimestamp
       position: 'aboveBar' | 'belowBar'
@@ -183,25 +252,34 @@ export function SetupChart({
         text: 'C',
       })
     }
-    if (markers.length > 0) {
-      candleSeries.setMarkers(markers)
-    }
+    candleSeries.setMarkers(markers)
 
-    volumeSeries.setData(
-      candles
-        .map((item) => {
-          const close = num(item.close)
-          const open = num(item.open)
-          const volume = item.volume == null ? null : Number(item.volume)
-          if (close == null || open == null || volume == null || Number.isNaN(volume)) return null
-          return {
-            time: Math.floor(new Date(item.timestamp).getTime() / 1000) as UTCTimestamp,
-            value: volume,
-            color: close >= open ? 'rgba(22, 163, 74, 0.35)' : 'rgba(220, 38, 38, 0.35)',
-          }
-        })
-        .filter((item): item is { time: UTCTimestamp; value: number; color: string } => item !== null),
-    )
+    // Price lines: recreate series options by removing chart is heavy; clear via new candlestick
+    // isn't available — use applyOptions trick: remove and re-add price lines by creating fresh ones.
+    // lightweight-charts has no removeAllPriceLines; recreate candle series data already set.
+    // Store line refs on series via createPriceLine only once per levelsKey by resetting series.
+    // Simplest reliable approach: remove chart price lines by recreating candlestick series when levels change.
+    // To avoid full chart destroy, we createPriceLine each update — old lines accumulate.
+    // So on levelsKey change, remove candle series and re-add.
+    // Actually IChartApi has no removeSeries that clears price lines easily in older API —
+    // chart.removeSeries(candleSeries) then re-add.
+
+    // Rebuild candle series when levels change to drop stale price lines.
+    // Keep time scale range.
+    chart.removeSeries(candleSeries)
+    const nextCandle = chart.addCandlestickSeries({
+      upColor: '#16a34a',
+      downColor: '#dc2626',
+      borderUpColor: '#16a34a',
+      borderDownColor: '#dc2626',
+      wickUpColor: '#16a34a',
+      wickDownColor: '#dc2626',
+      priceLineVisible: false,
+      lastValueVisible: true,
+    })
+    nextCandle.setData(priceData)
+    nextCandle.setMarkers(markers)
+    candleSeriesRef.current = nextCandle
 
     const drawn: number[] = []
     const addLine = (
@@ -214,7 +292,7 @@ export function SetupChart({
       if (p == null) return
       if (drawn.some((existing) => near(existing, p))) return
       drawn.push(p)
-      candleSeries.createPriceLine({
+      nextCandle.createPriceLine({
         price: p,
         title,
         color,
@@ -246,23 +324,41 @@ export function SetupChart({
       addLine(levels.target, 'Target', '#0369a1')
     }
 
-    chart.timeScale().fitContent()
-    const syncSize = () => {
-      if (!hostRef.current) return
-      // Width only — never grow height from the host (avoids ResizeObserver feedback loops).
-      chart.applyOptions({
-        width: hostRef.current.clientWidth || 860,
-        height,
-      })
+    const fitKey = `${candlesKey}::${variant}`
+    if (fittedKeyRef.current !== fitKey) {
+      const n = priceData.length
+      if (n > DEFAULT_VISIBLE_BARS) {
+        chart.timeScale().setVisibleLogicalRange({
+          from: n - DEFAULT_VISIBLE_BARS,
+          to: n + (roomy ? 2 : 1),
+        })
+      } else {
+        chart.timeScale().fitContent()
+      }
+      fittedKeyRef.current = fitKey
+    } else if (preserved) {
+      chart.timeScale().setVisibleLogicalRange(preserved)
     }
-    const observer = new ResizeObserver(syncSize)
-    observer.observe(host)
-    syncSize()
+
     return () => {
-      observer.disconnect()
-      chart.remove()
+      // Keep chart alive across data updates; only tear down on unmount via separate effect.
     }
-  }, [candles, levels, height, isInspect, isEvidence, isStructure, roomy])
+  }, [candlesKey, levelsKey, height, isInspect, isEvidence, isStructure, roomy, variant])
+  // candles/levels read from latest render when keys change — do not depend on object identity.
+
+  useEffect(() => {
+    return () => {
+      const host = hostRef.current as (HTMLDivElement & { __tpRo?: ResizeObserver }) | null
+      host?.__tpRo?.disconnect()
+      if (chartRef.current) {
+        chartRef.current.remove()
+        chartRef.current = null
+        candleSeriesRef.current = null
+        volumeSeriesRef.current = null
+        fittedKeyRef.current = ''
+      }
+    }
+  }, [])
 
   if (candles.length === 0) {
     return (

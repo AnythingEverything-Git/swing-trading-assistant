@@ -36,7 +36,8 @@ type PracticeRow = SwingPaperRow | IntradayPracticeTrade
 
 type Props = {
   baseUrl: string
-  accountEquity: string
+  swingEquity: string
+  intradayEquity: string
   paperTradingEnabled?: boolean
   onEnablePaper?: () => void
   onTradesChanged?: () => void
@@ -66,6 +67,7 @@ function formatElapsedBetween(startIso: string | null | undefined, endIso: strin
   const end = endIso ? new Date(endIso).getTime() : Date.now()
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return '—'
   const totalSec = Math.floor((end - start) / 1000)
+  if (totalSec < 60) return totalSec <= 0 ? 'same tick' : `<1m`
   const hours = Math.floor(totalSec / 3600)
   const minutes = Math.floor((totalSec % 3600) / 60)
   if (hours > 0) return `${hours}h ${minutes}m`
@@ -73,43 +75,52 @@ function formatElapsedBetween(startIso: string | null | undefined, endIso: strin
 }
 
 function statusClass(status: string): string {
-  const s = status.toLowerCase()
+  const s = normalizeStatus(status).toLowerCase()
   if (s === 'open' || s === 'pending') return s
   if (s === 'closed') return 'closed'
   return 'muted'
 }
 
+function normalizeStatus(status: string | null | undefined): string {
+  return String(status || '').trim().toUpperCase()
+}
+
+function tradeQty(t: PracticeRow): number {
+  const qty = Number(t.quantity)
+  return Number.isFinite(qty) && qty > 0 ? qty : 0
+}
+
 function tradePnl(t: PracticeRow): number {
   const entry = Number(t.entry_price)
-  const qty = Number(t.quantity)
-  const direction = t.direction
+  const qty = tradeQty(t)
+  const direction = String(t.direction || '').toUpperCase()
+  const status = normalizeStatus(t.status)
 
-  if (isLiveStatus(t.status)) {
-    const server = Number(t.unrealized_pnl)
-    if (Number.isFinite(server) && server !== 0) return server
+  if (status === 'OPEN' || status === 'PENDING') {
     const mark = Number(t.last_mark_price)
-    if (Number.isFinite(entry) && Number.isFinite(mark) && Number.isFinite(qty) && qty > 0) {
+    if (Number.isFinite(entry) && Number.isFinite(mark) && qty > 0) {
       const computed = direction === 'SHORT' ? (entry - mark) * qty : (mark - entry) * qty
       if (Number.isFinite(computed)) return computed
     }
+    const server = Number(t.unrealized_pnl)
     return Number.isFinite(server) ? server : 0
   }
 
-  const server = Number(t.realized_pnl)
-  if (Number.isFinite(server) && server !== 0) return server
+  // Closed: prefer entry/exit/qty so table PnL matches displayed prices & shares
   const exit = Number(t.exit_price ?? t.last_mark_price)
-  if (Number.isFinite(entry) && Number.isFinite(exit) && Number.isFinite(qty) && qty > 0) {
+  if (Number.isFinite(entry) && Number.isFinite(exit) && qty > 0) {
     const computed = direction === 'SHORT' ? (entry - exit) * qty : (exit - entry) * qty
     if (Number.isFinite(computed)) return computed
   }
+  const server = Number(t.realized_pnl)
   return Number.isFinite(server) ? server : 0
 }
 
+/** Notional capital tied to the trade (entry × shares) — shown for open and closed. */
 function tradeUsedCapital(t: PracticeRow): number {
-  if (t.status !== 'OPEN' && t.status !== 'PENDING') return 0
   const entry = Number(t.entry_price)
-  const qty = Number(t.quantity)
-  if (!Number.isFinite(entry) || !Number.isFinite(qty) || qty <= 0) return 0
+  const qty = tradeQty(t)
+  if (!Number.isFinite(entry) || entry <= 0 || qty <= 0) return 0
   return entry * qty
 }
 
@@ -120,38 +131,45 @@ function summarizeWallet(trades: PracticeRow[], startingCapital: number) {
   let live = 0
   let realized = 0
   let openCount = 0
+  let closedNotional = 0
   for (const trade of trades) {
-    if (trade.status === 'OPEN') {
+    const status = normalizeStatus(trade.status)
+    if (status === 'OPEN') {
       openCount += 1
       usedOpen += tradeUsedCapital(trade)
       live += tradePnl(trade)
-    } else if (trade.status === 'PENDING') {
+    } else if (status === 'PENDING') {
       openCount += 1
       reserved += tradeUsedCapital(trade)
-    } else if (trade.status === 'CLOSED') {
+    } else if (status === 'CLOSED') {
       realized += tradePnl(trade)
+      closedNotional += tradeUsedCapital(trade)
     }
   }
-  const remaining = start + realized - usedOpen
+  // Cash free after closed PnL, with open notionals still locked
+  const remaining = start + realized - usedOpen - reserved
   return {
     starting: start,
     usedOpen,
     reserved,
+    closedNotional,
     remaining,
     live,
     realized,
-    equity: remaining + usedOpen + live,
+    equity: remaining + usedOpen + reserved + live,
     openCount,
   }
 }
 
 function isLiveStatus(status: string): boolean {
-  return status === 'OPEN' || status === 'PENDING'
+  const s = normalizeStatus(status)
+  return s === 'OPEN' || s === 'PENDING'
 }
 
 export function PracticeBook({
   baseUrl,
-  accountEquity,
+  swingEquity,
+  intradayEquity,
   paperTradingEnabled = true,
   onEnablePaper,
   onTradesChanged,
@@ -163,7 +181,7 @@ export function PracticeBook({
   const [intraday, setIntraday] = useState<IntradayPracticeTrade[]>([])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [busyAction, setBusyAction] = useState<'refresh' | 'tick' | null>(null)
+  const [busyAction, setBusyAction] = useState<'refresh' | 'tick' | 'reset' | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
@@ -282,30 +300,27 @@ export function PracticeBook({
   }, [detailOpen])
 
   const rows = tab === 'swing' ? swing : intraday
-  const allTrades = useMemo(() => [...swing, ...intraday] as PracticeRow[], [swing, intraday])
 
   const filtered = useMemo(() => {
     if (statusFilter === 'ALL') return rows
-    if (statusFilter === 'OPEN') return rows.filter((t) => t.status === 'OPEN')
-    if (statusFilter === 'PENDING') return rows.filter((t) => t.status === 'PENDING')
-    return rows.filter((t) => t.status === 'CLOSED')
+    return rows.filter((t) => normalizeStatus(t.status) === statusFilter)
   }, [rows, statusFilter])
 
-  const walletAll = useMemo(
-    () => summarizeWallet(allTrades, Number(accountEquity) || 0),
-    [allTrades, accountEquity],
-  )
   const walletDesk = useMemo(
-    () => summarizeWallet(rows as PracticeRow[], Number(accountEquity) || 0),
-    [rows, accountEquity],
+    () =>
+      summarizeWallet(
+        rows as PracticeRow[],
+        Number(tab === 'swing' ? swingEquity : intradayEquity) || 0,
+      ),
+    [rows, tab, swingEquity, intradayEquity],
   )
   const swingWallet = useMemo(
-    () => summarizeWallet(swing, Number(accountEquity) || 0),
-    [swing, accountEquity],
+    () => summarizeWallet(swing, Number(swingEquity) || 0),
+    [swing, swingEquity],
   )
   const intraWallet = useMemo(
-    () => summarizeWallet(intraday, Number(accountEquity) || 0),
-    [intraday, accountEquity],
+    () => summarizeWallet(intraday, Number(intradayEquity) || 0),
+    [intraday, intradayEquity],
   )
 
   const selectedSwing = tab === 'swing' ? swing.find((t) => t.id === selectedId) ?? null : null
@@ -329,7 +344,7 @@ export function PracticeBook({
   }
 
   function toggleTimer() {
-    if (!selected || selected.status !== 'OPEN') return
+    if (!selected || normalizeStatus(selected.status) !== 'OPEN') return
     if (timerPaused) {
       setTimerPaused(false)
       setPausedAtMs(null)
@@ -337,6 +352,34 @@ export function PracticeBook({
     }
     setTimerPaused(true)
     setPausedAtMs(Date.now())
+  }
+
+  async function resetPracticeBook() {
+    const ok = window.confirm(
+      'Start fresh? This deletes all Swing and Intraday practice trades. Capitals stay the same; wallets reset to starting amounts.',
+    )
+    if (!ok) return
+    setError('')
+    setNotice('')
+    setBusyAction('reset')
+    try {
+      const [swingRes, intraRes] = await Promise.all([
+        fetch(`${baseUrl}/api/v1/paper/trades`, { method: 'DELETE' }),
+        fetch(`${baseUrl}/api/v1/intraday/practice`, { method: 'DELETE' }),
+      ])
+      if (!swingRes.ok) throw new Error('Failed to clear swing practice trades')
+      if (!intraRes.ok) throw new Error('Failed to clear intraday practice trades')
+      const swingBody = (await swingRes.json()) as { deleted?: number }
+      const intraBody = (await intraRes.json()) as { deleted?: number }
+      setNotice(
+        `Practice cleared — removed ${swingBody.deleted ?? 0} swing and ${intraBody.deleted ?? 0} intraday trades. Wallets start fresh.`,
+      )
+      closeDetail()
+      await load({ notify: true })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Reset failed')
+      setBusyAction(null)
+    }
   }
 
   function claimFakeMoney() {
@@ -347,7 +390,7 @@ export function PracticeBook({
     }
     setClaimAck(true)
     setNotice(
-      `${PAPER_CLAIM} Starting practice capital in context: ₹${formatPrice(accountEquity || 0)}. No real brokerage order.`,
+      `${PAPER_CLAIM} Swing capital ₹${formatPrice(swingEquity || 0)} · Intraday capital ₹${formatPrice(intradayEquity || 0)}. No real brokerage order.`,
     )
   }
 
@@ -495,7 +538,7 @@ export function PracticeBook({
                   </p>
                 </div>
                 <div className="practice-detail-actions">
-                  {selected.status === 'OPEN' ? (
+                  {normalizeStatus(selected.status) === 'OPEN' ? (
                     <button type="button" className="secondary-button" onClick={toggleTimer}>
                       <span className="practice-ico practice-ico-timer" aria-hidden="true" />
                       {timerPaused ? 'Resume timer' : 'Pause timer'}
@@ -510,7 +553,7 @@ export function PracticeBook({
               <div className="practice-detail-modal-body">
                 <div className="practice-detail-kpi-row">
                   <article>
-                    <span>Capital used</span>
+                    <span>Capital used (entry × shares)</span>
                     <strong>₹{formatPrice(selectedUsed)}</strong>
                   </article>
                   <article>
@@ -526,7 +569,7 @@ export function PracticeBook({
                   <article>
                     <span>Duration</span>
                     <strong>
-                      {selected.status === 'OPEN' && selected.opened_at && !timerPaused ? (
+                      {normalizeStatus(selected.status) === 'OPEN' && selected.opened_at && !timerPaused ? (
                         <TradeDurationTimer startedAt={selected.opened_at} label="" />
                       ) : (
                         formatElapsedBetween(
@@ -702,55 +745,108 @@ export function PracticeBook({
         </div>
       ) : null}
 
-      <div className="practice-wallet" aria-label="Practice capital wallet">
+      <div className="practice-wallet" aria-label="Practice capital wallets">
         <div className="practice-wallet-head">
-          <h3>Capital wallet</h3>
+          <h3>Capital wallets</h3>
           <p className="field-hint">
-            Consolidated across Swing + Intraday · starting ₹{formatPrice(walletAll.starting)}
+            Swing and Intraday keep separate starting capital · active desk:{' '}
+            {tab === 'swing' ? 'Swing' : 'Intraday'}
           </p>
-          <button type="button" className="primary-button practice-wallet-claim" onClick={claimFakeMoney}>
-            {claimAck ? 'Claimed' : 'Claim fake money'}
-          </button>
+          <div className="practice-wallet-head-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void resetPracticeBook()}
+              disabled={busyAction !== null}
+            >
+              {busyAction === 'reset' ? 'Clearing…' : 'Start fresh'}
+            </button>
+            <button type="button" className="primary-button practice-wallet-claim" onClick={claimFakeMoney}>
+              {claimAck ? 'Claimed' : 'Claim fake money'}
+            </button>
+          </div>
         </div>
-        <div className="paper-capital-strip practice-wallet-strip">
-          <div>
-            <span>Used in trades</span>
-            <strong>₹{formatPrice(walletAll.usedOpen)}</strong>
-            <em>
-              Swing ₹{formatPrice(swingWallet.usedOpen)} · Intraday ₹{formatPrice(intraWallet.usedOpen)}
-            </em>
-          </div>
-          <div className="paper-capital-remaining">
-            <span>Remaining</span>
-            <strong>₹{formatPrice(walletAll.remaining)}</strong>
-            <em>Cash left in wallet</em>
-          </div>
-          <div>
-            <span>Live PnL</span>
-            <strong className={walletAll.live >= 0 ? 'pnl-pos' : 'pnl-neg'}>
-              {formatSigned(walletAll.live)}
-            </strong>
-            <em>Open positions only</em>
-          </div>
-          <div>
-            <span>Realized PnL</span>
-            <strong className={walletAll.realized >= 0 ? 'pnl-pos' : 'pnl-neg'}>
-              {formatSigned(walletAll.realized)}
-            </strong>
-            <em>Practice closes (entry→exit) · flat EOD = 0</em>
-          </div>
-          <div>
-            <span>Wallet value</span>
-            <strong>₹{formatPrice(walletAll.equity)}</strong>
-            <em>Remaining + used + live</em>
-          </div>
-          {walletAll.reserved > 0 ? (
+        <div className="practice-wallet-dual">
+          <div className={`paper-capital-strip practice-wallet-strip${tab === 'swing' ? ' is-active-desk' : ''}`}>
+            <div className="practice-wallet-desk-label">Swing</div>
             <div>
-              <span>Waiting (reserved)</span>
-              <strong>₹{formatPrice(walletAll.reserved)}</strong>
-              <em>Pending entry notional</em>
+              <span>Starting</span>
+              <strong>₹{formatPrice(swingWallet.starting)}</strong>
             </div>
-          ) : null}
+            <div>
+              <span>Open used</span>
+              <strong>₹{formatPrice(swingWallet.usedOpen)}</strong>
+              <em>Entry × shares in open trades</em>
+            </div>
+            <div className="paper-capital-remaining">
+              <span>Cash left</span>
+              <strong>₹{formatPrice(swingWallet.remaining)}</strong>
+              <em>Start + realized − open used</em>
+            </div>
+            <div>
+              <span>Live PnL</span>
+              <strong className={swingWallet.live >= 0 ? 'pnl-pos' : 'pnl-neg'}>
+                {formatSigned(swingWallet.live)}
+              </strong>
+            </div>
+            <div>
+              <span>Realized PnL</span>
+              <strong className={swingWallet.realized >= 0 ? 'pnl-pos' : 'pnl-neg'}>
+                {formatSigned(swingWallet.realized)}
+              </strong>
+            </div>
+            <div>
+              <span>Wallet value</span>
+              <strong>₹{formatPrice(swingWallet.equity)}</strong>
+              <em>Cash + open used + live</em>
+            </div>
+            {swingWallet.reserved > 0 ? (
+              <div>
+                <span>Waiting (reserved)</span>
+                <strong>₹{formatPrice(swingWallet.reserved)}</strong>
+              </div>
+            ) : null}
+          </div>
+          <div className={`paper-capital-strip practice-wallet-strip${tab === 'intraday' ? ' is-active-desk' : ''}`}>
+            <div className="practice-wallet-desk-label">Intraday</div>
+            <div>
+              <span>Starting</span>
+              <strong>₹{formatPrice(intraWallet.starting)}</strong>
+            </div>
+            <div>
+              <span>Open used</span>
+              <strong>₹{formatPrice(intraWallet.usedOpen)}</strong>
+              <em>Entry × shares in open trades</em>
+            </div>
+            <div className="paper-capital-remaining">
+              <span>Cash left</span>
+              <strong>₹{formatPrice(intraWallet.remaining)}</strong>
+              <em>Start + realized − open used</em>
+            </div>
+            <div>
+              <span>Live PnL</span>
+              <strong className={intraWallet.live >= 0 ? 'pnl-pos' : 'pnl-neg'}>
+                {formatSigned(intraWallet.live)}
+              </strong>
+            </div>
+            <div>
+              <span>Realized PnL</span>
+              <strong className={intraWallet.realized >= 0 ? 'pnl-pos' : 'pnl-neg'}>
+                {formatSigned(intraWallet.realized)}
+              </strong>
+            </div>
+            <div>
+              <span>Wallet value</span>
+              <strong>₹{formatPrice(intraWallet.equity)}</strong>
+              <em>Cash + open used + live</em>
+            </div>
+            {intraWallet.reserved > 0 ? (
+              <div>
+                <span>Waiting (reserved)</span>
+                <strong>₹{formatPrice(intraWallet.reserved)}</strong>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -765,7 +861,7 @@ export function PracticeBook({
         <article className="practice-stat-card">
           <div className="practice-stat-row">
             <span className="practice-stat-ico practice-ico practice-ico-rupee" aria-hidden="true" />
-            <span>Desk used</span>
+            <span>Desk open used</span>
           </div>
           <strong>₹{formatPrice(walletDesk.usedOpen)}</strong>
         </article>
@@ -820,6 +916,7 @@ export function PracticeBook({
               <th>Direction</th>
               <th>Entry</th>
               <th>Stop</th>
+              <th>Shares</th>
               <th>Used</th>
               <th>PnL</th>
               <th>Status</th>
@@ -832,7 +929,7 @@ export function PracticeBook({
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={10}>
+                <td colSpan={11}>
                   <div className="empty-state">
                     <strong>No {tab} practice trades</strong>
                     <span>
@@ -859,10 +956,12 @@ export function PracticeBook({
                 const open = selectedId === t.id && detailOpen
                 const pnl = tradePnl(t)
                 const used = tradeUsedCapital(t)
+                const qty = tradeQty(t)
+                const status = normalizeStatus(t.status)
                 const duration =
-                  t.status === 'OPEN' && t.opened_at && !(timerPaused && open) ? (
+                  status === 'OPEN' && t.opened_at && !(timerPaused && open) ? (
                     <TradeDurationTimer startedAt={t.opened_at} label="" />
-                  ) : t.status === 'OPEN' && t.opened_at && timerPaused && open && pausedAtMs != null ? (
+                  ) : status === 'OPEN' && t.opened_at && timerPaused && open && pausedAtMs != null ? (
                     formatElapsedBetween(t.opened_at, new Date(pausedAtMs).toISOString())
                   ) : (
                     formatElapsedBetween(t.opened_at, t.closed_at)
@@ -894,6 +993,7 @@ export function PracticeBook({
                     </td>
                     <td className="num-cell">{formatPrice(t.entry_price)}</td>
                     <td className="num-cell">{formatPrice(t.stop_loss)}</td>
+                    <td className="num-cell">{qty > 0 ? qty.toLocaleString('en-IN') : '—'}</td>
                     <td className="num-cell">{used > 0 ? `₹${formatPrice(used)}` : '—'}</td>
                     <td className={`num-cell ${pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}`}>{formatSigned(pnl)}</td>
                     <td>

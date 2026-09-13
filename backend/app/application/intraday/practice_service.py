@@ -258,5 +258,8 @@ class IntradayPracticeService:
         await self.repository.save(trade)
         return trade_to_dict(trade)
 
+    async def reset_all(self) -> int:
+        return await self.repository.delete_all()
+
 
 __all__ = ["IntradayPracticeService", "trade_to_dict"]

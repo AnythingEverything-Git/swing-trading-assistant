@@ -293,3 +293,7 @@ class PaperTradeService:
             winning_closed=winning,
             losing_closed=losing,
         )
+
+    async def reset_all(self) -> int:
+        """Wipe all swing practice trades so the wallet starts at capital again."""
+        return await self.repository.delete_all()

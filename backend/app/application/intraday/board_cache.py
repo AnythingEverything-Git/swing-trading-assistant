@@ -27,6 +27,7 @@ def board_cache_key(
     source: str,
     filters: dict | None,
     symbols: list[str] | None,
+    equity: Decimal | None = None,
 ) -> str:
     payload = {
         "universe": (universe or "NIFTY_500").strip().upper(),
@@ -34,6 +35,7 @@ def board_cache_key(
         "source": source,
         "filters": filters or {},
         "symbols": sorted(s.upper() for s in (symbols or [])),
+        "equity": str(equity) if equity is not None else None,
     }
     raw = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -217,6 +219,7 @@ async def serve_morning_board(
         source=source,
         filters=filters,
         symbols=symbols,
+        equity=equity,
     )
     cached = None if force_refresh else get_cached_board(app, key)
     if cached is not None:

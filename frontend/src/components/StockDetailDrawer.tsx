@@ -290,7 +290,10 @@ export function StockDetailDrawer({
 
   const resolvedOpportunity = opportunity ?? fetchedOpportunity
   const headerPrice =
-    resolvedOpportunity?.current_price ?? forming?.current_price ?? overview?.current_price
+    resolvedOpportunity?.current_price ??
+    forming?.current_price ??
+    overview?.current_price ??
+    overview?.last_close
   const headerChange =
     resolvedOpportunity?.current_price_change_percent ??
     forming?.current_price_change_percent ??
@@ -300,21 +303,24 @@ export function StockDetailDrawer({
     resolvedOpportunity?.candidate.direction === 'SHORT' || forming?.direction === 'SHORT'
   const structureLabel = isShort ? 'Floor (support)' : 'Ceiling (resistance)'
   const retestLabel = isShort ? 'Retest high' : 'Retest low'
-  const chartLevels = {
-    resistance: isShort
-      ? resolvedOpportunity?.evidence.retest_low ?? forming?.retest_low
-      : resolvedOpportunity?.evidence.resistance ?? forming?.resistance,
-    support: isShort
-      ? resolvedOpportunity?.evidence.resistance ?? forming?.resistance
-      : resolvedOpportunity?.evidence.retest_low ?? forming?.retest_low,
-    entry: resolvedOpportunity?.candidate.entry_price,
-    stop: resolvedOpportunity?.candidate.stop_loss,
-    target: resolvedOpportunity?.candidate.target,
-    breakoutIndex:
-      resolvedOpportunity?.evidence.breakout_candle_index ?? forming?.breakout_candle_index,
-    retestIndex: resolvedOpportunity?.evidence.retest_candle_index ?? forming?.retest_candle_index,
-    confirmationIndex: resolvedOpportunity?.evidence.confirmation_candle_index,
-  }
+  const chartLevels = useMemo(
+    () => ({
+      resistance: isShort
+        ? resolvedOpportunity?.evidence.retest_low ?? forming?.retest_low
+        : resolvedOpportunity?.evidence.resistance ?? forming?.resistance,
+      support: isShort
+        ? resolvedOpportunity?.evidence.resistance ?? forming?.resistance
+        : resolvedOpportunity?.evidence.retest_low ?? forming?.retest_low,
+      entry: resolvedOpportunity?.candidate.entry_price,
+      stop: resolvedOpportunity?.candidate.stop_loss,
+      target: resolvedOpportunity?.candidate.target,
+      breakoutIndex:
+        resolvedOpportunity?.evidence.breakout_candle_index ?? forming?.breakout_candle_index,
+      retestIndex: resolvedOpportunity?.evidence.retest_candle_index ?? forming?.retest_candle_index,
+      confirmationIndex: resolvedOpportunity?.evidence.confirmation_candle_index,
+    }),
+    [forming, isShort, resolvedOpportunity],
+  )
 
   const statusLabel = resolvedOpportunity
     ? confirmationMatchesScanEnd(resolvedOpportunity)
@@ -1175,7 +1181,10 @@ export function StockDetailDrawer({
               {fno && fno.status !== 'ok' && (
                 <div className="empty-state">
                   <strong>F&O unavailable</strong>
-                  <span>{fno.detail || 'Option chain could not be loaded for this symbol.'}</span>
+                  <span>
+                    {fno.detail ||
+                      'Option chain could not be loaded. Demo mode needs the updated demo provider (restart API); live mode needs a valid Upstox token.'}
+                  </span>
                 </div>
               )}
 
