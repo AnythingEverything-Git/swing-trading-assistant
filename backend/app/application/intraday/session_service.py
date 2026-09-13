@@ -14,7 +14,7 @@ from app.domain.intraday.eligibility import eligibility_flags
 from app.domain.intraday.engine import prior_day_atr14, run_session
 from app.domain.intraday.session_calendar import default_session_date, is_trading_day, is_weekday
 from app.domain.intraday.decision import count_decisions, decision_from_reason
-from app.domain.intraday.types import SessionReport
+from app.domain.intraday.types import RiskBudgetOverrides, SessionReport
 from app.domain.market_data import Candle
 from app.infrastructure.market_data.demo_provider import DemoMarketDataProvider
 
@@ -220,6 +220,7 @@ async def run_intraday_session(
     source: DataSource = "demo",
     query: MarketDataQueryService | None = None,
     session_repo: Any | None = None,
+    risk_overrides: RiskBudgetOverrides | None = None,
 ) -> tuple[str, SessionReport, dict[str, Any]]:
     """Run ORB session from demo or persisted candles; store report in memory (+ DB if repo)."""
     day = session_date or default_session_date()
@@ -250,6 +251,7 @@ async def run_intraday_session(
         screen_inputs=screen_inputs,
         candles_1m_by_symbol=candles,
         config=config,
+        risk_overrides=risk_overrides,
     )
     session_id = str(uuid4())
     created_at = datetime.now(tz=IST)

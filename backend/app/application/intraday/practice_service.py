@@ -65,7 +65,22 @@ class IntradayPracticeService:
         from app.domain.intraday.types import FillPlan, PortfolioState
 
         equity = Decimal(str(payload.get("equity") or "1000000"))
-        state = PortfolioState(equity=equity)
+        def _dec(key: str) -> Decimal | None:
+            raw = payload.get(key)
+            if raw in (None, ""):
+                return None
+            try:
+                value = Decimal(str(raw))
+            except Exception:
+                return None
+            return value if value > 0 else None
+
+        state = PortfolioState(
+            equity=equity,
+            max_risk_per_trade_inr=_dec("max_risk_per_trade_inr"),
+            max_open_risk_inr=_dec("max_open_risk_inr"),
+            daily_loss_lock_inr=_dec("daily_loss_lock_inr"),
+        )
         # Rank-order fills the same way the engine armed them.
         ordered_fills = sorted(fills, key=lambda f: (int(f.get("rank") or 999), str(f.get("symbol") or "")))
 
@@ -90,7 +105,13 @@ class IntradayPracticeService:
                 trigger_bar_open=now,
                 risk_amount=Decimal(str(fill["risk_amount"])) if fill.get("risk_amount") else Decimal("0"),
             )
-            lock = can_open(state, plan, DEFAULT_CONFIG_V1)
+            lock = can_open(
+                state,
+                plan,
+                DEFAULT_CONFIG_V1,
+                max_open_risk_inr=state.max_open_risk_inr,
+                daily_loss_lock_inr=state.daily_loss_lock_inr,
+            )
             if lock:
                 locked += 1
                 skipped += 1

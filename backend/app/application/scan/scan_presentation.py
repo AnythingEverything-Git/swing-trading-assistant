@@ -50,6 +50,7 @@ def present_scan(
     *,
     account_equity: Decimal | None = None,
     risk_percent: Decimal | None = None,
+    max_risk_amount: Decimal | None = None,
     top_n: int = 5,
     min_score: Decimal | None = None,
 ) -> PresentedScan:
@@ -67,7 +68,12 @@ def present_scan(
         quantity = None
         risk_amount = None
         if account_equity is not None and risk_percent is not None:
-            sizing = calculate_position_size(account_equity, risk_percent, item.candidate)
+            sizing = calculate_position_size(
+                account_equity,
+                risk_percent,
+                item.candidate,
+                max_risk_amount=max_risk_amount,
+            )
             quantity = sizing.quantity
             risk_amount = sizing.actual_risk_amount
         ranked.append(

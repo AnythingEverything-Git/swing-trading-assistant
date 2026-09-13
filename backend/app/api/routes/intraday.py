@@ -41,6 +41,9 @@ class IntradaySessionRunRequest(BaseModel):
         "NSE_MORNING",
     ] | None = None
     equity: Decimal = Field(default=Decimal("1000000"))
+    max_risk_per_trade_inr: Decimal | None = Field(default=None, gt=Decimal("0"))
+    max_open_risk_inr: Decimal | None = Field(default=None, gt=Decimal("0"))
+    daily_loss_lock_inr: Decimal | None = Field(default=None, gt=Decimal("0"))
     source: Literal["demo", "persisted"] = "demo"
     sync: bool = Field(default=False, description="When true, block until session completes (tests).")
 
@@ -83,6 +86,12 @@ async def get_rules() -> dict:
             "consecutive_loss_lock": c.consecutive_loss_lock,
             "stop_atr_mult": str(c.stop_atr_mult),
             "no_profit_target": True,
+            "note": "Account absolute ₹ caps (when provided) take the min with these percentages.",
+        },
+        "account_overrides": {
+            "max_risk_per_trade_inr": "optional request field — min with equity × risk_per_trade_pct",
+            "max_open_risk_inr": "optional — min with equity × max_open_risk_pct",
+            "daily_loss_lock_inr": "optional — min with equity × daily_loss_lock_pct",
         },
     }
 
@@ -138,6 +147,11 @@ async def run_session(
                 source=payload.source,
                 query=query if payload.source == "persisted" else None,
                 session_repo=session_repo,
+                risk_overrides=_risk_overrides_from(
+                    max_risk_per_trade_inr=payload.max_risk_per_trade_inr,
+                    max_open_risk_inr=payload.max_open_risk_inr,
+                    daily_loss_lock_inr=payload.daily_loss_lock_inr,
+                ),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -156,6 +170,11 @@ async def run_session(
     src = payload.source
     equity = payload.equity
     session_date = payload.session_date
+    risk_ov = _risk_overrides_from(
+        max_risk_per_trade_inr=payload.max_risk_per_trade_inr,
+        max_open_risk_inr=payload.max_open_risk_inr,
+        daily_loss_lock_inr=payload.daily_loss_lock_inr,
+    )
 
     async def _run() -> None:
         jobs[job_id]["status"] = "running"
@@ -174,6 +193,7 @@ async def run_session(
                     source=src,
                     query=q,
                     session_repo=repo,
+                    risk_overrides=risk_ov,
                 )
                 await session.commit()
             body = session_report_to_dict(report, meta)
@@ -297,6 +317,9 @@ class MorningRunRequest(BaseModel):
     ] = "NIFTY_500"
     symbols: list[str] | None = None
     equity: Decimal = Field(default=Decimal("1000000"))
+    max_risk_per_trade_inr: Decimal | None = Field(default=None, gt=Decimal("0"))
+    max_open_risk_inr: Decimal | None = Field(default=None, gt=Decimal("0"))
+    daily_loss_lock_inr: Decimal | None = Field(default=None, gt=Decimal("0"))
     source: Literal["demo", "persisted"] = "persisted"
     seed_practice: bool = True
     session_date: date | None = None
@@ -306,7 +329,25 @@ class MorningBoardRequest(BaseModel):
     session_date: date | None = None
     source: Literal["demo", "persisted"] = "persisted"
     equity: Decimal = Field(default=Decimal("1000000"))
+    max_risk_per_trade_inr: Decimal | None = Field(default=None, gt=Decimal("0"))
+    max_open_risk_inr: Decimal | None = Field(default=None, gt=Decimal("0"))
+    daily_loss_lock_inr: Decimal | None = Field(default=None, gt=Decimal("0"))
 
+
+def _risk_overrides_from(
+    *,
+    max_risk_per_trade_inr: Decimal | None = None,
+    max_open_risk_inr: Decimal | None = None,
+    daily_loss_lock_inr: Decimal | None = None,
+):
+    from app.domain.intraday.types import RiskBudgetOverrides
+
+    ov = RiskBudgetOverrides(
+        max_risk_per_trade_inr=max_risk_per_trade_inr,
+        max_open_risk_inr=max_open_risk_inr,
+        daily_loss_lock_inr=daily_loss_lock_inr,
+    )
+    return ov if ov.nonempty() else None
 
 def _practice_service(db: AsyncSession = Depends(get_db)):
     from app.application.intraday.practice_service import IntradayPracticeService
@@ -332,6 +373,9 @@ async def morning_board(
     session_date: date | None = None,
     source: Literal["demo", "persisted"] = "persisted",
     equity: Decimal = Decimal("1000000"),
+    max_risk_per_trade_inr: Decimal | None = None,
+    max_open_risk_inr: Decimal | None = None,
+    daily_loss_lock_inr: Decimal | None = None,
     asset_class: Literal["ALL", "STOCK", "ETF"] = "ALL",
     min_adv_inr: Decimal | None = None,
     force_refresh: bool = Query(default=False),
@@ -344,6 +388,11 @@ async def morning_board(
         "exclude_surveillance": True,
         "exclude_corporate_actions": True,
     }
+    risk_overrides = _risk_overrides_from(
+        max_risk_per_trade_inr=max_risk_per_trade_inr,
+        max_open_risk_inr=max_open_risk_inr,
+        daily_loss_lock_inr=daily_loss_lock_inr,
+    )
     try:
         body, status = await serve_morning_board(
             request.app,
@@ -354,6 +403,7 @@ async def morning_board(
             universe=universe,
             symbols=None,
             force_refresh=force_refresh,
+            risk_overrides=risk_overrides,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -371,6 +421,17 @@ async def morning_board_post(payload: dict, request: Request) -> JSONResponse:
     day = date_cls.fromisoformat(str(session_date)) if session_date else None
     source = payload.get("source") or "persisted"
     force_refresh = bool(payload.get("force_refresh"))
+    risk_overrides = _risk_overrides_from(
+        max_risk_per_trade_inr=Decimal(str(payload["max_risk_per_trade_inr"]))
+        if payload.get("max_risk_per_trade_inr") not in (None, "")
+        else None,
+        max_open_risk_inr=Decimal(str(payload["max_open_risk_inr"]))
+        if payload.get("max_open_risk_inr") not in (None, "")
+        else None,
+        daily_loss_lock_inr=Decimal(str(payload["daily_loss_lock_inr"]))
+        if payload.get("daily_loss_lock_inr") not in (None, "")
+        else None,
+    )
     try:
         body, status = await serve_morning_board(
             request.app,
@@ -381,6 +442,7 @@ async def morning_board_post(payload: dict, request: Request) -> JSONResponse:
             universe=str(payload.get("universe") or "NIFTY_500"),
             symbols=[str(s).upper() for s in (payload.get("symbols") or []) if str(s).strip()] or None,
             force_refresh=force_refresh,
+            risk_overrides=risk_overrides,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -540,6 +602,11 @@ async def morning_session(
     src = payload.source
     equity = payload.equity
     seed_practice = payload.seed_practice
+    risk_ov = _risk_overrides_from(
+        max_risk_per_trade_inr=payload.max_risk_per_trade_inr,
+        max_open_risk_inr=payload.max_open_risk_inr,
+        daily_loss_lock_inr=payload.daily_loss_lock_inr,
+    )
 
     async def _run() -> None:
         jobs[job_id]["status"] = "running"
@@ -558,6 +625,7 @@ async def morning_session(
                     source=src,
                     query=q,
                     session_repo=repo,
+                    risk_overrides=risk_ov,
                 )
                 body = session_report_to_dict(report, meta)
                 body["id"] = session_id

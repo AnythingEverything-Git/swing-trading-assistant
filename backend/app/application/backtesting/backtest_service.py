@@ -26,6 +26,7 @@ class BacktestService:
         risk_percent: Decimal,
         slippage_per_share: Decimal = Decimal("0"),
         cost_per_trade: Decimal = Decimal("0"),
+        max_risk_amount: Decimal | None = None,
     ) -> BacktestResult:
         if start > end:
             raise ValueError("start must be less than or equal to end")
@@ -39,6 +40,7 @@ class BacktestService:
             risk_percent,
             slippage_per_share,
             cost_per_trade,
+            max_risk_amount=max_risk_amount,
         )
         return BacktestResult(
             symbol=symbol,
@@ -58,6 +60,7 @@ class BacktestService:
         risk_percent: Decimal,
         slippage_per_share: Decimal,
         cost_per_trade: Decimal,
+        max_risk_amount: Decimal | None = None,
     ) -> tuple[BacktestTrade, ...]:
         trades: list[BacktestTrade] = []
         cursor = 0
@@ -77,7 +80,9 @@ class BacktestService:
                 continue
             # Last-bar confirmations are still tradable: exit via END_OF_DATA / mark-to-market
             # on the final close when no subsequent bar exists (see _find_exit).
-            sizing = calculate_position_size(current_equity, risk_percent, candidate)
+            sizing = calculate_position_size(
+                current_equity, risk_percent, candidate, max_risk_amount=max_risk_amount
+            )
             if sizing.quantity == 0:
                 cursor += 1
                 continue

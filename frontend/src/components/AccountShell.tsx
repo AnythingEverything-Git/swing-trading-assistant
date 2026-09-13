@@ -4,6 +4,7 @@ import { SchedulerOpsPanel } from './SchedulerOpsPanel'
 import { listScanRuns } from '../scan/api'
 import { listIntradaySessions } from '../intraday/api'
 import { PAPER_CLAIM } from '../terminology'
+import type { RiskProfile } from '../riskProfile'
 
 type ThemeChoice = 'light' | 'dark' | 'system'
 type AccountTab = 'risk' | 'alerts' | 'appearance' | 'export' | 'plans' | 'broker' | 'ops'
@@ -13,12 +14,8 @@ type Props = {
   baseUrl: string
   theme: ThemeChoice
   onThemeChange: (next: ThemeChoice) => void
-  swingEquity: string
-  intradayEquity: string
-  riskPercent: string
-  onSwingEquityChange: (value: string) => void
-  onIntradayEquityChange: (value: string) => void
-  onRiskChange: (value: string) => void
+  profile: RiskProfile
+  onProfileChange: (profile: RiskProfile) => void
   paperTradingEnabled: boolean
   onPaperEnabledChange: (enabled: boolean) => void
   onOpenCapital: () => void
@@ -133,12 +130,8 @@ export function AccountShell({
   baseUrl,
   theme,
   onThemeChange,
-  swingEquity,
-  intradayEquity,
-  riskPercent,
-  onSwingEquityChange,
-  onIntradayEquityChange,
-  onRiskChange,
+  profile,
+  onProfileChange,
   paperTradingEnabled,
   onPaperEnabledChange,
   onOpenCapital,
@@ -148,6 +141,7 @@ export function AccountShell({
   onSaveRefresh,
   initialTab = 'risk',
 }: Props) {
+  const { swingEquity, intradayEquity, reserveEquity } = profile
   const [tab, setTab] = useState<AccountTab>(initialTab)
   const [alerts, setAlerts] = useState<AlertPrefs>(() => readAlerts())
   const [alertNotice, setAlertNotice] = useState('')
@@ -383,7 +377,7 @@ export function AccountShell({
           </h1>
           <p className="header-copy">
             {tab === 'risk'
-              ? 'Separate Swing and Intraday capital — engine still owns Entry / Stop.'
+              ? '70/20/10-style buckets + ₹ risk limits — engine still owns Entry / Stop.'
               : tab === 'appearance'
                 ? 'Choose theme and how often Swing, Intraday, and Practice refresh.'
                 : tab === 'alerts'
@@ -398,6 +392,8 @@ export function AccountShell({
           {new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Number(swingEquity) || 0)}
           {' · Intra ₹'}
           {new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Number(intradayEquity) || 0)}
+          {' · Reserve ₹'}
+          {new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Number(reserveEquity) || 0)}
         </button>
       </header>
 
@@ -428,15 +424,7 @@ export function AccountShell({
 
       {tab === 'risk' ? (
         <div className="account-section">
-          <RiskCoachPanel
-            swingEquity={swingEquity}
-            intradayEquity={intradayEquity}
-            riskPercent={riskPercent}
-            onSwingEquityChange={onSwingEquityChange}
-            onIntradayEquityChange={onIntradayEquityChange}
-            onRiskChange={onRiskChange}
-            embedded
-          />
+          <RiskCoachPanel profile={profile} onProfileChange={onProfileChange} embedded />
         </div>
       ) : null}
 

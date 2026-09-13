@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ORB_V1_RULES } from '../terminology'
+import {
+  applyTradepilotSplit,
+  rebuildProfile,
+  type RiskProfile,
+} from '../riskProfile'
 
 type Props = {
-  swingEquity: string
-  intradayEquity: string
-  riskPercent: string
-  onSwingEquityChange: (value: string) => void
-  onIntradayEquityChange: (value: string) => void
-  onRiskChange: (value: string) => void
+  profile: RiskProfile
+  onProfileChange: (profile: RiskProfile) => void
   embedded?: boolean
 }
 
@@ -23,60 +24,83 @@ function formatInr(value: number, digits = 0): string {
 }
 
 /** UC-F9 — sizing math only; never changes Entry/SL. */
-export function RiskCoachPanel({
-  swingEquity,
-  intradayEquity,
-  riskPercent,
-  onSwingEquityChange,
-  onIntradayEquityChange,
-  onRiskChange,
-  embedded = false,
-}: Props) {
-  const [draftSwing, setDraftSwing] = useState(swingEquity)
-  const [draftIntra, setDraftIntra] = useState(intradayEquity)
-  const [draftRisk, setDraftRisk] = useState(riskPercent)
+export function RiskCoachPanel({ profile, onProfileChange, embedded = false }: Props) {
+  const [draft, setDraft] = useState(profile)
   const [stopDistance, setStopDistance] = useState(String(EXAMPLE.entry - EXAMPLE.stop))
   const [savedFlash, setSavedFlash] = useState(false)
 
   useEffect(() => {
-    setDraftSwing(swingEquity)
-    setDraftIntra(intradayEquity)
-    setDraftRisk(riskPercent)
-  }, [swingEquity, intradayEquity, riskPercent])
+    setDraft(profile)
+  }, [profile])
+
+  const live = useMemo(
+    () =>
+      rebuildProfile({
+        allocationMode: draft.allocationMode,
+        totalEquity: draft.totalEquity,
+        swingPct: draft.swingPct,
+        intradayPct: draft.intradayPct,
+        reservePct: draft.reservePct,
+        swingEquity: draft.swingEquity,
+        intradayEquity: draft.intradayEquity,
+        reserveEquity: draft.reserveEquity,
+        swingRiskPerTradeInr: draft.swingRiskPerTradeInr,
+        swingMaxOpenRiskInr: draft.swingMaxOpenRiskInr,
+        intradayRiskPerTradeInr: draft.intradayRiskPerTradeInr,
+        intradayMaxOpenRiskInr: draft.intradayMaxOpenRiskInr,
+        intradayDailyLossInr: draft.intradayDailyLossInr,
+      }),
+    [draft],
+  )
+
+  const splitActive = live.allocationMode === 'tradepilot_split'
 
   const swingPreview = useMemo(() => {
-    const equity = Number(draftSwing)
-    const riskPct = Number(draftRisk)
+    const riskBudget = Number(live.swingRiskPerTradeInr)
     const perShare = Math.abs(Number(stopDistance))
-    if (!Number.isFinite(equity) || equity <= 0 || !Number.isFinite(riskPct) || riskPct <= 0 || perShare <= 0) {
-      return null
-    }
-    const qty = Math.floor((equity * riskPct) / 100 / perShare)
-    const atRisk = qty * perShare
-    return { qty, atRisk, perShare }
-  }, [draftSwing, draftRisk, stopDistance])
+    const equity = Number(live.swingEquity)
+    if (!Number.isFinite(riskBudget) || riskBudget <= 0 || perShare <= 0 || equity <= 0) return null
+    const qty = Math.min(Math.floor(riskBudget / perShare), Math.floor(equity / EXAMPLE.entry))
+    return { qty: Math.max(0, qty), atRisk: Math.max(0, qty) * perShare, perShare }
+  }, [live.swingEquity, live.swingRiskPerTradeInr, stopDistance])
 
   const intraPreview = useMemo(() => {
-    const equity = Number(draftIntra)
-    const riskPct = ORB_V1_RULES.riskPerTradePct
+    const equity = Number(live.intradayEquity)
+    const pctBudget = (equity * ORB_V1_RULES.riskPerTradePct) / 100
+    const abs = Number(live.intradayRiskPerTradeInr)
+    const riskBudget = Math.min(pctBudget, Number.isFinite(abs) && abs > 0 ? abs : pctBudget)
     const perShare = Math.abs(Number(stopDistance))
-    if (!Number.isFinite(equity) || equity <= 0 || perShare <= 0) return null
-    const qty = Math.floor((equity * riskPct) / 100 / perShare)
-    const atRisk = qty * perShare
-    return { qty, atRisk, perShare }
-  }, [draftIntra, stopDistance])
+    if (!Number.isFinite(equity) || equity <= 0 || perShare <= 0 || !Number.isFinite(riskBudget)) {
+      return null
+    }
+    const qty = Math.min(Math.floor(riskBudget / perShare), Math.floor(equity / EXAMPLE.entry))
+    return { qty: Math.max(0, qty), atRisk: Math.max(0, qty) * perShare, perShare, riskBudget }
+  }, [live.intradayEquity, live.intradayRiskPerTradeInr, stopDistance])
+
+  function patch(partial: Partial<RiskProfile>) {
+    setDraft((prev) => ({ ...prev, ...partial }))
+  }
 
   function handleSave(event: FormEvent) {
     event.preventDefault()
-    const swing = Number(draftSwing)
-    const intra = Number(draftIntra)
-    const risk = Number(draftRisk)
-    if (!Number.isFinite(swing) || swing < 0) return
-    if (!Number.isFinite(intra) || intra < 0) return
-    if (!Number.isFinite(risk) || risk <= 0 || risk > 100) return
-    onSwingEquityChange(String(swing))
-    onIntradayEquityChange(String(intra))
-    onRiskChange(String(risk))
+    const next = rebuildProfile({
+      allocationMode: draft.allocationMode,
+      totalEquity: draft.totalEquity,
+      swingPct: draft.swingPct,
+      intradayPct: draft.intradayPct,
+      reservePct: draft.reservePct,
+      swingEquity: draft.swingEquity,
+      intradayEquity: draft.intradayEquity,
+      reserveEquity: draft.reserveEquity,
+      swingRiskPerTradeInr: draft.swingRiskPerTradeInr,
+      swingMaxOpenRiskInr: draft.swingMaxOpenRiskInr,
+      intradayRiskPerTradeInr: draft.intradayRiskPerTradeInr,
+      intradayMaxOpenRiskInr: draft.intradayMaxOpenRiskInr,
+      intradayDailyLossInr: draft.intradayDailyLossInr,
+    })
+    if (Number(next.totalEquity) < 0) return
+    if (Number(next.swingRiskPerTradeInr) <= 0) return
+    onProfileChange(next)
     setSavedFlash(true)
     window.setTimeout(() => setSavedFlash(false), 1800)
   }
@@ -90,48 +114,147 @@ export function RiskCoachPanel({
       <header className="risk-coach-head">
         <h2>Risk coach</h2>
         <p className="risk-coach-rec">
-          Separate Swing and Intraday capital. Swing risk is editable; Intraday ORB V1 locks risk at{' '}
-          {ORB_V1_RULES.riskPerTradePct}%.
+          Enter capital, then optionally apply TradePilot Split (70/20/10). Save to use desks for sizing and
+          practice. Wallets update after every closed trade.
         </p>
       </header>
 
       <label className="field">
-        <span>Swing capital</span>
+        <span>Total capital</span>
         <input
           type="number"
           min="0"
-          step="1000"
-          value={draftSwing}
-          onChange={(e) => setDraftSwing(e.target.value)}
+          step="1"
+          value={draft.totalEquity}
+          onChange={(e) => {
+            const totalEquity = e.target.value
+            if (draft.allocationMode === 'tradepilot_split') {
+              setDraft(applyTradepilotSplit({ ...draft, totalEquity }))
+            } else {
+              patch({ totalEquity })
+            }
+          }}
         />
-        <strong className="risk-coach-display">{formatInr(Number(draftSwing) || 0)}</strong>
+        <strong className="risk-coach-display">{formatInr(Number(live.totalEquity) || 0)}</strong>
       </label>
 
-      <label className="field">
-        <span>Intraday capital</span>
-        <input
-          type="number"
-          min="0"
-          step="1000"
-          value={draftIntra}
-          onChange={(e) => setDraftIntra(e.target.value)}
-        />
-        <strong className="risk-coach-display">{formatInr(Number(draftIntra) || 0)}</strong>
-      </label>
+      <button
+        type="button"
+        className={`secondary-button${splitActive ? ' is-active-strategy' : ''}`}
+        onClick={() => setDraft(applyTradepilotSplit(draft))}
+      >
+        TradePilot Split Strategy (70/20/10)
+      </button>
+      {splitActive ? (
+        <button type="button" className="ghost-btn" onClick={() => patch({ allocationMode: 'manual' })}>
+          Clear split · edit desks manually
+        </button>
+      ) : null}
 
-      <label className="field">
-        <span>Swing risk per trade</span>
-        <div className="risk-coach-pct-row">
-          <input
-            type="number"
-            min="0.1"
-            max="100"
-            step="0.1"
-            value={draftRisk}
-            onChange={(e) => setDraftRisk(e.target.value)}
-          />
-          <span>%</span>
+      {splitActive ? (
+        <div className="risk-coach-alloc-row">
+          <div className="field">
+            <span>Swing 70%</span>
+            <strong className="risk-coach-display">{formatInr(Number(live.swingEquity) || 0)}</strong>
+          </div>
+          <div className="field">
+            <span>Intraday 20%</span>
+            <strong className="risk-coach-display">{formatInr(Number(live.intradayEquity) || 0)}</strong>
+          </div>
+          <div className="field">
+            <span>Reserve 10%</span>
+            <strong className="risk-coach-display">{formatInr(Number(live.reserveEquity) || 0)}</strong>
+          </div>
         </div>
+      ) : (
+        <div className="risk-coach-alloc-row">
+          <label className="field">
+            <span>Swing ₹</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={draft.swingEquity}
+              onChange={(e) => patch({ swingEquity: e.target.value, allocationMode: 'manual' })}
+            />
+          </label>
+          <label className="field">
+            <span>Intraday ₹</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={draft.intradayEquity}
+              onChange={(e) => patch({ intradayEquity: e.target.value, allocationMode: 'manual' })}
+            />
+          </label>
+          <label className="field">
+            <span>Reserve ₹</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={draft.reserveEquity}
+              onChange={(e) => patch({ reserveEquity: e.target.value, allocationMode: 'manual' })}
+            />
+          </label>
+        </div>
+      )}
+
+      <label className="field">
+        <span>Swing max risk / trade (₹)</span>
+        <input
+          type="number"
+          min="1"
+          step="1"
+          value={draft.swingRiskPerTradeInr}
+          onChange={(e) => patch({ swingRiskPerTradeInr: e.target.value })}
+        />
+        <span className="field-hint">≈ {live.riskPercent}% of swing bucket</span>
+      </label>
+
+      <label className="field">
+        <span>Intraday max risk / trade (₹)</span>
+        <input
+          type="number"
+          min="1"
+          step="1"
+          value={draft.intradayRiskPerTradeInr}
+          onChange={(e) => patch({ intradayRiskPerTradeInr: e.target.value })}
+        />
+      </label>
+
+      <label className="field">
+        <span>Swing max open risk (₹)</span>
+        <input
+          type="number"
+          min="1"
+          step="1"
+          value={draft.swingMaxOpenRiskInr}
+          onChange={(e) => patch({ swingMaxOpenRiskInr: e.target.value })}
+        />
+      </label>
+
+      <label className="field">
+        <span>Intraday max open risk (₹)</span>
+        <input
+          type="number"
+          min="1"
+          step="1"
+          value={draft.intradayMaxOpenRiskInr}
+          onChange={(e) => patch({ intradayMaxOpenRiskInr: e.target.value })}
+        />
+      </label>
+
+      <label className="field">
+        <span>Intraday daily loss lock (₹)</span>
+        <input
+          type="number"
+          min="1"
+          step="1"
+          value={draft.intradayDailyLossInr}
+          onChange={(e) => patch({ intradayDailyLossInr: e.target.value })}
+        />
       </label>
 
       <label className="field">
@@ -147,21 +270,21 @@ export function RiskCoachPanel({
 
       <div className="risk-coach-math" role="status">
         <p>
-          <strong>Math:</strong> Capital × risk% / stop distance = qty
+          <strong>Math:</strong> min(bucket × %, ₹ cap) / stop distance = qty
         </p>
         {swingPreview ? (
           <p>
-            Swing: {formatInr(Number(draftSwing) || 0)} × {draftRisk}% / {formatInr(swingPreview.perShare, 2)} ={' '}
-            <strong>{swingPreview.qty} shares</strong> · at risk {formatInr(swingPreview.atRisk, 2)}
+            Swing: budget {formatInr(Number(live.swingRiskPerTradeInr) || 0)} /{' '}
+            {formatInr(swingPreview.perShare, 2)} = <strong>{swingPreview.qty} shares</strong> · at risk{' '}
+            {formatInr(swingPreview.atRisk, 2)}
           </p>
         ) : (
-          <p>Enter valid swing capital, risk %, and stop distance to preview.</p>
+          <p>Enter valid swing capital, risk ₹, and stop distance to preview.</p>
         )}
         {intraPreview ? (
           <p>
-            Intraday: {formatInr(Number(draftIntra) || 0)} × {ORB_V1_RULES.riskPerTradePct}% /{' '}
-            {formatInr(intraPreview.perShare, 2)} = <strong>{intraPreview.qty} shares</strong> · at risk{' '}
-            {formatInr(intraPreview.atRisk, 2)}
+            Intraday: budget {formatInr(intraPreview.riskBudget, 2)} / {formatInr(intraPreview.perShare, 2)} ={' '}
+            <strong>{intraPreview.qty} shares</strong> · at risk {formatInr(intraPreview.atRisk, 2)}
           </p>
         ) : (
           <p>Enter valid intraday capital and stop distance to preview ORB sizing.</p>
@@ -170,7 +293,7 @@ export function RiskCoachPanel({
 
       <div className="risk-coach-actions">
         <button type="submit" className="primary-button">
-          Save capitals
+          Save allocation
         </button>
         <p className="field-hint">Note: Does not change strategy Entry/SL</p>
         {savedFlash ? <span className="risk-coach-saved">Saved to workspace</span> : null}

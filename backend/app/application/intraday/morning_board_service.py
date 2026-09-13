@@ -35,7 +35,13 @@ from app.domain.intraday.session_calendar import (
 )
 from app.domain.intraday.decision import count_decisions, decision_from_board_row, decision_from_reason
 from app.domain.intraday.sizing import can_open, size_quantity
-from app.domain.intraday.types import FillPlan, PortfolioState, RankedCandidate, ScreenCandidate
+from app.domain.intraday.types import (
+    FillPlan,
+    PortfolioState,
+    RankedCandidate,
+    RiskBudgetOverrides,
+    ScreenCandidate,
+)
 from app.domain.market_data import Candle
 
 BoardPhase = Literal["PRE_OPEN", "OR_BUILDING", "LIVE_SCREEN", "HISTORICAL"]
@@ -141,6 +147,7 @@ def _ranked_payload(
     equity: Decimal = Decimal("1000000"),
     config: IntradayConfigV1 = DEFAULT_CONFIG_V1,
     allocate: bool = True,
+    risk_overrides: RiskBudgetOverrides | None = None,
 ) -> list[dict[str, Any]]:
     candles_by_symbol = candles_by_symbol or {}
     out: list[dict[str, Any]] = []
@@ -187,7 +194,7 @@ def _ranked_payload(
         out.append(row)
 
     if allocate and out:
-        _allocate_quantities(out, equity=equity, config=config)
+        _allocate_quantities(out, equity=equity, config=config, risk_overrides=risk_overrides)
 
     for row in out:
         row["decision"] = decision_from_board_row(
@@ -214,13 +221,20 @@ def _allocate_quantities(
     *,
     equity: Decimal,
     config: IntradayConfigV1,
+    risk_overrides: RiskBudgetOverrides | None = None,
 ) -> None:
     """Distribute qty by rank (stocks then ETFs) within capital / portfolio guards."""
+    overrides = risk_overrides or RiskBudgetOverrides()
 
     def _arm_key(row: dict[str, Any]) -> tuple[int, int]:
         return (0 if row.get("_asset_class") != "ETF" else 1, int(row.get("_rank") or 999))
 
-    state = PortfolioState(equity=equity)
+    state = PortfolioState(
+        equity=equity,
+        max_risk_per_trade_inr=overrides.max_risk_per_trade_inr,
+        max_open_risk_inr=overrides.max_open_risk_inr,
+        daily_loss_lock_inr=overrides.daily_loss_lock_inr,
+    )
     for row in sorted(rows, key=_arm_key):
         risk_err = row.get("_risk_err")
         if risk_err:
@@ -236,6 +250,7 @@ def _allocate_quantities(
             effective_risk_per_share=effective,
             entry=entry,
             config=config,
+            max_risk_per_trade_inr=overrides.max_risk_per_trade_inr,
         )
         if qty <= 0:
             row["quantity"] = 0
@@ -255,7 +270,13 @@ def _allocate_quantities(
             trigger_bar_open=combine_ist(date.today(), time(9, 20)),
             risk_amount=risk_amount,
         )
-        lock = can_open(state, plan, config)
+        lock = can_open(
+            state,
+            plan,
+            config,
+            max_open_risk_inr=overrides.max_open_risk_inr,
+            daily_loss_lock_inr=overrides.daily_loss_lock_inr,
+        )
         if lock:
             row["quantity"] = 0
             row["risk_amount"] = None
@@ -266,8 +287,8 @@ def _allocate_quantities(
         row["risk_amount"] = str(risk_amount)
         row["size_status"] = "SIZED"
         row["reason"] = (
-            f"{row['reason']} · qty {qty} from {config.risk_per_trade_pct * 100:.2f}% risk "
-            f"of capital (rank-ordered vs max {config.max_concurrent} positions)"
+            f"{row['reason']} · qty {qty} from risk budget "
+            f"(ORB {config.risk_per_trade_pct * 100:.2f}% ∩ ₹ caps; rank vs max {config.max_concurrent})"
         )
         state.open_fills.append(plan)
         state.traded_symbols.add(plan.symbol)
@@ -417,6 +438,7 @@ async def build_morning_board(
     filters: dict | None = None,
     universe: str | None = None,
     symbols: list[str] | None = None,
+    risk_overrides: RiskBudgetOverrides | None = None,
 ) -> dict[str, Any]:
     """One-click morning board: NSE cash + ETFs (or a chosen universe), ranked by asset class."""
     clock = now or datetime.now(tz=IST)
@@ -577,6 +599,7 @@ async def build_morning_board(
         equity=equity,
         config=config,
         allocate=True,
+        risk_overrides=risk_overrides,
     )
     by_symbol = {r["symbol"]: r for r in combined}
     stock_rows = [by_symbol[r.candidate.symbol] for r in stock_ranked if r.candidate.symbol in by_symbol]
@@ -611,6 +634,17 @@ async def build_morning_board(
             "blocked": len(blocked),
             "with_1m_or_data": sum(1 for v in candles.values() if v),
             "equity": str(equity),
+            "risk_overrides": {
+                "max_risk_per_trade_inr": str(risk_overrides.max_risk_per_trade_inr)
+                if risk_overrides and risk_overrides.max_risk_per_trade_inr is not None
+                else None,
+                "max_open_risk_inr": str(risk_overrides.max_open_risk_inr)
+                if risk_overrides and risk_overrides.max_open_risk_inr is not None
+                else None,
+                "daily_loss_lock_inr": str(risk_overrides.daily_loss_lock_inr)
+                if risk_overrides and risk_overrides.daily_loss_lock_inr is not None
+                else None,
+            },
         },
         "filter_coverage": {
             "universe_total": len(ordered),
@@ -622,6 +656,7 @@ async def build_morning_board(
             "Confirmed = Top-N RVOL screen after OR. "
             "Entry/SL/Target from ORB V1 (Target = 1R planning price). "
             "Exits remain stop or forced flatten 15:10 — V1 does not auto-take profit at Target. "
+            "Capital available ≠ permission to risk it — absolute ₹ caps layer on CONFIG_V1 %. "
             "Refresh 1m: python scripts/refresh_intraday_candles.py --mode today|watermark."
         ),
     }

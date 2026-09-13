@@ -38,9 +38,12 @@ type Props = {
   baseUrl: string
   swingEquity: string
   intradayEquity: string
+  reserveEquity?: string
   paperTradingEnabled?: boolean
   onEnablePaper?: () => void
   onTradesChanged?: () => void
+  /** Fired whenever wallets recompute (load / close / tick) so sizing uses live capital. */
+  onLiveCapitalChange?: (next: { swing: number; intraday: number }) => void
   onOpenSwing?: () => void
   onOpenIntraday?: () => void
 }
@@ -170,9 +173,11 @@ export function PracticeBook({
   baseUrl,
   swingEquity,
   intradayEquity,
+  reserveEquity,
   paperTradingEnabled = true,
   onEnablePaper,
   onTradesChanged,
+  onLiveCapitalChange,
   onOpenSwing,
   onOpenIntraday,
 }: Props) {
@@ -198,6 +203,8 @@ export function PracticeBook({
 
   const onTradesChangedRef = useRef(onTradesChanged)
   onTradesChangedRef.current = onTradesChanged
+  const onLiveCapitalChangeRef = useRef(onLiveCapitalChange)
+  onLiveCapitalChangeRef.current = onLiveCapitalChange
   const loadGenRef = useRef(0)
 
   const notifyParent = useCallback(() => {
@@ -323,6 +330,18 @@ export function PracticeBook({
     [intraday, intradayEquity],
   )
 
+  useEffect(() => {
+    // Cash equity after closes: allocated + realized (used by sizing / parent)
+    const swingLive = Math.max(0, swingWallet.starting + swingWallet.realized)
+    const intradayLive = Math.max(0, intraWallet.starting + intraWallet.realized)
+    onLiveCapitalChangeRef.current?.({ swing: swingLive, intraday: intradayLive })
+  }, [
+    swingWallet.starting,
+    swingWallet.realized,
+    intraWallet.starting,
+    intraWallet.realized,
+  ])
+
   const selectedSwing = tab === 'swing' ? swing.find((t) => t.id === selectedId) ?? null : null
   const selectedIntra = tab === 'intraday' ? intraday.find((t) => t.id === selectedId) ?? null : null
   const selected = selectedSwing || selectedIntra
@@ -390,7 +409,7 @@ export function PracticeBook({
     }
     setClaimAck(true)
     setNotice(
-      `${PAPER_CLAIM} Swing capital ₹${formatPrice(swingEquity || 0)} · Intraday capital ₹${formatPrice(intradayEquity || 0)}. No real brokerage order.`,
+      `${PAPER_CLAIM} Swing capital ₹${formatPrice(swingEquity || 0)} · Intraday capital ₹${formatPrice(intradayEquity || 0)}${reserveEquity ? ` · Reserve ₹${formatPrice(reserveEquity)} (not deployed)` : ''}. Capital available ≠ permission to risk it. No real brokerage order.`,
     )
   }
 
@@ -745,12 +764,11 @@ export function PracticeBook({
         </div>
       ) : null}
 
-      <div className="practice-wallet" aria-label="Practice capital wallets">
+      <div className="practice-wallet" aria-label={`${tab === 'swing' ? 'Swing' : 'Intraday'} capital wallet`}>
         <div className="practice-wallet-head">
-          <h3>Capital wallets</h3>
+          <h3>{tab === 'swing' ? 'Swing capital wallet' : 'Intraday capital wallet'}</h3>
           <p className="field-hint">
-            Swing and Intraday keep separate starting capital · active desk:{' '}
-            {tab === 'swing' ? 'Swing' : 'Intraday'}
+            Separate from the other desk · allocated in Capital & risk · updates on every close
           </p>
           <div className="practice-wallet-head-actions">
             <button
@@ -766,12 +784,18 @@ export function PracticeBook({
             </button>
           </div>
         </div>
-        <div className="practice-wallet-dual">
-          <div className={`paper-capital-strip practice-wallet-strip${tab === 'swing' ? ' is-active-desk' : ''}`}>
+        {tab === 'swing' ? (
+          <div className="paper-capital-strip practice-wallet-strip is-active-desk">
             <div className="practice-wallet-desk-label">Swing</div>
-            <div>
-              <span>Starting</span>
+            <div className="paper-capital-metric">
+              <span>Allocated</span>
               <strong>₹{formatPrice(swingWallet.starting)}</strong>
+              <em>From Capital & risk</em>
+            </div>
+            <div className="paper-capital-metric">
+              <span>Live capital</span>
+              <strong>₹{formatPrice(swingWallet.starting + swingWallet.realized)}</strong>
+              <em>Allocated + closed PnL · used for sizing</em>
             </div>
             <div>
               <span>Open used</span>
@@ -781,7 +805,7 @@ export function PracticeBook({
             <div className="paper-capital-remaining">
               <span>Cash left</span>
               <strong>₹{formatPrice(swingWallet.remaining)}</strong>
-              <em>Start + realized − open used</em>
+              <em>Live capital − open used</em>
             </div>
             <div>
               <span>Live PnL</span>
@@ -807,11 +831,18 @@ export function PracticeBook({
               </div>
             ) : null}
           </div>
-          <div className={`paper-capital-strip practice-wallet-strip${tab === 'intraday' ? ' is-active-desk' : ''}`}>
+        ) : (
+          <div className="paper-capital-strip practice-wallet-strip is-active-desk">
             <div className="practice-wallet-desk-label">Intraday</div>
-            <div>
-              <span>Starting</span>
+            <div className="paper-capital-metric">
+              <span>Allocated</span>
               <strong>₹{formatPrice(intraWallet.starting)}</strong>
+              <em>From Capital & risk</em>
+            </div>
+            <div className="paper-capital-metric">
+              <span>Live capital</span>
+              <strong>₹{formatPrice(intraWallet.starting + intraWallet.realized)}</strong>
+              <em>Allocated + closed PnL · used for sizing</em>
             </div>
             <div>
               <span>Open used</span>
@@ -821,7 +852,7 @@ export function PracticeBook({
             <div className="paper-capital-remaining">
               <span>Cash left</span>
               <strong>₹{formatPrice(intraWallet.remaining)}</strong>
-              <em>Start + realized − open used</em>
+              <em>Live capital − open used</em>
             </div>
             <div>
               <span>Live PnL</span>
@@ -847,7 +878,7 @@ export function PracticeBook({
               </div>
             ) : null}
           </div>
-        </div>
+        )}
       </div>
 
       <div className="practice-stats">

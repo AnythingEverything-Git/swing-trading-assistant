@@ -124,10 +124,28 @@ class PortfolioState:
     consecutive_losses: int = 0
     realized_pnl: Decimal = Decimal("0")
     traded_symbols: set[str] = field(default_factory=set)
+    max_risk_per_trade_inr: Decimal | None = None
+    max_open_risk_inr: Decimal | None = None
+    daily_loss_lock_inr: Decimal | None = None
 
     @property
     def daily_loss_locked(self) -> bool:
         return False  # evaluated via helpers with config
+
+
+@dataclass(frozen=True)
+class RiskBudgetOverrides:
+    """Account-level absolute ₹ caps layered on CONFIG_V1 percentages."""
+
+    max_risk_per_trade_inr: Decimal | None = None
+    max_open_risk_inr: Decimal | None = None
+    daily_loss_lock_inr: Decimal | None = None
+
+    def nonempty(self) -> bool:
+        return any(
+            v is not None and v > 0
+            for v in (self.max_risk_per_trade_inr, self.max_open_risk_inr, self.daily_loss_lock_inr)
+        )
 
 
 @dataclass(frozen=True)
@@ -154,5 +172,6 @@ __all__ = [
     "FillPlan",
     "ClosedTrade",
     "PortfolioState",
+    "RiskBudgetOverrides",
     "SessionReport",
 ]

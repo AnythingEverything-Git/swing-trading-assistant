@@ -130,6 +130,11 @@ class OpportunityScanRequest(BaseModel):
         description="Optional account equity for position sizing on each eligible.",
     )
     risk_percent: Decimal = Field(default=Decimal("1"), gt=Decimal("0"))
+    max_risk_amount: Decimal | None = Field(
+        default=None,
+        gt=Decimal("0"),
+        description="Optional absolute ₹ per-trade risk cap (min with equity × risk%).",
+    )
     top_n: int = Field(default=5, ge=1, le=50)
     min_score: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("100"))
     enable_paper_trading: bool = Field(
@@ -563,6 +568,11 @@ class BacktestRequest(BaseModel):
     end: datetime
     account_equity: Decimal = Field(gt=Decimal("0"))
     risk_percent: Decimal = Field(gt=Decimal("0"))
+    max_risk_amount: Decimal | None = Field(
+        default=None,
+        gt=Decimal("0"),
+        description="Optional absolute ₹ per-trade risk cap (min with equity × risk%).",
+    )
     slippage_per_share: Decimal = Field(
         default=Decimal("0"),
         ge=Decimal("0"),
@@ -619,6 +629,11 @@ class PersonalBookRequest(BaseModel):
     scan_run_id: int | None = None
     account_equity: Decimal = Field(gt=Decimal("0"))
     risk_percent: Decimal = Field(default=Decimal("1"), gt=Decimal("0"))
+    max_risk_amount: Decimal | None = Field(
+        default=None,
+        gt=Decimal("0"),
+        description="Optional absolute ₹ per-trade risk cap (min with equity × risk%).",
+    )
     max_positions: int = Field(default=3, ge=1, le=10)
     # Inline opportunities when no scan_run_id (tests / sync)
     opportunities: list[EligibleOpportunityResponse] | None = None

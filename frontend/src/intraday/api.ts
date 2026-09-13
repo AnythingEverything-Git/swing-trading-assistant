@@ -140,6 +140,9 @@ export type IntradaySessionRunRequest = {
   universe?: Exclude<IntradayUniverse, 'CUSTOM'> | null
   equity?: string
   source?: 'demo' | 'persisted'
+  max_risk_per_trade_inr?: string
+  max_open_risk_inr?: string
+  daily_loss_lock_inr?: string
 }
 
 function detailFromErrorPayload(payload: unknown, fallback: string): string {
@@ -396,8 +399,16 @@ export async function fetchMorningBoard(
     symbols?: string[]
     filters?: Record<string, unknown>
     force_refresh?: boolean
+    max_risk_per_trade_inr?: string
+    max_open_risk_inr?: string
+    daily_loss_lock_inr?: string
   } = {},
 ): Promise<MorningBoardResponse> {
+  const appendRiskQs = (qs: URLSearchParams) => {
+    if (params.max_risk_per_trade_inr) qs.set('max_risk_per_trade_inr', params.max_risk_per_trade_inr)
+    if (params.max_open_risk_inr) qs.set('max_open_risk_inr', params.max_open_risk_inr)
+    if (params.daily_loss_lock_inr) qs.set('daily_loss_lock_inr', params.daily_loss_lock_inr)
+  }
   const pollJob = async (jobId: string): Promise<MorningBoardResponse> => {
     const deadline = Date.now() + 120_000
     while (Date.now() < deadline) {
@@ -423,6 +434,7 @@ export async function fetchMorningBoard(
         if (params.source) qs.set('source', params.source)
         if (params.equity) qs.set('equity', params.equity)
         qs.set('universe', params.universe || 'NIFTY_500')
+        appendRiskQs(qs)
         const suffix = qs.toString() ? `?${qs.toString()}` : ''
         const boardResp = await fetch(`${baseUrl}/api/v1/intraday/morning-board${suffix}`)
         if (boardResp.status === 202) {
@@ -470,6 +482,9 @@ export async function fetchMorningBoard(
         symbols: params.symbols || null,
         filters: params.filters || {},
         force_refresh: Boolean(params.force_refresh),
+        max_risk_per_trade_inr: params.max_risk_per_trade_inr || null,
+        max_open_risk_inr: params.max_open_risk_inr || null,
+        daily_loss_lock_inr: params.daily_loss_lock_inr || null,
       }),
     })
     return handleResponse(response)
@@ -479,6 +494,7 @@ export async function fetchMorningBoard(
   if (params.source) qs.set('source', params.source)
   if (params.equity) qs.set('equity', params.equity)
   qs.set('universe', params.universe || 'NIFTY_500')
+  appendRiskQs(qs)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   const response = await fetch(`${baseUrl}/api/v1/intraday/morning-board${suffix}`)
   return handleResponse(response)
@@ -515,6 +531,9 @@ export async function runMorningIntradaySession(
     source?: 'demo' | 'persisted'
     seed_practice?: boolean
     session_date?: string | null
+    max_risk_per_trade_inr?: string
+    max_open_risk_inr?: string
+    daily_loss_lock_inr?: string
   },
 ) {
   type MorningResult = {

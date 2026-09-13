@@ -31,6 +31,7 @@ import {
 } from '../intraday/api'
 import { buildOrbBoardDeductionSteps, buildOrbDeductionSteps } from '../intraday/planDeduction'
 import { defaultSessionDate } from '../intraday/tradingCalendar'
+import { liveDeskCapital } from '../riskProfile'
 import {
   directionLabel,
   exitReasonLabel,
@@ -44,9 +45,20 @@ import {
 
 type Props = {
   baseUrl: string
+  /** Allocated desk capital from Capital & risk (editable / wallet start). */
   accountEquity: string
+  /** Live capital for board/session sizing when parent has closed-PnL wallet. */
+  liveSizingEquity?: string
   onEquityChange?: (value: string) => void
+  /** Fired after practice seed / tick / close so parent can refresh live wallet. */
+  onPracticeMutated?: () => void
   preferredBoardRefreshSec?: number
+  reserveEquity?: string
+  riskCaps?: {
+    maxRiskPerTradeInr?: string
+    maxOpenRiskInr?: string
+    dailyLossInr?: string
+  }
 }
 
 function isPreOrPhase(phase: MorningBoardResponse['phase'] | undefined): boolean {
@@ -425,8 +437,12 @@ function MorningRankTable({
 export function IntradayDesk({
   baseUrl,
   accountEquity,
+  liveSizingEquity,
   onEquityChange,
+  onPracticeMutated,
   preferredBoardRefreshSec = 30,
+  reserveEquity,
+  riskCaps,
 }: Props) {
   const [universe, setUniverse] = useState<IntradayUniverse>('NIFTY_500')
   const [boardFilters, setBoardFilters] = useState<UniverseFilterState>(DEFAULT_FILTERS)
@@ -480,10 +496,20 @@ export function IntradayDesk({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseUrl])
 
+  const allocatedStart = Number(accountEquity) || 0
+  const onPracticeMutatedRef = useRef(onPracticeMutated)
+  onPracticeMutatedRef.current = onPracticeMutated
+
+  /** Prefer parent live wallet; fall back to allocated + this session's closed practice. */
+  const sizingEquity = useMemo(() => {
+    if (liveSizingEquity != null && liveSizingEquity !== '') return liveSizingEquity
+    return String(liveDeskCapital(allocatedStart, practice))
+  }, [liveSizingEquity, allocatedStart, practice])
+
   useEffect(() => {
     void loadMorningBoard({ quiet: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- auto board for trading day / capital / universe
-  }, [baseUrl, sessionDate, source, universe, accountEquity, boardFilters])
+  }, [baseUrl, sessionDate, source, universe, sizingEquity, boardFilters, riskCaps])
 
   useEffect(() => {
     if (!session?.id) {
@@ -517,6 +543,7 @@ export function IntradayDesk({
       setPracticeClaim(result.claim)
       const listed = await listIntradayPractice(baseUrl, session.id)
       setPractice(listed.trades)
+      onPracticeMutatedRef.current?.()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Practice seed failed')
     } finally {
@@ -547,6 +574,7 @@ export function IntradayDesk({
       const listed = await listIntradayPractice(baseUrl, session.id)
       setPractice(listed.trades)
       setPracticeClaim(listed.claim)
+      onPracticeMutatedRef.current?.()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Practice tick failed')
     } finally {
@@ -648,10 +676,13 @@ export function IntradayDesk({
       const board = await fetchMorningBoard(baseUrl, {
         session_date: sessionDate || null,
         source,
-        equity: accountEquity || '1000000',
+        equity: sizingEquity || '0',
         universe: universe === 'CUSTOM' ? 'NSE_ALL' : universe,
         symbols: customSymbols,
         filters: filtersToPayload(boardFilters),
+        max_risk_per_trade_inr: riskCaps?.maxRiskPerTradeInr,
+        max_open_risk_inr: riskCaps?.maxOpenRiskInr,
+        daily_loss_lock_inr: riskCaps?.dailyLossInr,
       })
       setMorningBoard(board)
     } catch (err) {
@@ -680,7 +711,7 @@ export function IntradayDesk({
     sessionDate,
     source,
     baseUrl,
-    accountEquity,
+    sizingEquity,
     universe,
     boardFilters,
   ])
@@ -707,14 +738,18 @@ export function IntradayDesk({
         session_date: sessionDate || null,
         symbols: customSymbols,
         universe: universe === 'CUSTOM' ? 'NSE_ALL' : universe === 'DEMO_SAMPLE' ? 'DEMO_SAMPLE' : universe,
-        equity: accountEquity || '1000000',
+        equity: sizingEquity || '0',
         source,
         seed_practice: true,
+        max_risk_per_trade_inr: riskCaps?.maxRiskPerTradeInr,
+        max_open_risk_inr: riskCaps?.maxOpenRiskInr,
+        daily_loss_lock_inr: riskCaps?.dailyLossInr,
       })
       setSession({ ...result.session, id: result.session.id })
       if (result.practice) {
         setPractice(result.practice.trades)
         setPracticeClaim(result.practice.claim)
+        onPracticeMutatedRef.current?.()
       }
       void loadRecentSessions()
     } catch (err) {
@@ -746,8 +781,11 @@ export function IntradayDesk({
         session_date: sessionDate || null,
         symbols: customSymbols,
         universe: universe === 'CUSTOM' || universe === 'DEMO_SAMPLE' ? undefined : universe,
-        equity: accountEquity || '1000000',
+        equity: sizingEquity || '0',
         source,
+        max_risk_per_trade_inr: riskCaps?.maxRiskPerTradeInr,
+        max_open_risk_inr: riskCaps?.maxOpenRiskInr,
+        daily_loss_lock_inr: riskCaps?.dailyLossInr,
       })
       setSession(result)
       void loadRecentSessions()
@@ -819,7 +857,13 @@ export function IntradayDesk({
   }, [session])
 
   const closedPnl = session?.closed_trades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0) ?? 0
-  const riskBudget = formatInr((Number(accountEquity) * ORB_V1_RULES.riskPerTradePct) / 100)
+  const pctBudget = (Number(sizingEquity) * ORB_V1_RULES.riskPerTradePct) / 100
+  const absCap = Number(riskCaps?.maxRiskPerTradeInr)
+  const effectiveRiskBudget = Math.min(
+    Number.isFinite(pctBudget) ? pctBudget : Infinity,
+    Number.isFinite(absCap) && absCap > 0 ? absCap : Infinity,
+  )
+  const riskBudget = formatInr(Number.isFinite(effectiveRiskBudget) ? effectiveRiskBudget : 0)
 
   const boardExplainRow = useMemo(() => {
     if (!morningBoard || !explainSymbol) return null
@@ -841,7 +885,7 @@ export function IntradayDesk({
         row: explainRow,
         fill: fillsBySymbol.get(explainRow.symbol),
         closed: closedBySymbol.get(explainRow.symbol),
-        accountEquity,
+        accountEquity: sizingEquity,
         formatPrice: formatInr,
       })
     : boardExplainRow
@@ -944,13 +988,16 @@ export function IntradayDesk({
           </select>
         </label>
         <label className="field">
-          <span>Intraday capital</span>
+          <span>Intraday capital (allocated)</span>
           <input
             type="text"
             value={accountEquity}
             readOnly={!onEquityChange}
             onChange={(e) => onEquityChange?.(e.target.value)}
           />
+          {sizingEquity !== accountEquity ? (
+            <em className="field-hint">Live for sizing: {formatInr(sizingEquity)}</em>
+          ) : null}
         </label>
         {universe === 'CUSTOM' && (
           <label className="field field-grow">
@@ -1115,7 +1162,7 @@ export function IntradayDesk({
                 <span>Date {session.session_date}</span>
                 <span>Source {session.data_source ?? source}</span>
                 <span>Universe {universeLabel}</span>
-                <span>Intraday capital {formatInr(accountEquity)}</span>
+                <span>Intraday capital {formatInr(sizingEquity)}</span>
               </p>
             </div>
             <div className="intraday-section-tools">
@@ -1152,7 +1199,12 @@ export function IntradayDesk({
                 {key !== 'ALL' ? ` ${counts[key]}` : ''}
               </button>
             ))}
-            <span className="intraday-chip-note">Target = 1R plan · flatten {ORB_V1_RULES.flatten}</span>
+            <span className="intraday-chip-note">
+              Risk ≤ {riskBudget}/trade · daily lock{' '}
+              {riskCaps?.dailyLossInr ? formatInr(riskCaps.dailyLossInr) : 'CONFIG %'} · flatten{' '}
+              {ORB_V1_RULES.flatten}
+              {reserveEquity ? ` · reserve ${formatInr(reserveEquity)}` : ''}
+            </span>
           </div>
 
           <div className="intraday-kpi-strip">

@@ -24,6 +24,7 @@ from app.domain.intraday.types import (
     FillPlan,
     PortfolioState,
     RankedCandidate,
+    RiskBudgetOverrides,
     ScreenCandidate,
     SessionReport,
     SymbolResult,
@@ -156,6 +157,8 @@ def build_fill_plan(
     trigger_bar: Candle,
     equity: Decimal,
     config: IntradayConfigV1,
+    *,
+    max_risk_per_trade_inr: Decimal | None = None,
 ) -> tuple[FillPlan | None, str | None]:
     c = ranked.candidate
     planned = planned_stop_distance(c.prior_atr14, config)
@@ -179,7 +182,13 @@ def build_fill_plan(
     if effective > planned * config.risk_invalid_mult:
         return None, "effective risk exceeds 1.25x planned stop"
 
-    qty = size_quantity(equity=equity, effective_risk_per_share=effective, entry=entry, config=config)
+    qty = size_quantity(
+        equity=equity,
+        effective_risk_per_share=effective,
+        entry=entry,
+        config=config,
+        max_risk_per_trade_inr=max_risk_per_trade_inr,
+    )
     if qty <= 0:
         return None, "quantity zero after sizing"
 
@@ -289,6 +298,7 @@ def run_session(
     screen_inputs: Sequence[dict],
     candles_1m_by_symbol: Mapping[str, Sequence[Candle]],
     config: IntradayConfigV1 = DEFAULT_CONFIG_V1,
+    risk_overrides: RiskBudgetOverrides | None = None,
 ) -> SessionReport:
     """Run one session.
 
@@ -352,7 +362,13 @@ def run_session(
             )
         )
 
-    state = PortfolioState(equity=equity)
+    overrides = risk_overrides or RiskBudgetOverrides()
+    state = PortfolioState(
+        equity=equity,
+        max_risk_per_trade_inr=overrides.max_risk_per_trade_inr,
+        max_open_risk_inr=overrides.max_open_risk_inr,
+        daily_loss_lock_inr=overrides.daily_loss_lock_inr,
+    )
     fills: list[FillPlan] = []
     pending = {r.candidate.symbol: r for r in ranked}
     open_by_symbol: dict[str, FillPlan] = {}
@@ -383,7 +399,14 @@ def run_session(
             )
             continue
         entry, trigger_bar = hit
-        plan, err = build_fill_plan(ranked_c, entry, trigger_bar, state.equity, config)
+        plan, err = build_fill_plan(
+            ranked_c,
+            entry,
+            trigger_bar,
+            state.equity,
+            config,
+            max_risk_per_trade_inr=state.max_risk_per_trade_inr,
+        )
         if plan is None:
             state.traded_symbols.add(sym)
             results.append(
@@ -398,7 +421,13 @@ def run_session(
                 )
             )
             continue
-        lock = can_open(state, plan, config)
+        lock = can_open(
+            state,
+            plan,
+            config,
+            max_open_risk_inr=state.max_open_risk_inr,
+            daily_loss_lock_inr=state.daily_loss_lock_inr,
+        )
         state.traded_symbols.add(sym)
         if lock:
             results.append(

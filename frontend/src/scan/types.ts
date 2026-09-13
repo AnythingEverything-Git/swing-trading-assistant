@@ -160,6 +160,7 @@ export type StartScanRequest = {
   end: string
   account_equity?: string
   risk_percent?: string
+  max_risk_amount?: string
   top_n?: number
   min_score?: string
   enable_paper_trading?: boolean

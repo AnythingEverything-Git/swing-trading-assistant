@@ -46,6 +46,7 @@ def build_personal_book(
     risk_percent: Decimal,
     max_positions: int = 3,
     open_symbols: set[str] | None = None,
+    max_risk_amount: Decimal | None = None,
 ) -> PersonalBook:
     """Deterministic solver: take top ranked names that size > 0 and are not already open."""
     open_syms = {s.upper() for s in (open_symbols or set())}
@@ -55,6 +56,11 @@ def build_personal_book(
     rationale: list[str] = [
         f"Max concurrent positions: {max_n}",
         f"Risk per idea: {risk_percent}% of equity {account_equity}",
+        *(
+            [f"Absolute risk cap: {max_risk_amount}"]
+            if max_risk_amount is not None
+            else []
+        ),
         "Skip symbols already OPEN/PENDING in practice book",
         "Skip names that size to 0 shares under risk rules",
         "Order follows scan rank (rules quality score) — LLM does not reorder",
@@ -73,7 +79,9 @@ def build_personal_book(
             rejected.append(BookRejection(symbol=symbol, reason="already_open_in_paper"))
             continue
         candidate = item.opportunity.candidate
-        sizing = calculate_position_size(account_equity, risk_percent, candidate)
+        sizing = calculate_position_size(
+            account_equity, risk_percent, candidate, max_risk_amount=max_risk_amount
+        )
         if sizing.quantity <= 0:
             rejected.append(BookRejection(symbol=symbol, reason="zero_quantity_under_risk"))
             continue

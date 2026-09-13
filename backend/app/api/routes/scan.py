@@ -66,6 +66,7 @@ def _job_parameters(payload: OpportunityScanRequest, *, universe_name: str, univ
         "min_score": str(payload.min_score) if payload.min_score is not None else None,
         "account_equity": str(payload.account_equity) if payload.account_equity is not None else None,
         "risk_percent": str(payload.risk_percent),
+        "max_risk_amount": str(payload.max_risk_amount) if payload.max_risk_amount is not None else None,
         "enable_paper_trading": payload.enable_paper_trading,
         "filters": payload.filters,
     }
@@ -142,6 +143,7 @@ async def scan_opportunities(
         result,
         account_equity=payload.account_equity,
         risk_percent=payload.risk_percent if payload.account_equity is not None else None,
+        max_risk_amount=payload.max_risk_amount,
         top_n=payload.top_n,
         min_score=payload.min_score,
     )
@@ -341,6 +343,7 @@ async def build_scan_book(
         risk_percent=payload.risk_percent,
         max_positions=payload.max_positions,
         open_symbols=open_symbols,
+        max_risk_amount=payload.max_risk_amount,
     )
     settings = get_settings()
     if narrative_llm_enabled(settings):

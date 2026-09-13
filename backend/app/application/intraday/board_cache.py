@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from datetime import date, datetime, timezone
+from app.domain.intraday.types import RiskBudgetOverrides
 from decimal import Decimal
 from typing import Any
 
@@ -28,6 +29,9 @@ def board_cache_key(
     filters: dict | None,
     symbols: list[str] | None,
     equity: Decimal | None = None,
+    max_risk_per_trade_inr: Decimal | None = None,
+    max_open_risk_inr: Decimal | None = None,
+    daily_loss_lock_inr: Decimal | None = None,
 ) -> str:
     payload = {
         "universe": (universe or "NIFTY_500").strip().upper(),
@@ -36,6 +40,9 @@ def board_cache_key(
         "filters": filters or {},
         "symbols": sorted(s.upper() for s in (symbols or [])),
         "equity": str(equity) if equity is not None else None,
+        "max_risk_per_trade_inr": str(max_risk_per_trade_inr) if max_risk_per_trade_inr is not None else None,
+        "max_open_risk_inr": str(max_open_risk_inr) if max_open_risk_inr is not None else None,
+        "daily_loss_lock_inr": str(daily_loss_lock_inr) if daily_loss_lock_inr is not None else None,
     }
     raw = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -106,6 +113,7 @@ async def build_and_cache_board(
     filters: dict | None,
     universe: str,
     symbols: list[str] | None,
+    risk_overrides: RiskBudgetOverrides | None = None,
 ) -> dict[str, Any]:
     from app.application.intraday.morning_board_service import build_morning_board
     from app.application.market_data.query_service import MarketDataQueryService
@@ -128,6 +136,7 @@ async def build_and_cache_board(
             filters=filters,
             universe=universe,
             symbols=symbols,
+            risk_overrides=risk_overrides,
         )
         await session.commit()
     put_cached_board(app, cache_key, board)
@@ -144,6 +153,7 @@ def start_board_rebuild(
     filters: dict | None,
     universe: str,
     symbols: list[str] | None,
+    risk_overrides: RiskBudgetOverrides | None = None,
 ) -> str:
     """Enqueue a background rebuild if one is not already running for this key."""
     jobs = _jobs(app)
@@ -174,6 +184,7 @@ def start_board_rebuild(
                 filters=filters,
                 universe=universe,
                 symbols=symbols,
+                risk_overrides=risk_overrides,
             )
             jobs[job_id]["status"] = "ready"
         except Exception as exc:
@@ -210,9 +221,11 @@ async def serve_morning_board(
     universe: str,
     symbols: list[str] | None,
     force_refresh: bool = False,
+    risk_overrides: RiskBudgetOverrides | None = None,
 ) -> tuple[dict[str, Any], int]:
     """Return (body, http_status). Prefer cache ≤3s; kick rebuild when stale/missing."""
     uni = (universe or "NIFTY_500").strip().upper() or "NIFTY_500"
+    ov = risk_overrides
     key = board_cache_key(
         universe=uni,
         session_date=session_date,
@@ -220,6 +233,9 @@ async def serve_morning_board(
         filters=filters,
         symbols=symbols,
         equity=equity,
+        max_risk_per_trade_inr=ov.max_risk_per_trade_inr if ov else None,
+        max_open_risk_inr=ov.max_open_risk_inr if ov else None,
+        daily_loss_lock_inr=ov.daily_loss_lock_inr if ov else None,
     )
     cached = None if force_refresh else get_cached_board(app, key)
     if cached is not None:
@@ -234,6 +250,7 @@ async def serve_morning_board(
                 filters=filters,
                 universe=uni,
                 symbols=symbols,
+                risk_overrides=risk_overrides,
             )
             cached["rebuild_job_id"] = job_id
         return cached, 200
@@ -249,6 +266,7 @@ async def serve_morning_board(
         filters=filters,
         universe=uni,
         symbols=symbols,
+        risk_overrides=risk_overrides,
     )
     return {
         "status": "running",

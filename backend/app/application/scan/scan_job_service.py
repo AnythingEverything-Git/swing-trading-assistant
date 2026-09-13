@@ -90,6 +90,7 @@ async def execute_scan_job(
             min_score = _decimal_or_none(params.get("min_score"))
             account_equity = _decimal_or_none(params.get("account_equity"))
             risk_percent = _decimal_or_none(params.get("risk_percent")) or Decimal("1")
+            max_risk_amount = _decimal_or_none(params.get("max_risk_amount"))
             enable_paper = bool(params.get("enable_paper_trading"))
 
             from app.domain.universe.filters import UniverseFilterSpec, filter_symbols
@@ -120,6 +121,7 @@ async def execute_scan_job(
                 report,
                 account_equity=account_equity,
                 risk_percent=risk_percent if account_equity is not None else None,
+                max_risk_amount=max_risk_amount,
                 top_n=top_n,
                 min_score=min_score,
             )
